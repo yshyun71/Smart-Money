@@ -121,8 +121,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setIsUnlocked(true);
       return true;
     } catch (error) {
+      // Say what actually went wrong — a generic message here left the real
+      // cause visible only in the console, which is unreachable on a phone.
       console.error("등록에 실패했습니다:", error);
-      setAuthError("등록 중 오류가 발생했습니다. 다시 시도해주세요.");
+      setAuthError(
+        error instanceof Error && error.message
+          ? error.message
+          : "등록 중 오류가 발생했습니다. 다시 시도해주세요."
+      );
       return false;
     } finally {
       setIsBusy(false);
@@ -183,7 +189,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       return true;
     } catch (error) {
       console.error("비밀번호 변경에 실패했습니다:", error);
-      setAuthError("비밀번호 변경 중 오류가 발생했습니다.");
+      setAuthError(
+        error instanceof Error && error.message
+          ? error.message
+          : "비밀번호 변경 중 오류가 발생했습니다."
+      );
       return false;
     } finally {
       setIsBusy(false);

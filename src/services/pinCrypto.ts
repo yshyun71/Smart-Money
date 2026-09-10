@@ -33,8 +33,22 @@ function fromBase64(value: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * WebCrypto is only exposed in a secure context. Served over plain http from
+ * anything but localhost, `crypto.subtle` is simply absent — worth saying so
+ * rather than failing with "undefined is not an object".
+ */
+function subtle(): SubtleCrypto {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    throw new Error(
+      "이 브라우저에서 암호화 기능을 사용할 수 없습니다. HTTPS 주소로 접속했는지 확인해주세요."
+    );
+  }
+  return crypto.subtle;
+}
+
 async function derive(pin: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
-  const keyMaterial = await crypto.subtle.importKey(
+  const keyMaterial = await subtle().importKey(
     "raw",
     new TextEncoder().encode(pin),
     "PBKDF2",
@@ -42,7 +56,7 @@ async function derive(pin: string, salt: Uint8Array, iterations: number): Promis
     ["deriveBits"]
   );
 
-  const bits = await crypto.subtle.deriveBits(
+  const bits = await subtle().deriveBits(
     {
       name: "PBKDF2",
       salt: salt as unknown as BufferSource,

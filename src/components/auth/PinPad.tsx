@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Delete, Loader2 } from "lucide-react";
 
 const PIN_LENGTH = 6;
@@ -38,34 +38,51 @@ export const PinPad: React.FC<PinPadProps> = ({
 
   const shownError = localError ?? error ?? null;
 
-  const submit = useCallback(
-    async (pin: string) => {
-      const accepted = await onComplete(pin);
+  // Held in a ref so the submit effect depends on the entry alone. Parents
+  // pass an inline callback, and re-running on its identity would tear down
+  // the effect mid-flight — losing the result and leaving the pad stuck full.
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
+
+  /**
+   * Submitting belongs in an effect, not inside the setDigits updater: an
+   * updater has to be pure, and React invokes it twice under StrictMode —
+   * which fired the completion handler twice per entry.
+   */
+  useEffect(() => {
+    if (digits.length !== PIN_LENGTH) return;
+
+    let cancelled = false;
+    (async () => {
+      const accepted = await onCompleteRef.current(digits);
+      if (cancelled) return;
+
       if (accepted === false) {
         setIsRejected(true);
         setTimeout(() => {
+          if (cancelled) return;
           setDigits("");
           setIsRejected(false);
         }, 320);
       } else {
         setDigits("");
       }
-    },
-    [onComplete]
-  );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [digits]);
 
   const append = useCallback(
     (digit: string) => {
       if (isBusy || isRejected) return;
       setLocalError(null);
-      setDigits((prev) => {
-        if (prev.length >= PIN_LENGTH) return prev;
-        const next = prev + digit;
-        if (next.length === PIN_LENGTH) void submit(next);
-        return next;
-      });
+      setDigits((prev) => (prev.length >= PIN_LENGTH ? prev : prev + digit));
     },
-    [isBusy, isRejected, submit]
+    [isBusy, isRejected]
   );
 
   const backspace = useCallback(() => {
