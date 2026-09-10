@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# VS Code local workspace (unrelated project paths)
+*.code-workspace
+
+# Runtime SQLite database (contains personal finance data)
+finance.db
