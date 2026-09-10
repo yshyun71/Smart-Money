@@ -35,7 +35,7 @@ export const MobileHeader: React.FC<{
     budgetAlerts,
   } = useFinance();
 
-  const { user } = useAuth();
+  const { profile } = useAuth();
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
@@ -158,14 +158,14 @@ export const MobileHeader: React.FC<{
             id="user-security-capsule-btn"
             onClick={() => setShowSecurityModal(true)}
             className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200/90 text-xs transition active:scale-95 group cursor-pointer"
-            title="금융 보안 인증 및 PIN/세션 관리 (클릭하여 확인)"
+            title="내 등록 정보 및 보안 설정"
           >
             <span className="relative flex h-2 w-2 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
             <span className="font-bold text-slate-800 text-[11px] max-w-[42px] sm:max-w-[70px] truncate">
-              {user?.name || "인증"}
+              {profile?.name || "내 정보"}
             </span>
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 group-hover:scale-110 transition-transform" />
           </button>

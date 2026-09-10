@@ -44,7 +44,7 @@ React 19 · TypeScript · Vite 6 · Tailwind CSS 4 · Recharts · lucide-react �
 
 | 테이블 | 내용 |
 | --- | --- |
-| `users` | 사용자 1명, 인증 상태, PIN |
+| `users` | 사용자 1명, 이름·연락처, PIN 해시(PBKDF2) |
 | `categories` | 기본 카테고리 12종 (고정비/변동비/수입 구분) |
 | `accounts` | 등록한 은행 계좌 및 카드 |
 | `transactions` | 거래 내역 (날짜·카테고리·계좌 인덱스) |
@@ -65,17 +65,20 @@ React 19 · TypeScript · Vite 6 · Tailwind CSS 4 · Recharts · lucide-react �
 2. `SCHEMA_VERSION`을 1 올림
 
 ```ts
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3; // 2 → 3
 
 export const MIGRATIONS: Migration[] = [
   { version: 1, description: "초기 스키마", up: (db) => { /* ... */ } },
+  { version: 2, description: "PIN을 평문 대신 PBKDF2 해시로 저장", up: (db) => { /* ... */ } },
   {
-    version: 2,
-    description: "거래에 태그 컬럼 추가",
+    version: 3,
+    description: "거래에 태그 컬럼 추가", // 예시
     up: (db) => db.run("ALTER TABLE transactions ADD COLUMN tags TEXT"),
   },
 ];
 ```
+
+현재 스키마 버전은 **2**이며, v2가 실제 마이그레이션 예시입니다. PIN을 평문으로 저장하던 컬럼을 해시 컬럼으로 교체하면서 **이름과 연락처는 그대로 유지**하고 평문 PIN만 폐기했습니다(해싱은 비동기라 마이그레이션 안에서 변환할 수 없어, PIN만 다시 등록하도록 했습니다).
 
 기기의 현재 버전은 SQLite 자체의 `PRAGMA user_version`에 기록됩니다. 다음 실행 때 앱이 그 값보다 높은 마이그레이션만 순서대로 실행하므로, **기존 거래·계좌·예산은 그대로 남은 채 구조만 갱신됩니다.**
 
@@ -115,7 +118,7 @@ npm run dev      # http://localhost:5173
 | `npm run preview` | 빌드 결과 미리보기 |
 | `npm run lint` | TypeScript 타입 검사 |
 
-**로그인** — 이름과 휴대폰 번호를 입력하고 인증번호를 요청하면, 기기에서 생성된 6자리 코드가 화면에 그대로 표시됩니다. 테스트용 고정 코드 `123456` 도 통과합니다.
+**최초 실행** — 이름·연락처를 입력하고 6자리 간편 비밀번호를 두 번 눌러 등록합니다. 그 다음부터는 앱을 열 때마다 이 비밀번호로 잠금을 해제하고, 등록한 정보는 헤더의 이름 캡슐을 눌러 확인·수정할 수 있습니다.
 
 ---
 
@@ -210,7 +213,7 @@ npx cloudflared tunnel --url http://localhost:3000
 │   ├── components/
 │   │   ├── views/         7개 탭 화면
 │   │   ├── settings/      AI 등록
-│   │   ├── auth/          간편인증 · 보안 정보 · PIN 등록
+│   │   ├── auth/          PIN 등록/잠금해제 · 키패드 · 내 정보
 │   │   ├── transactions/  거래 추가 · 거래 아이템
 │   │   ├── dashboard/     요약 카드 · 고정/변동 비율
 │   │   ├── modals/        문자 자동 인식
@@ -236,6 +239,8 @@ npx cloudflared tunnel --url http://localhost:3000
 
 **AI 모델명은 [`src/services/aiClient.ts`](src/services/aiClient.ts)의 `AI_MODEL` 한 곳**에 있습니다.
 
+**PIN은 되돌릴 수 없게 저장됩니다.** [`src/services/pinCrypto.ts`](src/services/pinCrypto.ts)가 PBKDF2-HMAC-SHA256으로 기기별 난수 salt와 함께 스트레칭하고 파생 바이트만 남깁니다. 반복 횟수를 해시와 같이 저장해 두었으니, 나중에 값을 올려도 이미 등록된 기기의 PIN이 깨지지 않습니다. 원문을 읽을 방법이 없으므로 **비밀번호 변경 시에는 현재 PIN을 반드시 다시 입력받아야 합니다.**
+
 **Node 20.19 미만에서는 `@vitejs/plugin-react`가 경고를 냅니다.** 빌드는 되지만, 배포 환경에서는 `NODE_VERSION=22`를 지정해 두는 편이 안전합니다.
 
 ---
@@ -244,10 +249,11 @@ npx cloudflared tunnel --url http://localhost:3000
 
 인증은 **1인 기기용 데모 수준**입니다.
 
-- 인증번호를 기기에서 생성해 화면에 그대로 보여주며, 고정 코드 `123456` 이 항상 통과합니다.
-- PIN이 기기 데이터베이스에 평문으로 저장됩니다.
+- 6자리 PIN은 조합이 100만 가지뿐입니다. 해시는 한 번 시도하는 비용을 올려줄 뿐, 기기를 확보한 사람이 시간을 들이면 전수 조사가 가능합니다.
+- 시도 횟수 제한이 없습니다.
+- 가계부 내용 자체는 암호화되지 않습니다. PIN을 몰라도 브라우저 저장소를 직접 열면 거래 내역을 읽을 수 있습니다.
 - 사용자는 1명뿐이며 세션·토큰 개념이 없습니다.
 
-기기를 잠그는 용도로는 충분하지만, 여러 사람이 쓰거나 분실 위험이 있는 기기에서는 그대로 신뢰하지 마세요.
+앱 화면을 가리는 잠금으로는 충분하지만, 분실 위험이 있는 기기에서 내용까지 지키려면 PIN에서 키를 유도해 데이터베이스를 암호화하는 작업이 추가로 필요합니다.
 
 계좌 연결과 잔액 갱신은 실제 오픈뱅킹 API가 아니라 **기기 안의 값을 직접 관리하는 방식**입니다. 거래는 직접 입력하거나 결제 알림 문자를 붙여넣어 등록합니다.

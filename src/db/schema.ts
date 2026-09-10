@@ -15,7 +15,7 @@ import type { Database } from "sql.js";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface Migration {
   version: number;
@@ -110,6 +110,21 @@ export const MIGRATIONS: Migration[] = [
           updated_at TEXT NOT NULL
         );
       `);
+    },
+  },
+  {
+    version: 2,
+    description: "PIN을 평문 대신 PBKDF2 해시로 저장",
+    up: (db) => {
+      db.run(`
+        ALTER TABLE users ADD COLUMN pin_hash TEXT;
+        ALTER TABLE users ADD COLUMN pin_salt TEXT;
+        ALTER TABLE users ADD COLUMN pin_iterations INTEGER;
+      `);
+      // A plaintext PIN cannot be converted here — hashing is async and a
+      // migration is not. Clearing it asks for the PIN once more rather than
+      // carrying a readable credential forward. The name and phone survive.
+      db.run("UPDATE users SET pin = NULL");
     },
   },
 ];

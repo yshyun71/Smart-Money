@@ -4,6 +4,7 @@ import type {
   MonthlyBudgetConfig,
   Transaction,
 } from "../types/finance";
+import type { StoredPin } from "../services/pinCrypto";
 import { persist, queryAll, queryOne, run, runBatch } from "./database";
 import {
   PRIMARY_USER_ID,
@@ -22,171 +23,116 @@ import {
 // User & authentication
 // ---------------------------------------------------------------------------
 
-export interface UserRecord {
+export interface ProfileRecord {
   id: string;
   name: string;
-  email: string;
   phone: string;
-  authProvider: string;
-  providerLabel: string;
-  isAuthenticated: boolean;
-  isBiometricEnabled: boolean;
-  authenticatedAt: string | null;
+  registeredAt: string;
+  lastUnlockedAt: string | null;
+  /** True once a name and a PIN both exist — the device is set up. */
+  isRegistered: boolean;
   hasPin: boolean;
-  hasRegisteredIdentity: boolean;
 }
 
 interface UserRow {
   id: string;
   name: string | null;
-  email: string | null;
   phone: string | null;
-  pin: string | null;
-  auth_provider: string | null;
-  provider_label: string | null;
-  is_authenticated: number;
-  is_biometric_enabled: number;
+  pin_hash: string | null;
+  pin_salt: string | null;
+  pin_iterations: number | null;
   authenticated_at: string | null;
+  created_at: string;
 }
 
 function readUserRow(): UserRow | null {
   return queryOne<UserRow>("SELECT * FROM users LIMIT 1");
 }
 
-export function getUser(): UserRecord | null {
+export function getProfile(): ProfileRecord | null {
   const row = readUserRow();
   if (!row) return null;
 
-  const isAuthenticated = Boolean(row.is_authenticated);
-  const hasRegisteredIdentity = Boolean(row.name && row.name.trim().length > 0);
+  const hasName = Boolean(row.name && row.name.trim().length > 0);
+  const hasPin = Boolean(row.pin_hash && row.pin_salt && row.pin_iterations);
 
   return {
     id: row.id,
-    name: hasRegisteredIdentity ? (row.name as string) : "",
-    email: isAuthenticated ? row.email || "" : "",
-    phone: hasRegisteredIdentity ? row.phone || "" : "",
-    authProvider: row.auth_provider || "KAKAO",
-    providerLabel: row.provider_label || "카카오 간편인증",
-    isAuthenticated,
-    isBiometricEnabled: Boolean(row.is_biometric_enabled),
-    authenticatedAt: row.authenticated_at,
-    hasPin: Boolean(row.pin && row.pin.trim().length === 6),
-    hasRegisteredIdentity,
+    name: row.name || "",
+    phone: row.phone || "",
+    registeredAt: row.created_at,
+    lastUnlockedAt: row.authenticated_at,
+    isRegistered: hasName && hasPin,
+    hasPin,
   };
 }
 
-function nowTimeLabel(): string {
-  return new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
-}
-
-export function saveIdentity(details: {
+/** First-run setup: the owner's details and their PIN, written together. */
+export function registerAccount(details: {
   name: string;
   phone: string;
-  email?: string;
-  provider: string;
-  providerLabel: string;
+  pin: StoredPin;
 }): void {
   const row = readUserRow();
-  if (row) {
-    run(
-      `UPDATE users SET name = ?, phone = ?, email = ?, auth_provider = ?, provider_label = ?,
-       is_authenticated = 1, authenticated_at = ? WHERE id = ?`,
-      [
-        details.name.trim(),
-        details.phone.trim(),
-        details.email?.trim() || "",
-        details.provider,
-        details.providerLabel,
-        nowTimeLabel(),
-        row.id,
-      ]
-    );
-  } else {
-    run(
-      `INSERT INTO users (id, name, email, phone, pin, auth_provider, provider_label, is_authenticated, is_biometric_enabled, authenticated_at, created_at)
-       VALUES (?, ?, ?, ?, NULL, ?, ?, 1, 1, ?, ?)`,
-      [
-        PRIMARY_USER_ID,
-        details.name.trim(),
-        details.email?.trim() || "",
-        details.phone.trim(),
-        details.provider,
-        details.providerLabel,
-        nowTimeLabel(),
-        new Date().toISOString(),
-      ]
-    );
-  }
+  const statements = [
+    row
+      ? {
+          sql: `UPDATE users SET name = ?, phone = ?, pin = NULL,
+                pin_hash = ?, pin_salt = ?, pin_iterations = ? WHERE id = ?`,
+          params: [
+            details.name.trim(),
+            details.phone.trim(),
+            details.pin.hash,
+            details.pin.salt,
+            details.pin.iterations,
+            row.id,
+          ],
+        }
+      : {
+          sql: `INSERT INTO users (id, name, email, phone, pin, pin_hash, pin_salt, pin_iterations,
+                  auth_provider, provider_label, is_authenticated, is_biometric_enabled, authenticated_at, created_at)
+                VALUES (?, ?, '', ?, NULL, ?, ?, ?, 'PIN', '간편 비밀번호', 0, 1, NULL, ?)`,
+          params: [
+            PRIMARY_USER_ID,
+            details.name.trim(),
+            details.phone.trim(),
+            details.pin.hash,
+            details.pin.salt,
+            details.pin.iterations,
+            new Date().toISOString(),
+          ],
+        },
+  ];
+  runBatch(statements);
 }
 
-export function savePin(pin: string): void {
-  run("UPDATE users SET pin = ?", [pin]);
-}
-
-export interface PinCheckResult {
-  success: boolean;
-  error?: string;
-  requiresRegistration?: boolean;
-  hasNoPin?: boolean;
-}
-
-export function verifyPin(pin: string): PinCheckResult {
-  const row = readUserRow();
-
-  if (!row || !row.name || !row.name.trim()) {
-    return {
-      success: false,
-      requiresRegistration: true,
-      error: "먼저 카카오톡, 토스, PASS, 네이버 등 본인인증으로 로그인한 후 PIN을 설정해주세요.",
-    };
-  }
-  if (!row.pin || !row.pin.trim()) {
-    return {
-      success: false,
-      hasNoPin: true,
-      error: "등록된 간편 비밀번호가 없습니다. 본인인증 완료 후 설정 메뉴에서 PIN을 먼저 등록해주세요.",
-    };
-  }
-  if (row.pin !== pin) {
-    return { success: false, error: "비밀번호(PIN)가 일치하지 않습니다." };
-  }
-
-  run("UPDATE users SET is_authenticated = 1, authenticated_at = ? WHERE id = ?", [
-    nowTimeLabel(),
-    row.id,
+export function updateProfile(details: { name: string; phone: string }): void {
+  run("UPDATE users SET name = ?, phone = ?", [
+    details.name.trim(),
+    details.phone.trim(),
   ]);
-  return { success: true };
 }
 
-export function markLoggedOut(): void {
-  run("UPDATE users SET is_authenticated = 0, authenticated_at = NULL");
+export function readStoredPin(): StoredPin | null {
+  const row = readUserRow();
+  if (!row || !row.pin_hash || !row.pin_salt || !row.pin_iterations) return null;
+  return {
+    hash: row.pin_hash,
+    salt: row.pin_salt,
+    iterations: row.pin_iterations,
+  };
 }
 
-/**
- * Identity verification is a local demo flow — there is no SMS gateway on the
- * device, so the generated code is handed straight back to the screen that
- * asked for it, exactly as the old development server did.
- */
-const pendingCodes = new Map<string, { code: string; expiresAt: number }>();
-const FALLBACK_TEST_CODE = "123456";
-
-export function issueVerificationCode(phone: string): string {
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  pendingCodes.set(phone.replace(/[^0-9]/g, ""), {
-    code,
-    expiresAt: Date.now() + 5 * 60 * 1000,
-  });
-  return code;
+export function savePinHash(pin: StoredPin): void {
+  run(
+    "UPDATE users SET pin = NULL, pin_hash = ?, pin_salt = ?, pin_iterations = ?",
+    [pin.hash, pin.salt, pin.iterations]
+  );
 }
 
-export function checkVerificationCode(phone: string, code: string): boolean {
-  const record = pendingCodes.get(phone.replace(/[^0-9]/g, ""));
-  const matches = Boolean(record && record.code === code && record.expiresAt > Date.now());
-  if (matches) {
-    pendingCodes.delete(phone.replace(/[^0-9]/g, ""));
-    return true;
-  }
-  return code === FALLBACK_TEST_CODE;
+/** Records a successful unlock, shown back to the user as "최근 로그인". */
+export function touchLastUnlock(): void {
+  run("UPDATE users SET authenticated_at = ?", [new Date().toISOString()]);
 }
 
 // ---------------------------------------------------------------------------

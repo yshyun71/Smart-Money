@@ -1,26 +1,39 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../context/AuthContext";
+import { PinPad } from "./PinPad";
 import { KeyRound, X, CheckCircle } from "lucide-react";
 
+type Step = "CURRENT" | "NEW" | "CONFIRM" | "DONE";
+
+/**
+ * Changing the PIN from the settings menu. The current PIN is required first —
+ * the stored hash cannot be read back, so it has to be re-derived and checked.
+ */
 export const PinSetupModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { hasPin, setPinCode } = useAuth();
+  const { changePin, isBusy, authError, clearAuthError } = useAuth();
 
+  const [step, setStep] = useState<Step>("CURRENT");
+  const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [mismatchError, setMismatchError] = useState<string | null>(null);
 
-  // Close on Escape key and lock body scroll while open
   useEffect(() => {
     if (!isOpen) return;
 
+    setStep("CURRENT");
+    setCurrentPin("");
+    setNewPin("");
+    setMismatchError(null);
+    clearAuthError();
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      // Escape is used by the pad to clear its entry, so only close on it
+      // once nothing is being typed.
+      if (e.key === "Escape") onClose();
     };
 
     const originalOverflow = document.body.style.overflow;
@@ -31,38 +44,16 @@ export const PinSetupModal: React.FC<{
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose]);
-
-  // Reset the form whenever the modal is reopened
-  useEffect(() => {
-    if (isOpen) {
-      setNewPin("");
-      setConfirmPin("");
-      setSavedMsg(null);
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSavePin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newPin.length !== 6 || !/^\d{6}$/.test(newPin)) {
-      alert("6자리 숫자로만 입력해주세요.");
-      return;
-    }
-    if (newPin !== confirmPin) {
-      alert("비밀번호 확인이 일치하지 않습니다.");
-      return;
-    }
-
-    setPinCode(newPin);
-    setSavedMsg("간편 비밀번호가 성공적으로 변경되었습니다.");
-    setNewPin("");
-    setConfirmPin("");
-    setTimeout(() => {
-      setSavedMsg(null);
-      onClose();
-    }, 1800);
+  const headings: Record<Step, { title: string; sub: string }> = {
+    CURRENT: { title: "현재 비밀번호 확인", sub: "본인 확인을 위해 먼저 입력해주세요" },
+    NEW: { title: "새 비밀번호 설정", sub: "사용할 6자리 숫자를 입력하세요" },
+    CONFIRM: { title: "새 비밀번호 확인", sub: "한 번 더 입력해주세요" },
+    DONE: { title: "변경 완료", sub: "새 비밀번호가 저장되었습니다" },
   };
 
   const modalContent = (
@@ -71,7 +62,7 @@ export const PinSetupModal: React.FC<{
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom duration-200 shadow-2xl relative"
+        className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom duration-200 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -82,11 +73,9 @@ export const PinSetupModal: React.FC<{
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                {hasPin ? "간편 비밀번호 변경" : "간편 비밀번호 등록"}
+                {headings[step].title}
               </h3>
-              <p className="text-[10px] text-slate-400">
-                빠른 잠금 해제에 사용할 6자리 숫자 비밀번호
-              </p>
+              <p className="text-[10px] text-slate-400">{headings[step].sub}</p>
             </div>
           </div>
           <button
@@ -99,55 +88,94 @@ export const PinSetupModal: React.FC<{
           </button>
         </div>
 
-        {/* Success feedback */}
-        {savedMsg && (
-          <div className="p-3 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>{savedMsg}</span>
+        {step === "DONE" ? (
+          <div className="py-6 flex flex-col items-center gap-2 text-center">
+            <CheckCircle className="w-10 h-10 text-emerald-500" />
+            <div className="text-sm font-bold text-slate-900">
+              간편 비밀번호가 변경되었습니다
+            </div>
+            <p className="text-[11px] text-slate-500">
+              다음 잠금 해제부터 새 비밀번호를 사용하세요.
+            </p>
           </div>
-        )}
+        ) : (
+          <>
+            {/* Step indicator */}
+            <div className="flex items-center justify-center gap-1.5">
+              {(["CURRENT", "NEW", "CONFIRM"] as Step[]).map((s, index) => (
+                <span
+                  key={s}
+                  className={`h-1 rounded-full transition-all ${
+                    step === s
+                      ? "w-6 bg-indigo-500"
+                      : index < ["CURRENT", "NEW", "CONFIRM"].indexOf(step)
+                      ? "w-3 bg-indigo-300"
+                      : "w-3 bg-slate-200"
+                  }`}
+                />
+              ))}
+            </div>
 
-        <form onSubmit={handleSavePin} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-          <div className="text-xs font-bold text-slate-900">새 6자리 PIN 설정</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] text-slate-500 block mb-1">
-                새 비밀번호 (6자리)
-              </label>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                required
-                placeholder="••••••"
-                value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/[^0-9]/g, ""))}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-mono"
+            {step === "CURRENT" && (
+              <PinPad
+                title="현재 6자리 비밀번호"
+                error={authError}
+                isBusy={isBusy}
+                onComplete={(pin) => {
+                  // Verified together with the new PIN in the final step, so a
+                  // wrong current PIN surfaces there rather than costing an
+                  // extra key derivation here.
+                  setCurrentPin(pin);
+                  clearAuthError();
+                  setStep("NEW");
+                }}
               />
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 block mb-1">
-                비밀번호 확인
-              </label>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                required
-                placeholder="••••••"
-                value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value.replace(/[^0-9]/g, ""))}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-mono"
+            )}
+
+            {step === "NEW" && (
+              <PinPad
+                title="새 6자리 비밀번호"
+                description="현재 비밀번호와 달라야 합니다."
+                error={mismatchError}
+                onComplete={(pin) => {
+                  if (pin === currentPin) {
+                    setMismatchError("현재 사용 중인 비밀번호와 같습니다.");
+                    return false;
+                  }
+                  setNewPin(pin);
+                  setMismatchError(null);
+                  setStep("CONFIRM");
+                }}
               />
-            </div>
-          </div>
-          <button
-            type="submit"
-            className="w-full py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition cursor-pointer"
-          >
-            비밀번호 저장
-          </button>
-        </form>
+            )}
+
+            {step === "CONFIRM" && (
+              <PinPad
+                title="새 비밀번호를 다시 입력"
+                error={authError}
+                isBusy={isBusy}
+                onComplete={async (pin) => {
+                  if (pin !== newPin) {
+                    setMismatchError("새 비밀번호가 일치하지 않습니다. 다시 설정해주세요.");
+                    setNewPin("");
+                    setStep("NEW");
+                    return false;
+                  }
+                  const ok = await changePin({ currentPin, newPin: pin });
+                  if (!ok) {
+                    // A wrong current PIN lands here — start over.
+                    setCurrentPin("");
+                    setNewPin("");
+                    setStep("CURRENT");
+                    return false;
+                  }
+                  setStep("DONE");
+                  setTimeout(onClose, 1600);
+                }}
+              />
+            )}
+          </>
+        )}
 
         {/* Bottom Close Button for Mobile Convenience */}
         <div className="pt-1">

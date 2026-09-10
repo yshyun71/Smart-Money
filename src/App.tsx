@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { FinanceProvider, useFinance } from "./context/FinanceContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { SimpleAuthScreen } from "./components/auth/SimpleAuthScreen";
+import { PinAuthScreen } from "./components/auth/PinAuthScreen";
 import { MobileHeader } from "./components/layout/MobileHeader";
 import { BottomNavigation, NavTab } from "./components/layout/BottomNavigation";
 import { HomeView } from "./components/views/HomeView";
@@ -207,7 +207,7 @@ const MainContent: React.FC = () => {
 };
 
 const AppGuard: React.FC = () => {
-  const { isAuthenticated, isLocked, isLoading } = useAuth();
+  const { isLoading, isRegistered, isUnlocked } = useAuth();
   const { isDbReady } = useFinance();
 
   // The on-device database has to be open before any screen can render
@@ -222,8 +222,9 @@ const AppGuard: React.FC = () => {
     );
   }
 
-  if (!isAuthenticated || isLocked) {
-    return <SimpleAuthScreen />;
+  // Setup on first run, PIN entry on every launch after that
+  if (!isRegistered || !isUnlocked) {
+    return <PinAuthScreen />;
   }
 
   return <MainContent />;

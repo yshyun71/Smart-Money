@@ -1,145 +1,72 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { getDatabase } from "../db/database";
 import * as repo from "../db/repository";
+import { checkPin, hashPin, isValidPinFormat } from "../services/pinCrypto";
 
-export type AuthProviderType = "KAKAO" | "TOSS" | "PASS" | "NAVER" | "PIN";
-
-export interface AuthenticatedUser {
+export interface OwnerProfile {
   id: string;
   name: string;
-  email: string;
   phone: string;
-  authProvider: AuthProviderType;
-  providerLabel: string;
-  authenticatedAt: string;
-  isBiometricEnabled: boolean;
+  registeredAt: string;
+  lastUnlockedAt: string | null;
 }
 
 export interface AuthContextType {
-  isAuthenticated: boolean;
-  user: AuthenticatedUser | null;
-  registeredUser: {
-    name: string;
-    phone: string;
-    authProvider: AuthProviderType;
-    providerLabel: string;
-  } | null;
-  isLocked: boolean;
-  hasPin: boolean;
   isLoading: boolean;
-  loginWithSimpleAuth: (
-    provider: AuthProviderType,
-    details: { name: string; phone: string; email?: string }
-  ) => Promise<boolean>;
-  sendVerificationCode: (
-    phone: string,
-    provider: AuthProviderType
-  ) => Promise<{ success: boolean; code?: string; error?: string }>;
-  verifyCodeAndLogin: (details: {
-    phone: string;
-    code: string;
+  /** A name and a PIN both exist on this device. */
+  isRegistered: boolean;
+  /** The correct PIN has been entered in this session. */
+  isUnlocked: boolean;
+  /** Set while a PIN is being stretched, which takes a moment. */
+  isBusy: boolean;
+  profile: OwnerProfile | null;
+
+  registerAccount: (details: {
     name: string;
-    provider: AuthProviderType;
-    birth?: string;
-    telecom?: string;
+    phone: string;
+    pin: string;
   }) => Promise<boolean>;
-  loginWithPin: (pin: string) => Promise<boolean>;
-  setPinCode: (newPin: string) => void;
-  logout: () => void;
-  lockApp: () => void;
-  unlockWithPin: (pin: string) => boolean;
-  unlockWithBiometrics: () => Promise<boolean>;
+  unlockWithPin: (pin: string) => Promise<boolean>;
+  changePin: (details: { currentPin: string; newPin: string }) => Promise<boolean>;
+  saveProfile: (details: { name: string; phone: string }) => boolean;
+  lock: () => void;
+
   authError: string | null;
   clearAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function timestampLabel(): string {
-  const now = new Date();
-  return `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(
-    now.getDate()
-  ).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(
-    now.getMinutes()
-  ).padStart(2, "0")}`;
-}
-
-function providerLabelFor(provider: AuthProviderType): string {
-  switch (provider) {
-    case "KAKAO":
-      return "카카오톡 간편인증";
-    case "TOSS":
-      return "토스 간편인증";
-    case "PASS":
-      return "PASS 간편인증";
-    case "NAVER":
-      return "네이버 간편인증";
-    case "PIN":
-      return "간편 비밀번호 인증";
-    default:
-      return "간편인증";
-  }
-}
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState<AuthenticatedUser | null>(null);
-  const [registeredUser, setRegisteredUser] = useState<{
-    name: string;
-    phone: string;
-    authProvider: AuthProviderType;
-    providerLabel: string;
-  } | null>(null);
-  const [hasPin, setHasPin] = useState(false);
-  const [isLocked, setIsLocked] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isBusy, setIsBusy] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [profile, setProfile] = useState<OwnerProfile | null>(null);
+  const [isRegistered, setIsRegistered] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   /**
-   * The device database is the only source of identity — there is no server
-   * session and nothing is mirrored into localStorage.
+   * The device database is the only source of identity. Unlock state is
+   * deliberately not persisted: closing the app locks it again.
    */
-  const readUserFromDb = () => {
-    const record = repo.getUser();
+  const readProfile = () => {
+    const record = repo.getProfile();
     if (!record) {
-      setRegisteredUser(null);
-      setUser(null);
-      setIsAuthenticated(false);
-      setHasPin(false);
+      setProfile(null);
+      setIsRegistered(false);
       return;
     }
 
-    setHasPin(record.hasPin);
-
-    if (record.hasRegisteredIdentity) {
-      setRegisteredUser({
-        name: record.name,
-        phone: record.phone,
-        authProvider: (record.authProvider as AuthProviderType) || "KAKAO",
-        providerLabel: record.providerLabel,
-      });
-    } else {
-      setRegisteredUser(null);
-    }
-
-    if (record.isAuthenticated && record.hasRegisteredIdentity) {
-      setUser({
-        id: record.id,
-        name: record.name,
-        email: record.email,
-        phone: record.phone,
-        authProvider: (record.authProvider as AuthProviderType) || "KAKAO",
-        providerLabel: record.providerLabel,
-        authenticatedAt: record.authenticatedAt || "방금 전",
-        isBiometricEnabled: record.isBiometricEnabled,
-      });
-      setIsAuthenticated(true);
-    } else {
-      setUser(null);
-      setIsAuthenticated(false);
-    }
+    setIsRegistered(record.isRegistered);
+    setProfile({
+      id: record.id,
+      name: record.name,
+      phone: record.phone,
+      registeredAt: record.registeredAt,
+      lastUnlockedAt: record.lastUnlockedAt,
+    });
   };
 
   useEffect(() => {
@@ -147,7 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     (async () => {
       try {
         await getDatabase();
-        if (!cancelled) readUserFromDb();
+        if (!cancelled) readProfile();
       } catch (error) {
         console.error("사용자 정보를 불러오지 못했습니다:", error);
       } finally {
@@ -161,193 +88,149 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const clearAuthError = () => setAuthError(null);
 
-  const applyIdentity = (
-    provider: AuthProviderType,
-    details: { name: string; phone: string; email?: string }
-  ) => {
-    const label = providerLabelFor(provider);
-    repo.saveIdentity({
-      name: details.name.trim(),
-      phone: details.phone.trim(),
-      email: details.email?.trim() || "",
-      provider,
-      providerLabel: label,
-    });
-
-    setRegisteredUser({
-      name: details.name.trim(),
-      phone: details.phone.trim(),
-      authProvider: provider,
-      providerLabel: label,
-    });
-
-    setUser({
-      id: "user_primary",
-      name: details.name.trim(),
-      email: details.email?.trim() || "",
-      phone: details.phone.trim(),
-      authProvider: provider,
-      providerLabel: label,
-      authenticatedAt: timestampLabel(),
-      isBiometricEnabled: true,
-    });
-
-    setIsAuthenticated(true);
-    setIsLocked(false);
-  };
-
-  const sendVerificationCode = async (
-    phone: string,
-    _provider: AuthProviderType
-  ): Promise<{ success: boolean; code?: string; error?: string }> => {
-    setAuthError(null);
-    if (!phone || !phone.trim()) {
-      const message = "휴대폰 번호를 입력해주세요.";
-      setAuthError(message);
-      return { success: false, error: message };
-    }
-
-    // No SMS gateway on the device: the code is shown back to the user.
-    const code = repo.issueVerificationCode(phone);
-    return { success: true, code };
-  };
-
-  const verifyCodeAndLogin = async (details: {
-    phone: string;
-    code: string;
+  const registerAccount = async (details: {
     name: string;
-    provider: AuthProviderType;
-    birth?: string;
-    telecom?: string;
+    phone: string;
+    pin: string;
   }): Promise<boolean> => {
     setAuthError(null);
+
+    if (!details.name.trim()) {
+      setAuthError("이름을 입력해주세요.");
+      return false;
+    }
+    if (details.phone.replace(/[^0-9]/g, "").length < 10) {
+      setAuthError("연락처를 정확히 입력해주세요.");
+      return false;
+    }
+    if (!isValidPinFormat(details.pin)) {
+      setAuthError("간편 비밀번호는 숫자 6자리로 설정해주세요.");
+      return false;
+    }
+
+    setIsBusy(true);
     try {
-      if (!details.name || !details.name.trim()) {
-        throw new Error("성명을 입력해주세요.");
-      }
-      if (!repo.checkVerificationCode(details.phone, details.code)) {
-        throw new Error(
-          "인증번호 6자리가 일치하지 않거나 만료되었습니다. (테스트용: 발송된 6자리 또는 123456)"
-        );
-      }
-
-      applyIdentity(details.provider, { name: details.name, phone: details.phone });
-      return true;
-    } catch (err: any) {
-      setAuthError(err.message || "인증 처리 중 오류가 발생했습니다.");
-      return false;
-    }
-  };
-
-  const loginWithSimpleAuth = async (
-    provider: AuthProviderType,
-    details: { name: string; phone: string; email?: string }
-  ): Promise<boolean> => {
-    setAuthError(null);
-    try {
-      if (!details.name || !details.name.trim()) {
-        throw new Error("성명을 입력해주세요.");
-      }
-      applyIdentity(provider, details);
-      return true;
-    } catch (err: any) {
-      setAuthError(err.message || "간편인증 처리 중 오류가 발생했습니다.");
-      return false;
-    }
-  };
-
-  const loginWithPin = async (enteredPin: string): Promise<boolean> => {
-    setAuthError(null);
-
-    const result = repo.verifyPin(enteredPin);
-    if (!result.success) {
-      setAuthError(result.error || "비밀번호가 일치하지 않습니다.");
-      return false;
-    }
-
-    const record = repo.getUser();
-    if (record) {
-      setUser({
-        id: record.id,
-        name: record.name,
-        email: record.email,
-        phone: record.phone,
-        authProvider: (record.authProvider as AuthProviderType) || "KAKAO",
-        providerLabel: `${record.providerLabel} (PIN 인증)`,
-        authenticatedAt: new Date().toLocaleTimeString("ko-KR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        isBiometricEnabled: record.isBiometricEnabled,
+      const stored = await hashPin(details.pin);
+      repo.registerAccount({
+        name: details.name,
+        phone: details.phone,
+        pin: stored,
       });
-    }
-
-    setIsAuthenticated(true);
-    setIsLocked(false);
-    return true;
-  };
-
-  const unlockWithPin = (enteredPin: string): boolean => {
-    setAuthError(null);
-    const result = repo.verifyPin(enteredPin);
-    if (result.success) {
-      setIsLocked(false);
+      repo.touchLastUnlock();
+      readProfile();
+      setIsUnlocked(true);
       return true;
-    }
-    setAuthError(result.error || "비밀번호가 일치하지 않습니다.");
-    return false;
-  };
-
-  const unlockWithBiometrics = async (): Promise<boolean> => {
-    setAuthError(null);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    setIsLocked(false);
-    return true;
-  };
-
-  const setPinCode = (newPin: string) => {
-    try {
-      repo.savePin(newPin);
-      setHasPin(Boolean(newPin && newPin.length === 6));
     } catch (error) {
-      console.error("간편 비밀번호를 저장하지 못했습니다:", error);
+      console.error("등록에 실패했습니다:", error);
+      setAuthError("등록 중 오류가 발생했습니다. 다시 시도해주세요.");
+      return false;
+    } finally {
+      setIsBusy(false);
     }
   };
 
-  const logout = () => {
-    try {
-      repo.markLoggedOut();
-    } catch (error) {
-      console.error("로그아웃 상태를 저장하지 못했습니다:", error);
-    }
-    setUser(null);
-    setIsAuthenticated(false);
-    setIsLocked(true);
+  const unlockWithPin = async (pin: string): Promise<boolean> => {
     setAuthError(null);
+
+    const stored = repo.readStoredPin();
+    if (!stored) {
+      setAuthError("등록된 간편 비밀번호가 없습니다. 처음 설정을 다시 진행해주세요.");
+      return false;
+    }
+
+    setIsBusy(true);
+    try {
+      const matches = await checkPin(pin, stored);
+      if (!matches) {
+        setAuthError("비밀번호가 일치하지 않습니다.");
+        return false;
+      }
+      repo.touchLastUnlock();
+      readProfile();
+      setIsUnlocked(true);
+      return true;
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const lockApp = () => {
-    setIsLocked(true);
+  const changePin = async (details: {
+    currentPin: string;
+    newPin: string;
+  }): Promise<boolean> => {
+    setAuthError(null);
+
+    if (!isValidPinFormat(details.newPin)) {
+      setAuthError("새 비밀번호는 숫자 6자리로 설정해주세요.");
+      return false;
+    }
+
+    const stored = repo.readStoredPin();
+    if (!stored) {
+      setAuthError("등록된 간편 비밀번호가 없습니다.");
+      return false;
+    }
+
+    setIsBusy(true);
+    try {
+      const matches = await checkPin(details.currentPin, stored);
+      if (!matches) {
+        setAuthError("현재 비밀번호가 일치하지 않습니다.");
+        return false;
+      }
+      repo.savePinHash(await hashPin(details.newPin));
+      readProfile();
+      return true;
+    } catch (error) {
+      console.error("비밀번호 변경에 실패했습니다:", error);
+      setAuthError("비밀번호 변경 중 오류가 발생했습니다.");
+      return false;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const saveProfile = (details: { name: string; phone: string }): boolean => {
+    setAuthError(null);
+
+    if (!details.name.trim()) {
+      setAuthError("이름을 입력해주세요.");
+      return false;
+    }
+    if (details.phone.replace(/[^0-9]/g, "").length < 10) {
+      setAuthError("연락처를 정확히 입력해주세요.");
+      return false;
+    }
+
+    try {
+      repo.updateProfile(details);
+      readProfile();
+      return true;
+    } catch (error) {
+      console.error("정보를 저장하지 못했습니다:", error);
+      setAuthError("정보를 저장하지 못했습니다.");
+      return false;
+    }
+  };
+
+  const lock = () => {
+    setIsUnlocked(false);
+    setAuthError(null);
   };
 
   return (
     <AuthContext.Provider
       value={{
-        isAuthenticated,
-        user,
-        registeredUser,
-        isLocked,
-        hasPin,
         isLoading,
-        loginWithSimpleAuth,
-        sendVerificationCode,
-        verifyCodeAndLogin,
-        loginWithPin,
-        setPinCode,
-        logout,
-        lockApp,
+        isRegistered,
+        isUnlocked,
+        isBusy,
+        profile,
+        registerAccount,
         unlockWithPin,
-        unlockWithBiometrics,
+        changePin,
+        saveProfile,
+        lock,
         authError,
         clearAuthError,
       }}
