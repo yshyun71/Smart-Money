@@ -103,7 +103,7 @@ export const AISavingsCoachView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4 pb-24 pt-1">
+    <div className="space-y-4 pt-1">
       {/* Top Banner with Health Score and Re-analyze */}
       <div className="bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-800 text-white rounded-3xl p-5 shadow-lg relative overflow-hidden">
         <div className="flex items-center justify-between relative z-10 mb-3">

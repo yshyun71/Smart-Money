@@ -207,8 +207,16 @@ const MainContent: React.FC = () => {
 
         {/* Scrollable View Content - Using flex-1 with smooth scrolling */}
         <main
-          className={`flex-1 px-4 py-2 relative overscroll-contain ${
-            isMobileFrame ? "sm:overflow-y-auto" : "overflow-y-visible"
+          /*
+            Bottom padding belongs here rather than in each view, because how
+            much is needed depends on the bottom bar: it overlays the content
+            when fixed (96px of clearance), and takes up its own space when it
+            sits in the frame's flow (a 24px breathing gap is enough).
+          */
+          className={`flex-1 px-4 pt-2 relative overscroll-contain ${
+            isMobileFrame
+              ? "sm:overflow-y-auto pb-24 sm:pb-6"
+              : "overflow-y-visible pb-24"
           }`}
         >
           {renderActiveView()}

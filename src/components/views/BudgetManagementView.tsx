@@ -112,7 +112,7 @@ export const BudgetManagementView: React.FC<{
   const budgetDifference = availableVariableBudget - totalBudgeted;
 
   return (
-    <div className="space-y-4 pb-24 pt-1">
+    <div className="space-y-4 pt-1">
       {/* Toast Notification */}
       {showNotificationToast && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 border border-slate-700 animate-in fade-in slide-in-from-top-2">

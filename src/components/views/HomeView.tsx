@@ -55,7 +55,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       : 0;
 
   return (
-    <div className="space-y-4 pb-24 pt-1">
+    <div className="space-y-4 pt-1">
       {/* PWA Home Banner (prominently shown on mobile browser until installed) */}
       <PWAHomeBanner />
 

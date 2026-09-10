@@ -72,7 +72,7 @@ export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
   };
 
   return (
-    <div className="space-y-3 pb-24 pt-1">
+    <div className="space-y-3 pt-1">
       {/* Search & Add Bar */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">

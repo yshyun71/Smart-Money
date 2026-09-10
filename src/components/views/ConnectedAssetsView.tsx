@@ -147,7 +147,7 @@ export const ConnectedAssetsView: React.FC<{
   };
 
   return (
-    <div className="space-y-4 pb-24 pt-1">
+    <div className="space-y-4 pt-1">
       {/* Success Feedback Notification */}
       {feedbackMsg && (
         <div className="bg-emerald-600 text-white rounded-2xl p-3.5 shadow-md flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-top-2">

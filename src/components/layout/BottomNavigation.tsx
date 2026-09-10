@@ -75,10 +75,15 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
       bar there would sit outside it — leaving the flex-1 scroll area to end
       off-screen behind this bar. `sm:static` puts it back in the frame's flow
       so the scroll area ends exactly where the bar begins.
+
+      The auto side margins have to go with it: on a flex item they apply to
+      the cross axis, which cancels the default stretch and shrinks the bar to
+      its content width — the tabs then bunch up in the middle instead of
+      spreading across the frame.
     */
     <nav
       className={`fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 mx-auto select-none safe-bottom transition-all duration-300 ${
-        isMobileFrame ? "max-w-md sm:static" : "max-w-4xl"
+        isMobileFrame ? "max-w-md sm:static sm:mx-0 sm:w-full" : "max-w-4xl"
       }`}
     >
       <div className="flex items-center justify-around h-16 px-1">

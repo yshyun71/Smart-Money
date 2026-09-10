@@ -173,7 +173,7 @@ export const AnalyticsDashboardView: React.FC<{
   const monthDiffPercent = Math.round((monthDiff / prevMonthExpense) * 100);
 
   return (
-    <div className="space-y-4 pb-24 pt-1">
+    <div className="space-y-4 pt-1">
       {/* Top Header Card with Mode Switcher */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs">
         <div className="flex items-center justify-between mb-3">
