@@ -14,10 +14,10 @@ import { BudgetManagementView } from "./components/views/BudgetManagementView";
 import { AddTransactionModal } from "./components/transactions/AddTransactionModal";
 import { SMSParserModal } from "./components/modals/SMSParserModal";
 import { OfflineIndicator } from "./components/pwa/PWAInstallButton";
-import { Wifi, Battery, Signal, Smartphone, Maximize2 } from "lucide-react";
+import { Wifi, Signal } from "lucide-react";
 
 const MainContent: React.FC = () => {
-  const { viewMode, setViewMode, aiAnalysis } = useFinance();
+  const { viewMode, aiAnalysis } = useFinance();
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSMSModalOpen, setIsSMSModalOpen] = useState(false);
@@ -107,53 +107,6 @@ const MainContent: React.FC = () => {
           : "bg-slate-100 sm:bg-slate-950 sm:py-5 sm:px-4"
       }`}
     >
-      {/* Top Device Frame Controller Bar (Shown on sm+ screens) */}
-      <div
-        className={`hidden sm:flex items-center justify-between w-full mb-3 px-2 transition-all duration-300 ${
-          isMobileFrame ? "max-w-md" : "max-w-4xl"
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs font-bold text-slate-200">
-            {isMobileFrame
-              ? "스마트폰 프레임 뷰 (390 × 844)"
-              : "와이드 전체 화면 뷰"}
-          </span>
-          <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full">
-            {isMobileFrame ? "Galaxy / iPhone 규격" : "PC / 태블릿 최적화"}
-          </span>
-        </div>
-
-        {/* View mode toggle segmented buttons */}
-        <div className="bg-slate-900 p-1 rounded-2xl border border-slate-800 flex items-center gap-1 shadow-sm">
-          <button
-            onClick={() => setViewMode("MOBILE_FRAME")}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition active:scale-95 ${
-              isMobileFrame
-                ? "bg-emerald-600 text-white shadow-xs"
-                : "text-slate-400 hover:text-white"
-            }`}
-            title="스마트폰 실기기 프레임 모드로 전환"
-          >
-            <Smartphone className="w-3.5 h-3.5" />
-            <span>모바일 폰</span>
-          </button>
-          <button
-            onClick={() => setViewMode("RESPONSIVE_FULL")}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition active:scale-95 ${
-              !isMobileFrame
-                ? "bg-emerald-600 text-white shadow-xs"
-                : "text-slate-400 hover:text-white"
-            }`}
-            title="와이드 전체 화면으로 전환"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span>와이드 화면</span>
-          </button>
-        </div>
-      </div>
-
       {/*
         Mobile container / Android Frame
 
@@ -164,11 +117,13 @@ const MainContent: React.FC = () => {
         pushed the bottom of the frame — and with it the end of the scroll
         area — below the screen. Resetting the minimum matters too, or the
         full-height base class overrides the height the same way.
+
+        The subtracted 3rem covers this wrapper's own vertical padding.
       */}
       <div
         className={`w-full bg-slate-50 flex flex-col relative transition-all duration-300 min-h-screen ${
           isMobileFrame
-            ? "max-w-md sm:min-h-0 sm:h-[min(844px,calc(100dvh-6rem))] sm:rounded-[44px] sm:shadow-2xl sm:shadow-black/70 sm:border-[9px] sm:border-slate-800 sm:overflow-hidden"
+            ? "max-w-md sm:min-h-0 sm:h-[min(844px,calc(100dvh-3rem))] sm:rounded-[44px] sm:shadow-2xl sm:shadow-black/70 sm:border-[9px] sm:border-slate-800 sm:overflow-hidden"
             : "max-w-4xl sm:rounded-2xl sm:shadow-xl sm:border sm:border-slate-200"
         }`}
       >
