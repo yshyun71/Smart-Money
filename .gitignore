@@ -12,3 +12,9 @@ coverage/
 
 # Runtime SQLite database (contains personal finance data)
 finance.db
+
+# PWA dev service worker output
+dev-dist/
+
+# Editor settings (personal)
+.vscode/

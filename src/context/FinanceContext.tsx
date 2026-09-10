@@ -1,22 +1,28 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ConnectedAccount,
   Transaction,
   AISpendingAnalysis,
-  SavingsRecommendation,
   MonthlyBudgetConfig,
   CategoryBudgetStatus,
   BudgetAlert,
-  CategoryType,
 } from "../types/finance";
 import {
-  INITIAL_ACCOUNTS,
-  INITIAL_TRANSACTIONS,
-  INITIAL_AI_ANALYSIS,
-  INITIAL_BUDGET_CONFIG,
-  MONTHLY_HISTORICAL_DATA,
-  YEARLY_HISTORICAL_DATA,
-} from "../data/mockFinanceData";
+  clearAllData,
+  exportDatabaseBytes,
+  getDatabase,
+  getDbStats,
+  importDatabaseBytes,
+} from "../db/database";
+import * as repo from "../db/repository";
+import { analyzeSpending } from "../services/aiClient";
 
 interface MonthlyHistoricalItem {
   month: string;
@@ -43,6 +49,7 @@ export interface DBStatsInfo {
   sizeBytes: number;
   tables: Record<string, number>;
   lastSavedAt: string;
+  schemaVersion: number;
 }
 
 interface FinanceContextType {
@@ -53,17 +60,21 @@ interface FinanceContextType {
   setSelectedMonth: (month: string) => void;
   aiAnalysis: AISpendingAnalysis | null;
   isAnalyzingAI: boolean;
+  aiError: string | null;
+  clearAiError: () => void;
   isSyncing: boolean;
   lastSyncTime: string;
   viewMode: "MOBILE_FRAME" | "RESPONSIVE_FULL";
   setViewMode: (mode: "MOBILE_FRAME" | "RESPONSIVE_FULL") => void;
 
-  // SQLite Database
+  // On-device database
+  isDbReady: boolean;
   dbStats: DBStatsInfo | null;
   refreshDbData: () => Promise<void>;
   resetToClean: () => Promise<void>;
   resetToSample: () => Promise<void>;
   exportDatabaseFile: () => void;
+  importDatabaseFile: (file: File) => Promise<void>;
 
   // Actions
   addTransaction: (tx: Omit<Transaction, "id">) => void;
@@ -76,7 +87,7 @@ interface FinanceContextType {
   runAISpendingAnalysis: () => Promise<void>;
   syncAccounts: () => Promise<void>;
 
-  // Computed financial metrics
+  // Derived metrics
   totalIncome: number;
   totalExpense: number;
   fixedExpenseTotal: number;
@@ -87,7 +98,7 @@ interface FinanceContextType {
   categoryExpenses: { category: string; amount: number; percentage: number }[];
   implementedSavingsTotal: number;
 
-  // Budget Management & Alerts
+  // Budget
   budgetConfig: MonthlyBudgetConfig;
   updateBudgetConfig: (partial: Partial<MonthlyBudgetConfig>) => void;
   setCategoryBudget: (category: string, amount: number) => void;
@@ -101,86 +112,59 @@ interface FinanceContextType {
   totalVariableSpent: number;
   disposableIncome: number;
 
-  // Historical Analytics Data
+  // History
   monthlyHistoricalData: MonthlyHistoricalItem[];
   yearlyHistoricalData: YearlyHistoricalItem[];
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
-const STORAGE_KEY_TX = "smart_money_transactions_v1";
-const STORAGE_KEY_ACCOUNTS = "smart_money_accounts_v1";
-const STORAGE_KEY_AI = "smart_money_ai_analysis_v1";
-const STORAGE_KEY_BUDGET = "smart_money_budget_v1";
 const STORAGE_KEY_DISMISSED_ALERTS = "smart_money_dismissed_alerts_v1";
+
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function emptyBudgetConfig(month: string): MonthlyBudgetConfig {
+  return {
+    month,
+    monthlyIncome: 0,
+    fixedExpenses: 0,
+    savingsTarget: 0,
+    categoryBudgets: {},
+    alertThresholdPercent: 80,
+    enablePushAlerts: true,
+  };
+}
 
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [accounts, setAccounts] = useState<ConnectedAccount[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_ACCOUNTS);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse accounts from localStorage", e);
-      }
-    }
-    return INITIAL_ACCOUNTS;
-  });
-
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_TX);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse transactions from localStorage", e);
-      }
-    }
-    return INITIAL_TRANSACTIONS;
-  });
-
-  const [aiAnalysis, setAiAnalysis] = useState<AISpendingAnalysis | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_AI);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse AI analysis from localStorage", e);
-      }
-    }
-    return INITIAL_AI_ANALYSIS;
-  });
-
-  const [budgetConfig, setBudgetConfig] = useState<MonthlyBudgetConfig>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_BUDGET);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse budget config from localStorage", e);
-      }
-    }
-    return INITIAL_BUDGET_CONFIG;
-  });
+  const [isDbReady, setIsDbReady] = useState(false);
+  const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [aiAnalysis, setAiAnalysis] = useState<AISpendingAnalysis | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
+  const [budgetConfig, setBudgetConfig] = useState<MonthlyBudgetConfig>(() =>
+    emptyBudgetConfig(currentMonthKey())
+  );
 
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_DISMISSED_ALERTS);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse dismissed alert IDs", e);
-      }
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_DISMISSED_ALERTS);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
     }
-    return [];
   });
 
-  const [selectedMonth, setSelectedMonth] = useState<string>("2026-09");
   const [isAnalyzingAI, setIsAnalyzingAI] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState("방금 전");
+  const [lastSyncTime, setLastSyncTime] = useState("아직 동기화 안 함");
+  const [dbStats, setDbStats] = useState<DBStatsInfo | null>(null);
+
   // Default to RESPONSIVE_FULL on actual mobile devices (<640px), MOBILE_FRAME on desktop preview
   const [viewMode, setViewMode] = useState<"MOBILE_FRAME" | "RESPONSIVE_FULL">(() => {
     if (typeof window !== "undefined" && window.innerWidth < 640) {
@@ -188,122 +172,93 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     return "MOBILE_FRAME";
   });
-  const [dbStats, setDbStats] = useState<DBStatsInfo | null>(null);
 
-  // Load live data from SQLite Database via REST APIs
-  const refreshDbData = async () => {
-    try {
-      // 1. Fetch DB Status
-      fetch("/api/db/status")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success) {
-            setDbStats({
-              path: data.path,
-              sizeBytes: data.sizeBytes,
-              tables: data.tables,
-              lastSavedAt: data.lastSavedAt,
-            });
-          }
-        })
-        .catch((err) => console.warn("DB status fetch warning:", err));
+  // -------------------------------------------------------------------------
+  // On-device database
+  // -------------------------------------------------------------------------
 
-      // 2. Fetch Accounts
-      const accRes = await fetch("/api/accounts");
-      const accData = await accRes.json();
-      if (accData.success && Array.isArray(accData.accounts)) {
-        setAccounts(accData.accounts);
-      }
-
-      // 3. Fetch Transactions
-      const txRes = await fetch("/api/transactions");
-      const txData = await txRes.json();
-      if (txData.success && Array.isArray(txData.transactions)) {
-        setTransactions(txData.transactions);
-      }
-
-      // 4. Fetch Budgets
-      const budgetRes = await fetch(`/api/budgets?month=${selectedMonth}`);
-      const budgetData = await budgetRes.json();
-      if (budgetData.success && budgetData.config) {
-        setBudgetConfig(budgetData.config);
-      }
-
-      // 5. Fetch AI Analysis for month
-      const aiRes = await fetch(`/api/ai/analysis?month=${selectedMonth}`);
-      const aiData = await aiRes.json();
-      if (aiData.success && aiData.data) {
-        setAiAnalysis(aiData.data);
-      }
-    } catch (err) {
-      console.error("Failed to refresh data from SQLite backend:", err);
-    }
-  };
-
-  // Initial load from SQLite on mount and when selectedMonth changes
-  useEffect(() => {
-    refreshDbData();
+  const refreshDbData = useCallback(async () => {
+    await getDatabase();
+    setAccounts(repo.listAccounts());
+    setTransactions(repo.listTransactions());
+    setBudgetConfig(repo.getBudgetConfig(selectedMonth));
+    setAiAnalysis(repo.getAnalysis(selectedMonth));
+    setDbStats(getDbStats());
   }, [selectedMonth]);
 
-  // Save to LocalStorage as secondary offline backup
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(accounts));
-  }, [accounts]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_TX, JSON.stringify(transactions));
-  }, [transactions]);
-
-  useEffect(() => {
-    if (aiAnalysis) {
-      localStorage.setItem(STORAGE_KEY_AI, JSON.stringify(aiAnalysis));
-    }
-  }, [aiAnalysis]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_BUDGET, JSON.stringify(budgetConfig));
-  }, [budgetConfig]);
+    let cancelled = false;
+    (async () => {
+      try {
+        await refreshDbData();
+      } catch (error) {
+        console.error("기기 내 데이터베이스를 여는 데 실패했습니다:", error);
+      } finally {
+        if (!cancelled) setIsDbReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshDbData]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_DISMISSED_ALERTS, JSON.stringify(dismissedAlertIds));
   }, [dismissedAlertIds]);
 
-  // Filter transactions by selected month
-  const monthlyTransactions = useMemo(() => {
-    return transactions.filter((tx) => tx.date.startsWith(selectedMonth));
-  }, [transactions, selectedMonth]);
+  const syncStats = useCallback(() => {
+    try {
+      setDbStats(getDbStats());
+    } catch {
+      /* database not open yet */
+    }
+  }, []);
 
-  // Derived metrics for currently selected month
-  const totalIncome = useMemo(() => {
-    return monthlyTransactions
-      .filter((tx) => tx.type === "INCOME")
-      .reduce((acc, cur) => acc + cur.amount, 0);
-  }, [monthlyTransactions]);
+  // -------------------------------------------------------------------------
+  // Derived metrics for the selected month
+  // -------------------------------------------------------------------------
 
-  const totalExpense = useMemo(() => {
-    return monthlyTransactions
-      .filter((tx) => tx.type === "EXPENSE")
-      .reduce((acc, cur) => acc + cur.amount, 0);
-  }, [monthlyTransactions]);
+  const monthlyTransactions = useMemo(
+    () => transactions.filter((tx) => tx.date.startsWith(selectedMonth)),
+    [transactions, selectedMonth]
+  );
 
-  const fixedExpenseTotal = useMemo(() => {
-    return monthlyTransactions
-      .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "FIXED")
-      .reduce((acc, cur) => acc + cur.amount, 0);
-  }, [monthlyTransactions]);
+  const totalIncome = useMemo(
+    () =>
+      monthlyTransactions
+        .filter((tx) => tx.type === "INCOME")
+        .reduce((acc, cur) => acc + cur.amount, 0),
+    [monthlyTransactions]
+  );
 
-  const variableExpenseTotal = useMemo(() => {
-    return monthlyTransactions
-      .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "VARIABLE")
-      .reduce((acc, cur) => acc + cur.amount, 0);
-  }, [monthlyTransactions]);
+  const totalExpense = useMemo(
+    () =>
+      monthlyTransactions
+        .filter((tx) => tx.type === "EXPENSE")
+        .reduce((acc, cur) => acc + cur.amount, 0),
+    [monthlyTransactions]
+  );
+
+  const fixedExpenseTotal = useMemo(
+    () =>
+      monthlyTransactions
+        .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "FIXED")
+        .reduce((acc, cur) => acc + cur.amount, 0),
+    [monthlyTransactions]
+  );
+
+  const variableExpenseTotal = useMemo(
+    () =>
+      monthlyTransactions
+        .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "VARIABLE")
+        .reduce((acc, cur) => acc + cur.amount, 0),
+    [monthlyTransactions]
+  );
 
   const netSavings = totalIncome - totalExpense;
-
   const fixedRatio = totalExpense > 0 ? (fixedExpenseTotal / totalExpense) * 100 : 0;
   const variableRatio = totalExpense > 0 ? (variableExpenseTotal / totalExpense) * 100 : 0;
 
-  // Category breakdown for expenses
   const categoryExpenses = useMemo(() => {
     const map: Record<string, number> = {};
     monthlyTransactions
@@ -312,16 +267,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         map[tx.category] = (map[tx.category] || 0) + tx.amount;
       });
 
-    const list = Object.entries(map).map(([category, amount]) => ({
-      category,
-      amount,
-      percentage: totalExpense > 0 ? (amount / totalExpense) * 100 : 0,
-    }));
-
-    return list.sort((a, b) => b.amount - a.amount);
+    return Object.entries(map)
+      .map(([category, amount]) => ({
+        category,
+        amount,
+        percentage: totalExpense > 0 ? (amount / totalExpense) * 100 : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
   }, [monthlyTransactions, totalExpense]);
 
-  // Total saved by implemented recommendations
   const implementedSavingsTotal = useMemo(() => {
     if (!aiAnalysis?.savingsRecommendations) return 0;
     return aiAnalysis.savingsRecommendations
@@ -329,29 +283,99 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       .reduce((acc, cur) => acc + (cur.estimatedMonthlySavings || 0), 0);
   }, [aiAnalysis]);
 
-  // Budget calculations
+  // -------------------------------------------------------------------------
+  // History, derived from the transactions actually on this device
+  // -------------------------------------------------------------------------
+
+  const summarise = (txs: Transaction[]) => {
+    const income = txs.filter((t) => t.type === "INCOME").reduce((a, c) => a + c.amount, 0);
+    const expense = txs.filter((t) => t.type === "EXPENSE").reduce((a, c) => a + c.amount, 0);
+    const fixed = txs
+      .filter((t) => t.type === "EXPENSE" && t.expenseType === "FIXED")
+      .reduce((a, c) => a + c.amount, 0);
+    const variable = txs
+      .filter((t) => t.type === "EXPENSE" && t.expenseType === "VARIABLE")
+      .reduce((a, c) => a + c.amount, 0);
+    return { income, expense, fixed, variable, savings: income - expense };
+  };
+
+  const monthlyHistoricalData = useMemo<MonthlyHistoricalItem[]>(() => {
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const items: MonthlyHistoricalItem[] = [];
+
+    for (let offset = 5; offset >= 0; offset--) {
+      const date = new Date(year, month - 1 - offset, 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const totals = summarise(transactions.filter((tx) => tx.date.startsWith(key)));
+      items.push({
+        month: key,
+        displayMonth: `${date.getMonth() + 1}월`,
+        ...totals,
+      });
+    }
+
+    return items;
+  }, [transactions, selectedMonth]);
+
+  const yearlyHistoricalData = useMemo<YearlyHistoricalItem[]>(() => {
+    const byYear = new Map<string, Transaction[]>();
+    transactions.forEach((tx) => {
+      const year = tx.date.slice(0, 4);
+      if (!byYear.has(year)) byYear.set(year, []);
+      byYear.get(year)!.push(tx);
+    });
+
+    return Array.from(byYear.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([year, txs]) => {
+        const totals = summarise(txs);
+        const categoryMap: Record<string, number> = {};
+        txs
+          .filter((tx) => tx.type === "EXPENSE")
+          .forEach((tx) => {
+            categoryMap[tx.category] = (categoryMap[tx.category] || 0) + tx.amount;
+          });
+
+        const categories = Object.entries(categoryMap)
+          .map(([category, amount]) => ({
+            category,
+            amount,
+            percentage: totals.expense > 0 ? (amount / totals.expense) * 100 : 0,
+          }))
+          .sort((a, b) => b.amount - a.amount);
+
+        return { year, ...totals, categories };
+      });
+  }, [transactions]);
+
+  // -------------------------------------------------------------------------
+  // Budget
+  // -------------------------------------------------------------------------
+
   const disposableIncome = Math.max(
     0,
     budgetConfig.monthlyIncome - budgetConfig.fixedExpenses - budgetConfig.savingsTarget
   );
 
-  const totalBudgeted = useMemo(() => {
-    return Object.values(budgetConfig.categoryBudgets || {}).reduce(
-      (acc: number, cur) => acc + Number(cur || 0),
-      0
-    );
-  }, [budgetConfig.categoryBudgets]);
+  const totalBudgeted = useMemo(
+    () =>
+      Object.values(budgetConfig.categoryBudgets || {}).reduce(
+        (acc: number, cur) => acc + Number(cur || 0),
+        0
+      ),
+    [budgetConfig.categoryBudgets]
+  );
 
-  const totalVariableBudget = useMemo(() => {
-    // Variable categories excluding housing/fixed items if separate
-    return Object.entries(budgetConfig.categoryBudgets || {})
-      .filter(([cat]) => cat !== "주거/통신" && cat !== "금융/보험")
-      .reduce((acc: number, [, val]) => acc + Number(val || 0), 0);
-  }, [budgetConfig.categoryBudgets]);
+  const totalVariableBudget = useMemo(
+    () =>
+      Object.entries(budgetConfig.categoryBudgets || {})
+        .filter(([cat]) => cat !== "주거/통신" && cat !== "금융/보험")
+        .reduce((acc: number, [, val]) => acc + Number(val || 0), 0),
+    [budgetConfig.categoryBudgets]
+  );
 
   const totalVariableSpent = variableExpenseTotal;
 
-  // Category Budget Status List
   const budgetStatusList = useMemo<CategoryBudgetStatus[]>(() => {
     const categorySpentMap: Record<string, number> = {};
     monthlyTransactions
@@ -367,33 +391,27 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       ])
     );
 
-    return allCategories.map((category) => {
-      const budget = budgetConfig.categoryBudgets[category] || 0;
-      const spent = categorySpentMap[category] || 0;
-      const remaining = budget - spent;
-      const percentage = budget > 0 ? (spent / budget) * 100 : spent > 0 ? 100 : 0;
+    return allCategories
+      .map((category) => {
+        const budget = budgetConfig.categoryBudgets[category] || 0;
+        const spent = categorySpentMap[category] || 0;
+        const remaining = budget - spent;
+        const percentage = budget > 0 ? (spent / budget) * 100 : spent > 0 ? 100 : 0;
 
-      let status: "SAFE" | "WARNING" | "EXCEEDED" = "SAFE";
-      if (budget > 0) {
-        if (percentage >= 100) {
-          status = "EXCEEDED";
-        } else if (percentage >= (budgetConfig.alertThresholdPercent || 80)) {
-          status = "WARNING";
+        let status: "SAFE" | "WARNING" | "EXCEEDED" = "SAFE";
+        if (budget > 0) {
+          if (percentage >= 100) {
+            status = "EXCEEDED";
+          } else if (percentage >= (budgetConfig.alertThresholdPercent || 80)) {
+            status = "WARNING";
+          }
         }
-      }
 
-      return {
-        category,
-        budget,
-        spent,
-        remaining,
-        percentage,
-        status,
-      };
-    }).sort((a, b) => b.percentage - a.percentage);
+        return { category, budget, spent, remaining, percentage, status };
+      })
+      .sort((a, b) => b.percentage - a.percentage);
   }, [monthlyTransactions, budgetConfig]);
 
-  // Active Budget Alerts
   const budgetAlerts = useMemo<BudgetAlert[]>(() => {
     if (!budgetConfig.enablePushAlerts) return [];
 
@@ -403,6 +421,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const alertId = `${selectedMonth}-${item.category}-${item.status}`;
       if (dismissedAlertIds.includes(alertId)) return;
+
+      const createdAt = new Date().toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 
       if (item.status === "EXCEEDED") {
         alerts.push({
@@ -415,10 +438,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
           message: `[${item.category}] 예산 ${item.budget.toLocaleString()}원 대비 ${item.spent.toLocaleString()}원(${Math.round(
             item.percentage
           )}%)을 지출하여 예산을 초과했습니다!`,
-          createdAt: new Date().toLocaleTimeString("ko-KR", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
+          createdAt,
         });
       } else if (item.status === "WARNING") {
         alerts.push({
@@ -431,10 +451,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
           message: `[${item.category}] 예산의 ${Math.round(
             item.percentage
           )}%를 소진했습니다 (${(item.budget - item.spent).toLocaleString()}원 남음).`,
-          createdAt: new Date().toLocaleTimeString("ko-KR", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
+          createdAt,
         });
       }
     });
@@ -442,16 +459,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     return alerts;
   }, [budgetStatusList, budgetConfig.enablePushAlerts, dismissedAlertIds, selectedMonth]);
 
-  // Budget Actions
+  const persistBudget = (next: MonthlyBudgetConfig) => {
+    try {
+      repo.saveBudgetConfig(next);
+      syncStats();
+    } catch (error) {
+      console.error("예산을 저장하지 못했습니다:", error);
+    }
+  };
+
   const updateBudgetConfig = (partial: Partial<MonthlyBudgetConfig>) => {
     setBudgetConfig((prev) => {
-      const next = { ...prev, ...partial };
-      // Save to SQLite
-      fetch("/api/budgets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      }).catch((e) => console.error("Failed to save budget config to SQLite:", e));
+      const next = { ...prev, ...partial, month: prev.month || selectedMonth };
+      persistBudget(next);
       return next;
     });
   };
@@ -460,50 +480,39 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     setBudgetConfig((prev) => {
       const next = {
         ...prev,
+        month: prev.month || selectedMonth,
         categoryBudgets: {
           ...prev.categoryBudgets,
           [category]: Math.max(0, amount),
         },
       };
-      // Save to SQLite
-      fetch("/api/budgets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      }).catch((e) => console.error("Failed to save budget to SQLite:", e));
+      persistBudget(next);
       return next;
     });
   };
 
-  // AI Smart Auto-allocation based on 50/30/20 rule and past patterns
   const autoAllocateBudgets = (income: number, fixed: number, savingsTarget: number) => {
     const availableVariable = Math.max(0, income - fixed - savingsTarget);
 
-    // Distribution ratios for standard variable spending
     const ratios: Record<string, number> = {
-      "식비": 0.40,      // 40% of variable
-      "카페/간식": 0.08,  // 8%
-      "쇼핑": 0.18,       // 18%
-      "교통": 0.12,       // 12%
-      "문화/여가": 0.10,  // 10%
-      "생활/의료": 0.07,  // 7%
-      "기타지출": 0.05,   // 5%
+      "식비": 0.4,
+      "카페/간식": 0.08,
+      "쇼핑": 0.18,
+      "교통": 0.12,
+      "문화/여가": 0.1,
+      "생활/의료": 0.07,
+      "기타지출": 0.05,
     };
 
-    const newBudgets: Record<string, number> = {
-      ...budgetConfig.categoryBudgets,
-      "주거/통신": 820000,
-      "구독/미디어": 45000,
-      "금융/보험": 160000,
-    };
-
+    const newBudgets: Record<string, number> = { ...budgetConfig.categoryBudgets };
     Object.entries(ratios).forEach(([cat, ratio]) => {
       // Round to nearest 10,000 KRW
       newBudgets[cat] = Math.round((availableVariable * ratio) / 10000) * 10000;
     });
 
-    const nextConfig = {
+    const nextConfig: MonthlyBudgetConfig = {
       ...budgetConfig,
+      month: budgetConfig.month || selectedMonth,
       monthlyIncome: income,
       fixedExpenses: fixed,
       savingsTarget,
@@ -511,13 +520,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     setBudgetConfig(nextConfig);
-
-    // Save to SQLite
-    fetch("/api/budgets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(nextConfig),
-    }).catch((e) => console.error("Failed to save auto budgets to SQLite:", e));
+    persistBudget(nextConfig);
   };
 
   const dismissAlert = (id: string) => {
@@ -525,269 +528,230 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const markAllAlertsAsRead = () => {
-    setDismissedAlertIds((prev) => [
-      ...prev,
-      ...budgetAlerts.map((a) => a.id),
-    ]);
+    setDismissedAlertIds((prev) => [...prev, ...budgetAlerts.map((a) => a.id)]);
   };
 
-  // Actions
-  const addTransaction = async (tx: Omit<Transaction, "id">) => {
-    const tempId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const newTx: Transaction = {
-      ...tx,
-      id: tempId,
-    };
-    setTransactions((prev) => [newTx, ...prev]);
+  // -------------------------------------------------------------------------
+  // Transactions & accounts
+  // -------------------------------------------------------------------------
 
+  const newId = (prefix: string) =>
+    `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+  const addTransaction = (tx: Omit<Transaction, "id">) => {
+    const newTx: Transaction = { ...tx, id: newId("tx") };
     try {
-      const res = await fetch("/api/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newTx),
-      });
-      const data = await res.json();
-      if (data.success && data.transaction) {
-        setTransactions((prev) =>
-          prev.map((t) => (t.id === tempId ? data.transaction : t))
-        );
-      }
-      // Refresh accounts and db stats
-      fetch("/api/accounts")
-        .then((r) => r.json())
-        .then((d) => d.success && setAccounts(d.accounts))
-        .catch(() => {});
-      fetch("/api/db/status")
-        .then((r) => r.json())
-        .then((d) => d.success && setDbStats(d))
-        .catch(() => {});
-    } catch (err) {
-      console.error("Failed to persist transaction to SQLite:", err);
+      repo.insertTransaction(newTx);
+      setTransactions((prev) => [newTx, ...prev]);
+      setAccounts(repo.listAccounts());
+      syncStats();
+    } catch (error) {
+      console.error("거래를 저장하지 못했습니다:", error);
     }
   };
 
-  const addTransactions = async (txs: Omit<Transaction, "id">[]) => {
+  const addTransactions = (txs: Omit<Transaction, "id">[]) => {
     const newItems: Transaction[] = txs.map((tx, idx) => ({
       ...tx,
       id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
     }));
-    setTransactions((prev) => [...newItems, ...prev]);
-
     try {
-      await fetch("/api/transactions/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactions: newItems }),
-      });
-      refreshDbData();
-    } catch (err) {
-      console.error("Failed to batch persist transactions to SQLite:", err);
+      repo.insertTransactions(newItems);
+      setTransactions((prev) => [...newItems, ...prev]);
+      setAccounts(repo.listAccounts());
+      syncStats();
+    } catch (error) {
+      console.error("거래를 일괄 저장하지 못했습니다:", error);
     }
   };
 
-  const deleteTransaction = async (id: string) => {
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
+  const deleteTransaction = (id: string) => {
     try {
-      await fetch(`/api/transactions/${id}`, { method: "DELETE" });
-      fetch("/api/db/status")
-        .then((r) => r.json())
-        .then((d) => d.success && setDbStats(d))
-        .catch(() => {});
-    } catch (err) {
-      console.error("Failed to delete transaction from SQLite:", err);
+      repo.deleteTransaction(id);
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      syncStats();
+    } catch (error) {
+      console.error("거래를 삭제하지 못했습니다:", error);
     }
   };
 
-  const addAccount = async (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => {
-    const tempId = `acc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const syncTime = new Date().toLocaleDateString("ko-KR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const addAccount = (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => {
     const newAcc: ConnectedAccount = {
       ...acc,
-      id: tempId,
-      lastSyncedAt: syncTime,
+      id: newId("acc"),
+      lastSyncedAt: new Date().toLocaleString("ko-KR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }),
     };
-    setAccounts((prev) => [newAcc, ...prev]);
-
     try {
-      const res = await fetch("/api/accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newAcc),
-      });
-      const data = await res.json();
-      if (data.success && data.account) {
-        setAccounts((prev) =>
-          prev.map((a) => (a.id === tempId ? data.account : a))
-        );
-      }
-      fetch("/api/db/status")
-        .then((r) => r.json())
-        .then((d) => d.success && setDbStats(d))
-        .catch(() => {});
-    } catch (err) {
-      console.error("Failed to save account to SQLite:", err);
+      repo.insertAccount(newAcc);
+      setAccounts((prev) => [newAcc, ...prev]);
+      syncStats();
+    } catch (error) {
+      console.error("계좌를 저장하지 못했습니다:", error);
     }
   };
 
-  const deleteAccount = async (id: string) => {
-    setAccounts((prev) => prev.filter((a) => a.id !== id));
+  const deleteAccount = (id: string) => {
     try {
-      await fetch(`/api/accounts/${id}`, { method: "DELETE" });
-      fetch("/api/db/status")
-        .then((r) => r.json())
-        .then((d) => d.success && setDbStats(d))
-        .catch(() => {});
-    } catch (err) {
-      console.error("Failed to delete account from SQLite:", err);
+      repo.deleteAccount(id);
+      setAccounts((prev) => prev.filter((a) => a.id !== id));
+      syncStats();
+    } catch (error) {
+      console.error("계좌를 삭제하지 못했습니다:", error);
     }
   };
 
-  const toggleFixedType = async (id: string) => {
-    setTransactions((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const nextType = t.expenseType === "FIXED" ? "VARIABLE" : "FIXED";
-        return { ...t, expenseType: nextType, isFixedRecurring: nextType === "FIXED" };
-      })
-    );
+  const toggleFixedType = (id: string) => {
     try {
-      await fetch(`/api/transactions/${id}/toggle-fixed`, { method: "PATCH" });
-    } catch (err) {
-      console.error("Failed to toggle fixed type in SQLite:", err);
-    }
-  };
-
-  const toggleRecommendation = async (id: string) => {
-    if (!aiAnalysis) return;
-    setAiAnalysis((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        savingsRecommendations: prev.savingsRecommendations.map((rec) =>
-          rec.id === id ? { ...rec, isImplemented: !rec.isImplemented } : rec
-        ),
-      };
-    });
-    try {
-      await fetch(`/api/ai/recommendation/${id}/toggle`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: selectedMonth }),
-      });
-    } catch (err) {
-      console.error("Failed to toggle recommendation in SQLite:", err);
+      const next = repo.toggleTransactionFixed(id);
+      if (!next) return;
+      setTransactions((prev) =>
+        prev.map((t) =>
+          t.id === id ? { ...t, expenseType: next, isFixedRecurring: next === "FIXED" } : t
+        )
+      );
+    } catch (error) {
+      console.error("고정비 구분을 변경하지 못했습니다:", error);
     }
   };
 
   const syncAccounts = async () => {
     setIsSyncing(true);
     try {
-      const res = await fetch("/api/accounts/sync", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        setAccounts(data.accounts);
-        setLastSyncTime(data.lastSyncTime || "방금 전");
-      }
-    } catch (err) {
-      console.error("Failed to sync accounts with SQLite:", err);
+      const label = repo.touchAccountSync();
+      setAccounts(repo.listAccounts());
+      setLastSyncTime(label);
+    } catch (error) {
+      console.error("계좌 동기화에 실패했습니다:", error);
     } finally {
       setIsSyncing(false);
     }
   };
 
+  // -------------------------------------------------------------------------
+  // AI
+  // -------------------------------------------------------------------------
+
+  const clearAiError = () => setAiError(null);
+
+  const toggleRecommendation = (id: string) => {
+    setAiAnalysis((prev) => {
+      if (!prev) return prev;
+      const next: AISpendingAnalysis = {
+        ...prev,
+        savingsRecommendations: prev.savingsRecommendations.map((rec) =>
+          rec.id === id ? { ...rec, isImplemented: !rec.isImplemented } : rec
+        ),
+      };
+      try {
+        repo.saveAnalysis(selectedMonth, next);
+      } catch (error) {
+        console.error("추천 실천 상태를 저장하지 못했습니다:", error);
+      }
+      return next;
+    });
+  };
+
   const runAISpendingAnalysis = async () => {
     setIsAnalyzingAI(true);
+    setAiError(null);
     try {
       const fixedItems = monthlyTransactions
         .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "FIXED")
         .map((t) => ({ merchant: t.merchant, amount: t.amount, category: t.category }));
 
-      const res = await fetch("/api/ai/analyze-spending", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          month: selectedMonth,
-          totalIncome,
-          totalExpense,
-          fixedExpenseTotal,
-          variableExpenseTotal,
-          fixedItems,
-          variableTopCategories: categoryExpenses.slice(0, 5),
-          recentTransactions: monthlyTransactions.slice(0, 15),
-        }),
+      const data = await analyzeSpending({
+        month: selectedMonth,
+        totalIncome,
+        totalExpense,
+        fixedExpenseTotal,
+        variableExpenseTotal,
+        fixedItems,
+        variableTopCategories: categoryExpenses.slice(0, 5),
+        recentTransactions: monthlyTransactions.slice(0, 15),
       });
 
-      const data = await res.json();
-      if (data.success && data.data) {
-        const result: AISpendingAnalysis = {
-          ...data.data,
-          savingsRecommendations: data.data.savingsRecommendations.map(
-            (rec: any, idx: number) => ({
-              ...rec,
-              id: rec.id || `rec-${Date.now()}-${idx}`,
-              isImplemented: false,
-            })
-          ),
-          analyzedAt: new Date().toLocaleDateString("ko-KR", {
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        };
-        setAiAnalysis(result);
-      }
-    } catch (err) {
-      console.error("Failed to run AI spending analysis:", err);
+      const result: AISpendingAnalysis = {
+        ...data,
+        savingsRecommendations: (data.savingsRecommendations || []).map((rec, idx) => ({
+          ...rec,
+          id: rec.id || `rec-${Date.now()}-${idx}`,
+          isImplemented: false,
+        })),
+        analyzedAt: new Date().toLocaleDateString("ko-KR", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      };
+
+      setAiAnalysis(result);
+      repo.saveAnalysis(selectedMonth, result);
+      syncStats();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "AI 분석에 실패했습니다.";
+      console.error("AI 분석 실패:", error);
+      setAiError(message);
     } finally {
       setIsAnalyzingAI(false);
     }
   };
 
-  const resetToSample = async () => {
-    try {
-      await fetch("/api/db/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "sample" }),
-      });
-      await refreshDbData();
-    } catch (e) {
-      console.error("Failed to reset SQLite DB to sample:", e);
-    }
-    setDismissedAlertIds([]);
-    localStorage.removeItem(STORAGE_KEY_DISMISSED_ALERTS);
-  };
+  // -------------------------------------------------------------------------
+  // Database maintenance
+  // -------------------------------------------------------------------------
 
   const resetToClean = async () => {
     try {
-      await fetch("/api/db/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "clean" }),
-      });
+      await clearAllData();
       await refreshDbData();
-    } catch (e) {
-      console.error("Failed to reset SQLite DB to clean:", e);
+    } catch (error) {
+      console.error("데이터를 비우지 못했습니다:", error);
     }
     setDismissedAlertIds([]);
-    localStorage.removeItem(STORAGE_KEY_DISMISSED_ALERTS);
+  };
+
+  const resetToSample = async () => {
+    try {
+      await clearAllData();
+      await repo.installSampleData();
+      await refreshDbData();
+    } catch (error) {
+      console.error("샘플 데이터를 설치하지 못했습니다:", error);
+    }
+    setDismissedAlertIds([]);
   };
 
   const exportDatabaseFile = () => {
-    const link = document.createElement("a");
-    link.href = "/api/db/export";
-    link.download = "finance.db";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const bytes = exportDatabaseBytes();
+      const blob = new Blob([bytes.slice().buffer as ArrayBuffer], {
+        type: "application/x-sqlite3",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `smartmoney-${stamp}.db`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("백업 파일을 만들지 못했습니다:", error);
+    }
+  };
+
+  const importDatabaseFile = async (file: File) => {
+    const buffer = await file.arrayBuffer();
+    await importDatabaseBytes(new Uint8Array(buffer));
+    await refreshDbData();
+    setDismissedAlertIds([]);
   };
 
   return (
@@ -800,15 +764,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         setSelectedMonth,
         aiAnalysis,
         isAnalyzingAI,
+        aiError,
+        clearAiError,
         isSyncing,
         lastSyncTime,
         viewMode,
         setViewMode,
+        isDbReady,
         dbStats,
         refreshDbData,
         resetToClean,
         resetToSample,
         exportDatabaseFile,
+        importDatabaseFile,
         addTransaction,
         addTransactions,
         deleteTransaction,
@@ -839,8 +807,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         totalVariableBudget,
         totalVariableSpent,
         disposableIncome,
-        monthlyHistoricalData: MONTHLY_HISTORICAL_DATA,
-        yearlyHistoricalData: YEARLY_HISTORICAL_DATA,
+        monthlyHistoricalData,
+        yearlyHistoricalData,
       }}
     >
       {children}
@@ -855,4 +823,3 @@ export const useFinance = () => {
   }
   return context;
 };
-

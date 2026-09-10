@@ -17,6 +17,7 @@ import {
   Check,
   Database,
   Download,
+  Upload,
   HardDrive,
 } from "lucide-react";
 
@@ -55,6 +56,7 @@ export const ConnectedAssetsView: React.FC<{
     resetToSample,
     resetToClean,
     exportDatabaseFile,
+    importDatabaseFile,
     refreshDbData,
     dbStats,
     addAccount,
@@ -417,13 +419,13 @@ export const ConnectedAssetsView: React.FC<{
             </div>
             <div>
               <div className="text-xs font-bold flex items-center gap-1.5">
-                <span>SQLite 로컬 파일 데이터베이스</span>
+                <span>기기 내 SQLite 데이터베이스</span>
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-1.5 py-0.5 rounded-full">
-                  finance.db
+                  v{dbStats?.schemaVersion ?? "-"}
                 </span>
               </div>
               <div className="text-[10px] text-slate-400">
-                개인정보 파일 DB 영구 보관 (WASM 엔진)
+                이 기기에만 저장됩니다 · 앱을 갱신해도 데이터는 유지됩니다
               </div>
             </div>
           </div>
@@ -440,11 +442,11 @@ export const ConnectedAssetsView: React.FC<{
         {/* DB Metrics Grid */}
         <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800 text-center">
           <div className="p-2 bg-slate-800/60 rounded-xl">
-            <div className="text-[10px] text-slate-400">파일 크기</div>
+            <div className="text-[10px] text-slate-400">저장 크기</div>
             <div className="text-xs font-mono font-bold text-slate-100">
               {dbStats?.sizeBytes
                 ? `${(dbStats.sizeBytes / 1024).toFixed(1)} KB`
-                : "76.0 KB"}
+                : "-"}
             </div>
           </div>
           <div className="p-2 bg-slate-800/60 rounded-xl">
@@ -468,14 +470,43 @@ export const ConnectedAssetsView: React.FC<{
             className="flex-1 min-w-[120px] py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 shadow-2xs"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>finance.db 다운로드</span>
+            <span>백업 파일 내려받기</span>
           </button>
+
+          <label className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center justify-center gap-1 transition cursor-pointer">
+            <Upload className="w-3.5 h-3.5" />
+            <span>백업 복원</span>
+            <input
+              type="file"
+              accept=".db,.sqlite,application/x-sqlite3"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                if (
+                  !confirm(
+                    "이 기기의 현재 가계부를 백업 파일 내용으로 덮어씁니다. 계속할까요?"
+                  )
+                ) {
+                  return;
+                }
+                try {
+                  await importDatabaseFile(file);
+                  alert("백업을 복원했습니다.");
+                } catch (error) {
+                  console.error(error);
+                  alert("백업 파일을 읽지 못했습니다. 올바른 .db 파일인지 확인해주세요.");
+                }
+              }}
+            />
+          </label>
 
           <button
             onClick={() => {
               if (
                 confirm(
-                  "배포용 초기 DB 상태로 리셋하시겠습니까?\n기본 카테고리만 남고 개인 카드/계좌 및 거래내역이 비워집니다."
+                  "이 기기의 가계부를 비우시겠습니까?\n기본 카테고리만 남고 카드/계좌 및 거래내역이 삭제됩니다."
                 )
               ) {
                 resetToClean();

@@ -11,6 +11,12 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        workbox: {
+          // The SQLite engine is a .wasm file — without it in the precache the
+          // app cannot open its database offline.
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm,woff2}'],
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        },
         includeAssets: [
           'icon.svg',
           'apple-touch-icon.png',

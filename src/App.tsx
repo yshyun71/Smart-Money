@@ -231,12 +231,16 @@ const MainContent: React.FC = () => {
 
 const AppGuard: React.FC = () => {
   const { isAuthenticated, isLocked, isLoading } = useAuth();
+  const { isDbReady } = useFinance();
 
-  if (isLoading) {
+  // The on-device database has to be open before any screen can render
+  if (isLoading || !isDbReady) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 text-white">
         <div className="w-10 h-10 border-3 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
-        <p className="text-xs text-slate-400 font-medium">금융 보안 세션 확인 중...</p>
+        <p className="text-xs text-slate-400 font-medium">
+          {isDbReady ? "금융 보안 세션 확인 중..." : "기기 내 가계부 데이터 여는 중..."}
+        </p>
       </div>
     );
   }
