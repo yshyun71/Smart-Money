@@ -9,7 +9,6 @@ import {
   Check,
   ExternalLink,
   QrCode,
-  AlertCircle,
 } from "lucide-react";
 
 export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
@@ -105,19 +104,6 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
-
-            {/* AI Studio Share vs Direct URL Explanation */}
-            <div className="mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200/70 text-xs text-amber-900 space-y-1.5">
-              <div className="flex items-start gap-1.5 font-bold text-amber-950">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>왜 'Google AI Studio' 앱으로 표시되었을까요?</span>
-              </div>
-              <p className="text-[11px] text-amber-800 leading-relaxed pl-5.5">
-                AI Studio 상단의 <strong>[Share]</strong> 링크는 개발 툴 컨테이너 전체 주소이기 때문에 브라우저가 AI Studio로 인식합니다.
-                <br />
-                <strong>'스마트 머니' 전용 앱</strong>으로 설치하려면 아래 <strong>전용 웹앱 링크</strong>로 접속하셔야 합니다.
-              </p>
             </div>
 
             {/* QR Code & Direct Link */}

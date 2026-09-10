@@ -168,7 +168,7 @@ export const SMSParserModal: React.FC<{
           className="mt-2 w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs disabled:opacity-40 transition flex items-center justify-center gap-1.5"
         >
           <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-          <span>{isParsing ? "Gemini AI 문자 분석 중..." : "문자 내용 자동 분석하기"}</span>
+          <span>{isParsing ? "AI 문자 분석 중..." : "문자 내용 자동 분석하기"}</span>
         </button>
 
         {/* Error message */}

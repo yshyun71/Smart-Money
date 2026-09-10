@@ -112,7 +112,7 @@ export const AISavingsCoachView: React.FC = () => {
         <div className="flex items-center justify-between relative z-10 mb-3">
           <div className="flex items-center gap-1.5 bg-white/20 px-2.5 py-1 rounded-full text-xs font-semibold backdrop-blur-xs">
             <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-            <span>Gemini AI 지출 절약 코칭</span>
+            <span>AI 지출 절약 코칭</span>
           </div>
 
           <button
