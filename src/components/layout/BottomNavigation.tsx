@@ -69,9 +69,16 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   const isMobileFrame = viewMode === "MOBILE_FRAME";
 
   return (
+    /*
+      Fixed to the viewport on a real phone, where the page itself scrolls.
+      In frame mode the frame is its own scroll container, and a viewport-fixed
+      bar there would sit outside it — leaving the flex-1 scroll area to end
+      off-screen behind this bar. `sm:static` puts it back in the frame's flow
+      so the scroll area ends exactly where the bar begins.
+    */
     <nav
       className={`fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 mx-auto select-none safe-bottom transition-all duration-300 ${
-        isMobileFrame ? "max-w-md" : "max-w-4xl"
+        isMobileFrame ? "max-w-md sm:static" : "max-w-4xl"
       }`}
     >
       <div className="flex items-center justify-around h-16 px-1">

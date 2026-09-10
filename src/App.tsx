@@ -154,11 +154,21 @@ const MainContent: React.FC = () => {
         </div>
       </div>
 
-      {/* Mobile container / Android Frame */}
+      {/*
+        Mobile container / Android Frame
+
+        In frame mode the height must be a real height, not a min/max pair:
+        CSS resolves a conflict between them in favour of min-height, so the
+        earlier pairing of a 850px minimum with a 92vh maximum forced 850px on
+        any short viewport (a tablet, or a browser with visible chrome) and
+        pushed the bottom of the frame — and with it the end of the scroll
+        area — below the screen. Resetting the minimum matters too, or the
+        full-height base class overrides the height the same way.
+      */}
       <div
         className={`w-full bg-slate-50 flex flex-col relative transition-all duration-300 min-h-screen ${
           isMobileFrame
-            ? "max-w-md sm:min-h-[850px] sm:max-h-[92vh] sm:rounded-[44px] sm:shadow-2xl sm:shadow-black/70 sm:border-[9px] sm:border-slate-800 sm:overflow-hidden"
+            ? "max-w-md sm:min-h-0 sm:h-[min(844px,calc(100dvh-6rem))] sm:rounded-[44px] sm:shadow-2xl sm:shadow-black/70 sm:border-[9px] sm:border-slate-800 sm:overflow-hidden"
             : "max-w-4xl sm:rounded-2xl sm:shadow-xl sm:border sm:border-slate-200"
         }`}
       >
