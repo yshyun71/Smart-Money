@@ -42,6 +42,32 @@ export const FixedVsVariableView: React.FC<{
     );
   }, [transactions]);
 
+  /**
+   * Recurring charges actually recorded this month, used for the leak banner.
+   * Nothing is shown until there is at least one.
+   */
+  const recurringSummary = useMemo(() => {
+    if (fixedItems.length === 0) return null;
+
+    const sorted = [...fixedItems].sort((a, b) => b.amount - a.amount);
+    const total = sorted.reduce((acc, tx) => acc + tx.amount, 0);
+    const names = sorted.slice(0, 3).map((tx) => tx.merchant);
+    const remaining = sorted.length - names.length;
+
+    return {
+      count: sorted.length,
+      total,
+      label: remaining > 0 ? `${names.join(", ")} 외 ${remaining}건` : names.join(", "),
+    };
+  }, [fixedItems]);
+
+  // Only the savings the AI attributed to fixed costs
+  const fixedSavingsPotential = useMemo(() => {
+    const recs = aiAnalysis?.savingsRecommendations || [];
+    const fixedRecs = recs.filter((rec) => (rec.type || "").includes("고정비"));
+    return fixedRecs.reduce((acc, rec) => acc + (rec.estimatedMonthlySavings || 0), 0);
+  }, [aiAnalysis]);
+
   // Category breakdown for variable items
   const variableCategoryStats = useMemo(() => {
     const map: { [cat: string]: number } = {};
@@ -152,25 +178,31 @@ export const FixedVsVariableView: React.FC<{
           </div>
 
           {/* AI Fixed Cost Leak Tip Banner */}
-          <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1 space-y-1">
-              <div className="font-bold text-[11px] text-amber-950">
-                고정비 누수 감지: 알뜰폰 전환 & OTT 정기구독 정리
+          {recurringSummary && (
+            <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <div className="font-bold text-[11px] text-amber-950">
+                  고정비 누수 점검: 정기 결제 {recurringSummary.count}건
+                </div>
+                <p className="text-[11px] text-amber-800 leading-snug">
+                  {recurringSummary.label}에 매달 약{" "}
+                  {recurringSummary.total.toLocaleString()}원이 자동으로 빠져나갑니다.
+                </p>
+                <button
+                  onClick={onNavigateToSavings}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 underline mt-1"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-600" />
+                  <span>
+                    {fixedSavingsPotential > 0
+                      ? `AI가 추천하는 고정비 월 ${fixedSavingsPotential.toLocaleString()}원 절약법 보기 →`
+                      : "AI 절약 추천 받아보기 →"}
+                  </span>
+                </button>
               </div>
-              <p className="text-[11px] text-amber-800 leading-snug">
-                통신비(85,000원)와 4개 정기구독(넷플릭스, 유튜브, 디즈니+, 쿠팡)에
-                매달 약 134,690원이 자동 청구되고 있습니다.
-              </p>
-              <button
-                onClick={onNavigateToSavings}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 underline mt-1"
-              >
-                <Sparkles className="w-3 h-3 text-amber-600" />
-                <span>AI가 추천하는 고정비 월 61,900원 절약법 보기 →</span>
-              </button>
             </div>
-          </div>
+          )}
 
           {/* Fixed Items Recurring List */}
           <div className="space-y-2.5">

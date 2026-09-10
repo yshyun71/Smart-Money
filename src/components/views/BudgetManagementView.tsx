@@ -97,7 +97,7 @@ export const BudgetManagementView: React.FC<{
       if (permission === "granted") {
         new Notification("스마트 머니 예산 알림", {
           body: "[식비] 예산의 85%를 소진했습니다! 오늘 저녁엔 포장 또는 냉파를 추천합니다.",
-          icon: "/favicon.ico",
+          icon: "/pwa-192x192.png",
         });
       }
     }

@@ -61,6 +61,7 @@ export const AnalyticsDashboardView: React.FC<{
     categoryExpenses,
     monthlyHistoricalData,
     yearlyHistoricalData,
+    aiAnalysis,
   } = useFinance();
 
   const [timeframeMode, setTimeframeMode] = useState<"MONTHLY" | "YEARLY">("MONTHLY");
@@ -74,6 +75,65 @@ export const AnalyticsDashboardView: React.FC<{
     if (val >= 10000) return `${Math.round(val / 10000)}만원`;
     return `${val.toLocaleString()}원`;
   };
+
+  /**
+   * Insight strips under the charts. They describe the transactions actually
+   * on this device, and stay hidden until there are at least two periods to
+   * compare.
+   */
+  const trendInsight = useMemo(() => {
+    if (timeframeMode === "MONTHLY") {
+      const periods = monthlyHistoricalData.filter((m) => m.income > 0 || m.expense > 0);
+      if (periods.length < 2) return null;
+
+      const prev = periods[periods.length - 2];
+      const curr = periods[periods.length - 1];
+      const diff = curr.expense - prev.expense;
+      const savingsRate =
+        curr.income > 0 ? Math.round((curr.savings / curr.income) * 100) : null;
+
+      return `💡 ${prev.displayMonth} 대비 ${curr.displayMonth} 지출이 ${formatShortKRW(
+        Math.abs(diff)
+      )} ${diff <= 0 ? "감소" : "증가"}했습니다.${
+        savingsRate === null ? "" : ` 이번 달 저축률은 ${savingsRate}%입니다.`
+      }`;
+    }
+
+    const years = yearlyHistoricalData.filter((y) => y.income > 0 || y.expense > 0);
+    if (years.length < 2) return null;
+
+    const prev = years[years.length - 2];
+    const curr = years[years.length - 1];
+    const diff = curr.savings - prev.savings;
+
+    return `💡 ${prev.year}년 대비 ${curr.year}년 누적 저축액이 ${
+      diff >= 0 ? "+" : "-"
+    }${formatShortKRW(Math.abs(diff))} ${diff >= 0 ? "증가" : "감소"}했습니다.`;
+  }, [timeframeMode, monthlyHistoricalData, yearlyHistoricalData]);
+
+  const volatilityInsight = useMemo(() => {
+    const periods = monthlyHistoricalData.filter((m) => m.expense > 0);
+    if (periods.length < 2) return null;
+
+    const fixedValues = periods.map((m) => m.fixed);
+    const variableValues = periods.map((m) => m.variable);
+    const fixedMin = Math.min(...fixedValues);
+    const fixedMax = Math.max(...fixedValues);
+    const variableMin = Math.min(...variableValues);
+    const variableMax = Math.max(...variableValues);
+    const driver = variableMax - variableMin >= fixedMax - fixedMin ? "변동비" : "고정비";
+
+    return `📌 최근 ${periods.length}개월 고정비는 ${formatShortKRW(
+      fixedMin
+    )}~${formatShortKRW(fixedMax)}, 변동비는 ${formatShortKRW(variableMin)}~${formatShortKRW(
+      variableMax
+    )} 범위입니다. 총 지출 변동은 주로 ${driver} 편차에서 발생합니다.`;
+  }, [monthlyHistoricalData]);
+
+  const aiSavingsLabel =
+    aiAnalysis?.totalPotentialMonthlySavings
+      ? `월 ${formatShortKRW(aiAnalysis.totalPotentialMonthlySavings)} 절약`
+      : "분석하면 절약 가능액이 계산됩니다";
 
   // Pie chart data for current selected month
   const monthlyPieData = useMemo(() => {
@@ -453,13 +513,11 @@ export const AnalyticsDashboardView: React.FC<{
               </ResponsiveContainer>
             </div>
 
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
-              <span>
-                {timeframeMode === "MONTHLY"
-                  ? "💡 8월 대비 9월 지출이 108만원 감소하여 저축률이 60%로 상승했습니다."
-                  : "💡 2025년 대비 2026년 예상 누적 저축액이 +330만원 증가 추세입니다."}
-              </span>
-            </div>
+            {trendInsight && (
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
+                <span>{trendInsight}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -529,11 +587,11 @@ export const AnalyticsDashboardView: React.FC<{
               </ResponsiveContainer>
             </div>
 
-            <div className="p-3 bg-indigo-50/70 rounded-2xl border border-indigo-100 text-[11px] text-indigo-950 flex items-center justify-between">
-              <span>
-                📌 고정비는 매월 98~100만원 선으로 일정하나, 변동비 편차(121만~156만원)가 총 지출 변동의 핵심 원인입니다.
-              </span>
-            </div>
+            {volatilityInsight && (
+              <div className="p-3 bg-indigo-50/70 rounded-2xl border border-indigo-100 text-[11px] text-indigo-950 flex items-center justify-between">
+                <span>{volatilityInsight}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -625,7 +683,7 @@ export const AnalyticsDashboardView: React.FC<{
             <Sparkles className="w-4 h-4 text-emerald-200" />
             <div className="text-left">
               <div>AI 절약 항목 추천</div>
-              <span className="text-[10px] text-emerald-100 font-normal">월 21.5만원 절약</span>
+              <span className="text-[10px] text-emerald-100 font-normal">{aiSavingsLabel}</span>
             </div>
           </div>
           <span>→</span>
