@@ -23,6 +23,53 @@ export interface Migration {
   up: (db: Database) => void;
 }
 
+function columnNames(db: Database, table: string): string[] {
+  const stmt = db.prepare(`PRAGMA table_info(${table})`);
+  const names: string[] = [];
+  while (stmt.step()) {
+    names.push(String((stmt.getAsObject() as { name?: unknown }).name ?? ""));
+  }
+  stmt.free();
+  return names;
+}
+
+/** ALTER TABLE ADD COLUMN fails on a column that already exists, so ask first. */
+function addColumn(db: Database, table: string, column: string, type: string): boolean {
+  if (columnNames(db, table).includes(column)) return false;
+  db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  return true;
+}
+
+/**
+ * Columns that must exist once their migration has run, checked on every open.
+ *
+ * A device was found recording schema version 2 while its users table still
+ * had no pin_hash — the version had been saved without the columns landing.
+ * Every query against them then failed, and the version said there was
+ * nothing left to do. Verifying the shape rather than trusting the number
+ * lets such a device repair itself on the next launch.
+ */
+const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
+  { table: "users", column: "pin_hash", type: "TEXT" },
+  { table: "users", column: "pin_salt", type: "TEXT" },
+  { table: "users", column: "pin_iterations", type: "INTEGER" },
+];
+
+/** Returns the columns it had to add, for logging. */
+export function repairMissingColumns(db: Database): string[] {
+  const repaired: string[] = [];
+  for (const { table, column, type } of EXPECTED_COLUMNS) {
+    try {
+      if (addColumn(db, table, column, type)) {
+        repaired.push(`${table}.${column}`);
+      }
+    } catch (error) {
+      console.error(`[DB] ${table}.${column} 복구에 실패했습니다:`, error);
+    }
+  }
+  return repaired;
+}
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -116,11 +163,9 @@ export const MIGRATIONS: Migration[] = [
     version: 2,
     description: "PIN을 평문 대신 PBKDF2 해시로 저장",
     up: (db) => {
-      db.run(`
-        ALTER TABLE users ADD COLUMN pin_hash TEXT;
-        ALTER TABLE users ADD COLUMN pin_salt TEXT;
-        ALTER TABLE users ADD COLUMN pin_iterations INTEGER;
-      `);
+      addColumn(db, "users", "pin_hash", "TEXT");
+      addColumn(db, "users", "pin_salt", "TEXT");
+      addColumn(db, "users", "pin_iterations", "INTEGER");
       // A plaintext PIN cannot be converted here — hashing is async and a
       // migration is not. Clearing it asks for the PIN once more rather than
       // carrying a readable credential forward. The name and phone survive.

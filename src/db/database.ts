@@ -5,6 +5,7 @@ import {
   MIGRATIONS,
   PRIMARY_USER_ID,
   SCHEMA_VERSION,
+  repairMissingColumns,
 } from "./schema";
 
 /**
@@ -168,6 +169,15 @@ async function initDatabase(): Promise<Database> {
   }
 
   const { from, to } = migrate(db);
+
+  // Trust the shape, not just the recorded version: a device can end up with
+  // the version saved but a migration's columns missing, and every query
+  // against them fails from then on.
+  const repaired = repairMissingColumns(db);
+  if (repaired.length > 0) {
+    console.warn(`[DB] 누락된 컬럼을 복구했습니다: ${repaired.join(", ")}`);
+  }
+
   seedEssentials(db);
 
   if (stored && from !== to) {
