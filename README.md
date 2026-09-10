@@ -119,20 +119,78 @@ npm run dev      # http://localhost:5173
 
 ---
 
+## 배포 (Cloudflare)
+
+빌드 결과는 정적 파일뿐이므로 서버를 띄울 필요가 없습니다. **Cloudflare**에 GitHub 저장소를 연결해 두면 `main`에 푸시할 때마다 자동으로 다시 배포됩니다.
+
+### 최초 설정
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) 로그인 → **Workers & Pages** (또는 `?to=/:account/workers-and-pages`)
+2. **Create** → **Continue with GitHub** → 이 저장소 선택
+3. 빌드 설정
+
+   | 항목 | 값 |
+   | --- | --- |
+   | Build command | `npm run build` |
+   | Build output directory | `dist` |
+   | `NODE_VERSION` (환경변수) | `22` |
+
+4. 배포 후 발급되는 `https://<프로젝트>.workers.dev` 주소가 앱의 정식 주소가 됩니다
+
+빌드는 Cloudflare 서버에서 실행됩니다. 로컬에서 `npm run build`를 돌릴 필요는 없습니다(직접 확인할 때만 사용).
+
+> Cloudflare가 Pages를 Workers로 통합하면서 생성 화면이 **Workers 기준**으로 바뀌었고, 기존 Pages 흐름은 `Continue to Pages` 링크 뒤로 옮겨졌습니다. 이 앱은 순수 정적 빌드라 어느 쪽으로 만들어도 결과가 같습니다. 다만 주소가 `*.workers.dev` / `*.pages.dev`로 갈립니다.
+
+### 배포가 정상인지 확인하는 법
+
+빌드 로그 끝에 아래 두 줄이 있어야 합니다. `sql-wasm`이 없으면 SQLite 엔진이 빠진 것이라 앱이 데이터베이스를 열지 못합니다.
+
+```
+dist/assets/sql-wasm-*.wasm     658 kB
+precache  16 entries (약 2.1 MiB)
+```
+
+앱을 열었을 때 **계좌 0개 · 거래 0건 · AI절약 탭이 `– 아직 분석 전`** 이면 깨끗한 최초 상태로 정상 배포된 것입니다.
+
+### 반드시 루트 경로로 서빙해야 합니다
+
+[vite.config.ts](vite.config.ts)에 `base` 설정이 없어 모든 자산이 `/assets/...` 절대경로로 빌드되고, PWA 매니페스트의 `id`·`start_url`·`scope`도 `/`로 고정되어 있습니다.
+
+- ✅ Cloudflare / Netlify / Vercel — 루트 도메인이므로 수정 없이 동작
+- ❌ **GitHub Pages 프로젝트 사이트** — `.../Smart-Money/` 하위 경로라 자산 404, 서비스워커 등록 실패
+
+GitHub Pages를 쓰려면 `base`와 매니페스트 경로를 모두 `/Smart-Money/`로 바꿔야 하는데, 그러면 **저장소 이름이 앱 정체성에 박힙니다.** 나중에 이름을 바꾸거나 호스팅을 옮기면 브라우저가 다른 앱으로 인식해 홈 화면 아이콘이 죽고, 아래의 데이터 문제까지 따라옵니다.
+
+### 주소를 바꾸면 데이터가 따라오지 않습니다
+
+IndexedDB는 **출처(origin) + 경로**에 묶입니다. 호스팅이나 주소를 옮기면 브라우저 입장에서는 완전히 다른 앱이라 기존 가계부가 보이지 않습니다. 옮겨야 한다면 반드시 이 순서로 하세요.
+
+1. 기존 주소에서 **연결자산 → 백업 파일 내려받기**
+2. 새 주소에서 앱을 설치
+3. **연결자산 → 백업 복원** 으로 `.db` 파일 불러오기
+
+같은 이유로 로컬 개발(`localhost:5173`)에서 입력한 데이터도 배포 주소에서는 보이지 않습니다.
+
+---
+
 ## 휴대폰에 설치하기
 
-PWA 설치와 오프라인 캐시는 **HTTPS(또는 localhost)에서만** 동작합니다. `http://192.168.x.x` 같은 주소로는 서비스워커가 등록되지 않아 "앱 설치"가 뜨지 않습니다.
-
-`dist/`는 정적 파일이므로 아무 정적 호스팅에나 올리면 됩니다 (GitHub Pages, Cloudflare Pages, Netlify, Vercel 등 — 모두 HTTPS를 자동 제공).
-
-```bash
-npm run build
-# dist/ 를 정적 호스팅에 업로드
-```
+PWA 설치와 오프라인 캐시는 **HTTPS(또는 localhost)에서만** 동작합니다. `http://192.168.x.x` 같은 사설 IP 주소로는 서비스워커가 등록되지 않아 "앱 설치"가 아예 뜨지 않습니다. 홈 화면 바로가기는 만들 수 있지만 주소창이 남는 일반 브라우저 창입니다.
 
 배포한 HTTPS 주소를 휴대폰 크롬에서 열고 **⋮ → 앱 설치 / 홈 화면에 추가**를 누르면 주소창 없는 전용 앱으로 실행됩니다. 앱 안의 **설정 → 전용앱 설치** 메뉴에 QR 코드와 링크 복사, 기종별 설치 방법이 준비되어 있습니다.
 
 설치 후에는 SQLite 엔진(`.wasm`)까지 캐시되므로 **인터넷 없이도 앱 전체가 동작합니다.** AI 기능만 온라인이 필요합니다.
+
+### 배포 전에 폰에서 먼저 확인하고 싶다면
+
+임시 HTTPS 터널을 열면 계정 없이도 실제 설치까지 시험할 수 있습니다.
+
+```bash
+npm run build && npx serve dist
+npx cloudflared tunnel --url http://localhost:3000
+```
+
+출력되는 `https://....trycloudflare.com` 주소를 폰에서 열면 됩니다. 터미널을 닫으면 주소가 사라지므로 **확인용으로만** 쓰세요. 여기에 입력한 데이터는 정식 배포 주소로 넘어오지 않습니다.
 
 ---
 
@@ -161,6 +219,24 @@ npm run build
 │   └── types/finance.ts   공통 타입 정의
 └── scripts/               PWA 아이콘 생성
 ```
+
+---
+
+## 손대기 전에 알아둘 것
+
+바꾸면 조용히 앱이 깨지는 지점들입니다.
+
+**`vite.config.ts`의 `globPatterns`에서 `wasm`을 빼지 마세요.** vite-plugin-pwa의 기본 패턴에는 `.wasm`이 없습니다. 빠지면 SQLite 엔진이 캐시되지 않아 오프라인에서 앱이 자기 데이터베이스를 열지 못합니다. 화면은 뜨는데 로딩에서 멈추는 형태라 원인을 찾기 어렵습니다.
+
+**락파일은 `package-lock.json` 하나만 유지하세요.** 예전에 `bun.lock`이 함께 있었는데, 호스팅 빌드가 어느 쪽을 잡느냐에 따라 이미 제거된 서버 의존성(`express`, `tsx`, `dotenv`)으로 설치가 흘러갈 수 있어 삭제했습니다.
+
+**이미 배포된 마이그레이션은 수정하지 말고 새 항목을 덧붙이세요.** 어떤 버전에 머물러 있던 기기든 같은 결과에 도달해야 합니다.
+
+**빈 상태를 가정하고 UI를 만드세요.** 예전에는 목 데이터가 항상 존재해서 `aiAnalysis?.healthScore || 78` 같은 폴백이 드러나지 않았습니다. 목 데이터를 제거하자 거래가 0건인 기기에 "재무 건강도 78점", "8월 대비 108만원 감소", 등록한 적 없는 구독 서비스 이름과 금액이 사실처럼 표시됐습니다. **하드코딩한 예시값을 폴백으로 쓰지 말고, 데이터가 없으면 해당 영역을 숨기거나 `–` 로 표시하세요.** `||` 대신 `??` 를 쓰는 것도 같은 이유입니다(실제 값 0이 폴백으로 바뀌지 않도록).
+
+**AI 모델명은 [`src/services/aiClient.ts`](src/services/aiClient.ts)의 `AI_MODEL` 한 곳**에 있습니다.
+
+**Node 20.19 미만에서는 `@vitejs/plugin-react`가 경고를 냅니다.** 빌드는 되지만, 배포 환경에서는 `NODE_VERSION=22`를 지정해 두는 편이 안전합니다.
 
 ---
 
