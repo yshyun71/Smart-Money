@@ -1,0 +1,20 @@
+{
+  // Cloudflare Workers deployment config.
+  //
+  // The app is a static build with no server code, so this Worker carries
+  // assets only — there is no "main" script. `npx wrangler deploy` reads this
+  // file, which is why the dashboard has no output-directory field: the
+  // directory is declared here.
+  //
+  // "name" decides the *.workers.dev subdomain and must match the project name
+  // in the Cloudflare dashboard.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "smart-money",
+  "compatibility_date": "2026-09-10",
+  "assets": {
+    "directory": "./dist",
+    // Single React entry point: serve index.html for any unmatched path
+    // instead of a 404.
+    "not_found_handling": "single-page-application"
+  }
+}
