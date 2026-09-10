@@ -1,8 +1,8 @@
 # 스마트 머니
 
-카드 사용 내역과 통장 입출금을 자동으로 분석해 **수입·지출**, **고정비·변동비**, **월간 예산**을 한 화면에서 관리하고, AI가 실천 가능한 절약 항목을 추천해 주는 모바일 가계부 웹앱(PWA)입니다.
+카드 사용 내역과 통장 입출금을 분석해 **수입·지출**, **고정비·변동비**, **월간 예산**을 한 화면에서 관리하고, AI가 실천 가능한 절약 항목을 추천해 주는 모바일 가계부입니다.
 
-한국 사용자를 대상으로 설계되어 카테고리 분류, 간편인증 흐름, 카드·은행 결제 알림 문자(SMS) 파싱이 모두 국내 환경에 맞춰져 있습니다.
+**서버가 없습니다.** 앱 전체가 휴대폰 안에서 단독으로 돌아갑니다. 가계부 데이터는 기기의 SQLite 데이터베이스에 저장되고 기기 밖으로 나가지 않으며, 비행기 모드에서도 조회·입력·수정이 모두 동작합니다.
 
 ---
 
@@ -16,129 +16,148 @@
 | **AI절약** | 재무 건강 점수, 맞춤 절약 항목 추천, 소비 습관 개선 팁, 코치 Q&A |
 | **고정/변동** | 고정비·변동비 분리 조회 및 거래별 구분 전환 |
 | **가계부** | 전체 거래 내역 검색·필터 |
-| **연결자산** | 은행 계좌·신용/체크카드 등록, 잔액·청구액 동기화 |
+| **연결자산** | 은행 계좌·카드 등록, 잔액·청구액 관리, 백업/복원 |
 
-그 밖에:
-
-- **문자 자동 입력** — 카드 결제 알림 문자를 붙여넣으면 AI가 금액·가맹점·카테고리·고정비 여부를 판별해 여러 건을 한 번에 등록합니다.
-- **PWA 설치** — 홈 화면에 추가해 단독 앱처럼 실행할 수 있고, 오프라인 상태를 배너로 알립니다.
-- **간편인증 + PIN 잠금** — 카카오·토스·PASS·네이버 방식의 본인인증 후 6자리 PIN으로 앱을 잠급니다.
-- **뷰 모드 전환** — PC에서는 390×844 스마트폰 프레임으로, 모바일에서는 전체 화면으로 렌더링합니다.
+상단 톱니바퀴(설정) 메뉴에서 **연동 카드·계좌 관리**, **간편비밀번호 등록/변경**, **AI 등록**, **전용앱 설치**에 바로 접근할 수 있습니다.
 
 ---
 
 ## 기술 스택
 
-**프론트엔드** React 19 · TypeScript · Vite 6 · Tailwind CSS 4 · Recharts · Motion · lucide-react · vite-plugin-pwa
+React 19 · TypeScript · Vite 6 · Tailwind CSS 4 · Recharts · lucide-react · vite-plugin-pwa · sql.js(WebAssembly SQLite) · `@google/genai`
 
-**백엔드** Express 4 · sql.js (WebAssembly SQLite) · Google Gemini (`@google/genai`)
-
----
-
-## 아키텍처
-
-```
-브라우저 (React SPA)  ──REST──▶  Express 서버 (:3000)  ──▶  finance.db (SQLite 파일)
-                                        │
-                                        └──▶  AI API (절약 분석 · SMS 파싱 · 코치 챗)
-```
-
-개발 모드에서는 `server.ts` 하나가 Vite를 미들웨어로 물고 **API와 프론트엔드를 같은 포트(3000)에서 서빙**합니다. 별도의 프록시 설정이 필요 없습니다.
-
-상태 관리는 두 개의 React Context에 모여 있습니다.
-
-- `FinanceContext` — 계좌·거래·예산·AI 분석 상태와 모든 파생 집계(고정비 비율, 카테고리별 지출, 예산 초과 알림 등), 그리고 서버 호출 전부
-- `AuthContext` — 간편인증 · PIN · 잠금 상태
+빌드 결과물은 정적 파일(HTML/JS/CSS/WASM)뿐이며, 실행에 백엔드가 필요하지 않습니다.
 
 ---
 
-## 시작하기
+## 데이터는 어디에 저장되나
 
-**필요 환경** Node.js 20 이상
-
-```bash
-# 1. 의존성 설치
-npm install
-
-# 2. 환경 변수 설정
-cp .env.example .env
-#   .env 를 열어 GEMINI_API_KEY 값을 채웁니다.
-#   키가 없어도 서버는 뜨지만 AI 기능만 동작하지 않습니다.
-
-# 3. 개발 서버 실행
-npm run dev
+```
+휴대폰
+ └── 브라우저 / 설치된 PWA
+      ├── sql.js (WASM SQLite 엔진)
+      ├── IndexedDB  ← finance.db 바이트가 통째로 저장됨
+      └── localStorage ← AI API 키, 화면 설정 등 기기 설정
 ```
 
-브라우저에서 <http://localhost:3000> 으로 접속합니다. 첫 실행 시 `finance.db` 가 자동 생성되고 기본 카테고리 12종과 샘플 계좌·거래가 시드됩니다.
-
-**로그인** — 이름과 휴대폰 번호를 입력하고 인증번호를 요청하면, 개발 환경에서는 발송된 6자리 코드가 응답에 그대로 표시됩니다. 테스트용 고정 코드 `123456` 도 통과합니다.
-
-### 스크립트
-
-| 명령 | 설명 |
-| --- | --- |
-| `npm run dev` | 개발 서버 (Express + Vite, :3000) |
-| `npm run build` | 프론트엔드 빌드 + 서버 번들 → `dist/` |
-| `npm start` | 프로덕션 실행 (`dist/server.cjs`) |
-| `npm run lint` | TypeScript 타입 검사 |
-
----
-
-## 데이터
-
-모든 데이터는 프로젝트 루트의 **`finance.db`** 한 파일에 저장됩니다. sql.js가 파일을 메모리로 읽어 들이고, 쓰기가 일어날 때마다 디스크에 다시 기록합니다.
+`src/db/database.ts`가 앱 시작 시 IndexedDB에서 데이터베이스를 읽어 메모리에 올리고, 변경이 생길 때마다 다시 기록합니다. 화면을 벗어나거나 앱을 닫을 때도 저장을 강제하므로 입력 도중 데이터를 잃지 않습니다.
 
 | 테이블 | 내용 |
 | --- | --- |
-| `users` | 사용자 1명(단일 계정), 인증 상태, PIN |
+| `users` | 사용자 1명, 인증 상태, PIN |
 | `categories` | 기본 카테고리 12종 (고정비/변동비/수입 구분) |
-| `accounts` | 연결된 은행 계좌 및 카드 |
+| `accounts` | 등록한 은행 계좌 및 카드 |
 | `transactions` | 거래 내역 (날짜·카테고리·계좌 인덱스) |
 | `budgets` / `budget_configs` | 월별 카테고리 예산과 수입·저축 목표 |
-| `ai_analyses` | 월별 AI 분석 결과 캐시 |
+| `ai_analyses` | 월별 AI 분석 결과 |
 
-`finance.db` 는 개인 금융 데이터를 담는 실행 산출물이므로 **저장소에 커밋하지 않습니다**(`.gitignore` 처리). 스키마와 시드 데이터는 [`server/db.ts`](server/db.ts)에 코드로 정의되어 있어 파일이 없으면 서버가 다시 만들어 냅니다.
+### 데이터베이스는 배포하지 않습니다
 
-설정 화면에서 DB를 **초기 샘플 상태**로 되돌리거나 **거래 0건의 빈 상태**로 비울 수 있고, `.db` 파일을 그대로 내려받을 수도 있습니다.
+`finance.db` 파일은 **저장소에도 빌드 결과물에도 포함되지 않습니다.** 최초 실행 시 기기에서 새로 만들어지며, 그 순간 들어가는 것은 **기본 카테고리 12종과 비어 있는 미등록 사용자 행**뿐입니다. 계좌·거래·예산·개인정보는 하나도 없습니다.
+
+그 이후로는 **앱만 교체됩니다.** 새 버전을 배포해도 기기의 데이터베이스는 그대로 유지됩니다.
+
+### 구조가 바뀔 때 (마이그레이션)
+
+스키마를 바꿔야 할 때만 [`src/db/schema.ts`](src/db/schema.ts)에서 다음 두 가지를 합니다.
+
+1. `MIGRATIONS` 배열 끝에 새 항목을 추가 (`ALTER TABLE`, `CREATE TABLE` 등)
+2. `SCHEMA_VERSION`을 1 올림
+
+```ts
+export const SCHEMA_VERSION = 2;
+
+export const MIGRATIONS: Migration[] = [
+  { version: 1, description: "초기 스키마", up: (db) => { /* ... */ } },
+  {
+    version: 2,
+    description: "거래에 태그 컬럼 추가",
+    up: (db) => db.run("ALTER TABLE transactions ADD COLUMN tags TEXT"),
+  },
+];
+```
+
+기기의 현재 버전은 SQLite 자체의 `PRAGMA user_version`에 기록됩니다. 다음 실행 때 앱이 그 값보다 높은 마이그레이션만 순서대로 실행하므로, **기존 거래·계좌·예산은 그대로 남은 채 구조만 갱신됩니다.**
+
+> 이미 배포된 마이그레이션은 절대 수정하지 마세요. 항상 새 항목을 덧붙여야 합니다. 그래야 어떤 버전에 머물러 있던 기기든 같은 결과에 도달합니다.
+
+백업은 연결자산 화면의 **[백업 파일 내려받기]** 로 `.db` 파일을 저장하고, **[백업 복원]** 으로 되돌릴 수 있습니다. 오래된 버전의 백업을 복원해도 마이그레이션이 자동으로 적용됩니다.
 
 ---
 
-## API
+## AI 등록 (내 API 키 사용)
 
-모든 엔드포인트는 `/api` 아래에 있습니다.
+AI 기능(절약 분석, 문자 자동 인식, 코치 Q&A)은 **사용자가 직접 등록한 Google Gemini API 키**로 동작합니다. 키는 빌드에 포함되지 않으며, 앱 안에서 등록합니다.
 
-**DB** `GET /db/status` · `GET /db/export` · `POST /db/reset`
+1. 상단 **톱니바퀴 → AI 등록**
+2. [Google AI Studio](https://aistudio.google.com/apikey)에서 발급받은 키를 붙여넣기
+3. 저장하면 앱이 실제 호출을 한 번 보내 키를 검증합니다
 
-**인증** `GET /user` · `POST /auth/send-code` · `POST /auth/verify-code` · `POST /user/auth` · `PUT /user/pin` · `POST /user/logout`
+키는 **이 기기의 localStorage에만** 저장되고 서버로 전송되지 않습니다. AI 요청은 기기에서 Google API로 직접 나갑니다. 키를 등록하지 않아도 가계부 기능은 전부 정상 동작하며, AI 메뉴만 비활성 상태가 됩니다.
 
-**계좌·카드** `GET|POST /accounts` · `PUT|DELETE /accounts/:id` · `POST /accounts/sync`
+> 공용 기기에서는 키를 등록하지 마세요. 브라우저 데이터를 지우면 키도 함께 사라집니다. AI 기능만은 인터넷 연결이 필요합니다.
 
-**거래** `GET|POST /transactions` · `POST /transactions/batch` · `DELETE /transactions/:id` · `PATCH /transactions/:id/toggle-fixed`
+---
 
-**예산** `GET|POST /budgets`
+## 개발
 
-**AI** `GET /ai/analysis` · `PATCH /ai/recommendation/:id/toggle` · `POST /ai/analyze-spending` · `POST /ai/parse-sms` · `POST /ai/ask-coach`
+**필요 환경** Node.js 20.19 이상
+
+```bash
+npm install
+npm run dev      # http://localhost:5173
+```
+
+| 명령 | 설명 |
+| --- | --- |
+| `npm run dev` | 개발 서버 |
+| `npm run build` | 정적 빌드 → `dist/` |
+| `npm run preview` | 빌드 결과 미리보기 |
+| `npm run lint` | TypeScript 타입 검사 |
+
+**로그인** — 이름과 휴대폰 번호를 입력하고 인증번호를 요청하면, 기기에서 생성된 6자리 코드가 화면에 그대로 표시됩니다. 테스트용 고정 코드 `123456` 도 통과합니다.
+
+---
+
+## 휴대폰에 설치하기
+
+PWA 설치와 오프라인 캐시는 **HTTPS(또는 localhost)에서만** 동작합니다. `http://192.168.x.x` 같은 주소로는 서비스워커가 등록되지 않아 "앱 설치"가 뜨지 않습니다.
+
+`dist/`는 정적 파일이므로 아무 정적 호스팅에나 올리면 됩니다 (GitHub Pages, Cloudflare Pages, Netlify, Vercel 등 — 모두 HTTPS를 자동 제공).
+
+```bash
+npm run build
+# dist/ 를 정적 호스팅에 업로드
+```
+
+배포한 HTTPS 주소를 휴대폰 크롬에서 열고 **⋮ → 앱 설치 / 홈 화면에 추가**를 누르면 주소창 없는 전용 앱으로 실행됩니다. 앱 안의 **설정 → 전용앱 설치** 메뉴에 QR 코드와 링크 복사, 기종별 설치 방법이 준비되어 있습니다.
+
+설치 후에는 SQLite 엔진(`.wasm`)까지 캐시되므로 **인터넷 없이도 앱 전체가 동작합니다.** AI 기능만 온라인이 필요합니다.
 
 ---
 
 ## 프로젝트 구조
 
 ```
-├── server.ts              Express 서버 · 전체 REST API · AI 엔드포인트
-├── server/db.ts           SQLite 초기화 · 스키마 · 시드 · 백업/복구
-├── vite.config.ts         Vite + Tailwind + PWA 설정
+├── vite.config.ts         Vite + Tailwind + PWA(오프라인 캐시) 설정
 ├── src/
-│   ├── App.tsx            인증 가드 · 탭 라우팅 · 디바이스 프레임
+│   ├── App.tsx            DB 준비/인증 가드 · 탭 라우팅 · 디바이스 프레임
+│   ├── db/
+│   │   ├── schema.ts      스키마 버전 · 마이그레이션 · 기본 카테고리 · 샘플 데이터
+│   │   ├── database.ts    sql.js 초기화 · IndexedDB 저장 · 마이그레이션 실행
+│   │   └── repository.ts  화면이 쓰는 모든 조회/저장 함수
+│   ├── services/
+│   │   └── aiClient.ts    API 키 관리 · 절약 분석 · 문자 파싱 · 코치 Q&A
 │   ├── context/           FinanceContext · AuthContext
 │   ├── components/
 │   │   ├── views/         7개 탭 화면
-│   │   ├── auth/          간편인증 · 보안 설정
+│   │   ├── settings/      AI 등록
+│   │   ├── auth/          간편인증 · 보안 정보 · PIN 등록
 │   │   ├── transactions/  거래 추가 · 거래 아이템
 │   │   ├── dashboard/     요약 카드 · 고정/변동 비율
-│   │   ├── modals/        SMS 파서
-│   │   ├── layout/        헤더 · 하단 네비게이션
+│   │   ├── modals/        문자 자동 인식
+│   │   ├── layout/        헤더(설정 메뉴) · 하단 네비게이션
 │   │   └── pwa/           설치 안내 · 오프라인 배너
-│   ├── data/              히스토리 차트용 기준 데이터
 │   └── types/finance.ts   공통 타입 정의
 └── scripts/               PWA 아이콘 생성
 ```
@@ -147,12 +166,12 @@ npm run dev
 
 ## 주의
 
-이 프로젝트의 인증은 **개인용 데모 수준**이며, 아직 실서비스에 그대로 쓸 수 없습니다.
+인증은 **1인 기기용 데모 수준**입니다.
 
-- 인증번호가 API 응답에 그대로 담기고, 고정 코드 `123456` 이 항상 통과합니다.
-- PIN이 평문으로 저장되며 `localStorage` 에도 복사됩니다.
-- 세션·토큰 개념이 없고, DB의 단일 사용자 행(`user_primary`)만 사용합니다.
+- 인증번호를 기기에서 생성해 화면에 그대로 보여주며, 고정 코드 `123456` 이 항상 통과합니다.
+- PIN이 기기 데이터베이스에 평문으로 저장됩니다.
+- 사용자는 1명뿐이며 세션·토큰 개념이 없습니다.
 
-여러 사용자를 받거나 외부에 공개하기 전에 인증 계층을 먼저 교체해야 합니다.
+기기를 잠그는 용도로는 충분하지만, 여러 사람이 쓰거나 분실 위험이 있는 기기에서는 그대로 신뢰하지 마세요.
 
-또한 계좌 연결과 잔액 동기화는 실제 금융기관 오픈뱅킹 API가 아니라 **로컬 DB에 기록된 값을 갱신하는 방식**입니다. 거래 입력은 직접 추가하거나 결제 알림 문자를 붙여넣어 등록합니다.
+계좌 연결과 잔액 갱신은 실제 오픈뱅킹 API가 아니라 **기기 안의 값을 직접 관리하는 방식**입니다. 거래는 직접 입력하거나 결제 알림 문자를 붙여넣어 등록합니다.
