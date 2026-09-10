@@ -1,5 +1,9 @@
 import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import type { Transaction } from "../../types/finance";
+import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
+import { AddTransactionModal } from "../transactions/AddTransactionModal";
+import { CsvImportModal } from "../modals/CsvImportModal";
 import {
   CreditCard,
   Building,
@@ -19,6 +23,8 @@ import {
   Download,
   Upload,
   HardDrive,
+  FileSpreadsheet,
+  ChevronRight,
 } from "lucide-react";
 
 const PRESET_BANKS = [
@@ -50,6 +56,7 @@ export const ConnectedAssetsView: React.FC<{
 }> = ({ onOpenSMSModal }) => {
   const {
     accounts,
+    allTransactions,
     syncAccounts,
     isSyncing,
     lastSyncTime,
@@ -73,6 +80,15 @@ export const ConnectedAssetsView: React.FC<{
   const [initialAmount, setInitialAmount] = useState("");
   const [syncMode, setSyncMode] = useState<"SMS" | "OPEN_BANKING">("OPEN_BANKING");
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  // Per-account ledger, CSV import and manual entry
+  const [ledgerAccountId, setLedgerAccountId] = useState<string | null>(null);
+  const [csvAccountId, setCsvAccountId] = useState<string | null>(null);
+  const [txModal, setTxModal] = useState<{
+    open: boolean;
+    editing: Transaction | null;
+    accountId?: string;
+  }>({ open: false, editing: null });
 
   const bankAccounts = accounts.filter((a) => a.type === "BANK");
   const cardAccounts = accounts.filter((a) => a.type === "CARD");
@@ -164,7 +180,7 @@ export const ConnectedAssetsView: React.FC<{
               연동된 자산 (카드 & 통장)
             </h2>
             <p className="text-[11px] text-slate-500">
-              금융결제원 오픈뱅킹 및 안드로이드 SMS 연동 관리
+              카드·통장 내역을 CSV로 가져와 카드별로 관리합니다
             </p>
           </div>
 
@@ -176,9 +192,27 @@ export const ConnectedAssetsView: React.FC<{
             <RefreshCw
               className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`}
             />
-            <span>{isSyncing ? "동기화 중..." : "전체 동기화"}</span>
+            <span>{isSyncing ? "새로고침 중..." : "새로고침"}</span>
           </button>
         </div>
+
+        {/* Primary action: bring a statement in */}
+        <button
+          onClick={() => setCsvAccountId(accounts[0]?.id ?? "")}
+          disabled={accounts.length === 0}
+          className="w-full flex items-center justify-between gap-2 p-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-98 text-white transition disabled:opacity-40 shadow-xs"
+        >
+          <span className="flex items-center gap-2.5 min-w-0">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span className="text-left min-w-0">
+              <span className="block text-xs font-bold">카드내역 · 통장내역 가져오기</span>
+              <span className="block text-[10px] text-slate-400">
+                은행·카드사에서 받은 CSV 파일을 그대로 올리세요
+              </span>
+            </span>
+          </span>
+          <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+        </button>
 
         {/* Big Action Buttons to Register New Card or Bank Account */}
         <div className="grid grid-cols-2 gap-2 pt-1">
@@ -204,9 +238,9 @@ export const ConnectedAssetsView: React.FC<{
         <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-100">
           <div className="flex items-center gap-1 text-emerald-600 font-medium">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>금융보안원 암호화 통신 연동</span>
+            <span>기기 안에서만 처리됩니다</span>
           </div>
-          <span>마지막 동기화: {lastSyncTime}</span>
+          <span>마지막 갱신: {lastSyncTime}</span>
         </div>
       </div>
 
@@ -293,7 +327,8 @@ export const ConnectedAssetsView: React.FC<{
             bankAccounts.map((acc) => (
               <div
                 key={acc.id}
-                className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between hover:border-slate-300 transition"
+                onClick={() => setLedgerAccountId(acc.id)}
+                className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between hover:border-emerald-400 hover:bg-emerald-50/30 transition cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div
@@ -307,8 +342,8 @@ export const ConnectedAssetsView: React.FC<{
                       <span className="text-xs font-bold text-slate-900">
                         {acc.name}
                       </span>
-                      <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1 py-0.2 rounded-sm font-semibold">
-                        연동중
+                      <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md font-semibold">
+                        {allTransactions.filter((t) => t.accountId === acc.id).length}건
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-400 mt-0.5">
@@ -326,7 +361,10 @@ export const ConnectedAssetsView: React.FC<{
                   </div>
 
                   <button
-                    onClick={() => handleDelete(acc.id, acc.name)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(acc.id, acc.name);
+                    }}
                     title="계좌 연동 삭제"
                     className="p-1.5 text-slate-300 hover:text-rose-500 rounded-lg transition"
                   >
@@ -364,7 +402,8 @@ export const ConnectedAssetsView: React.FC<{
             cardAccounts.map((acc) => (
               <div
                 key={acc.id}
-                className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between hover:border-slate-300 transition"
+                onClick={() => setLedgerAccountId(acc.id)}
+                className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between hover:border-emerald-400 hover:bg-emerald-50/30 transition cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div
@@ -378,8 +417,8 @@ export const ConnectedAssetsView: React.FC<{
                       <span className="text-xs font-bold text-slate-900">
                         {acc.name}
                       </span>
-                      <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1 py-0.2 rounded-sm font-semibold">
-                        연동중
+                      <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md font-semibold">
+                        {allTransactions.filter((t) => t.accountId === acc.id).length}건
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-400 mt-0.5">
@@ -397,7 +436,10 @@ export const ConnectedAssetsView: React.FC<{
                   </div>
 
                   <button
-                    onClick={() => handleDelete(acc.id, acc.name)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(acc.id, acc.name);
+                    }}
                     title="카드 연동 삭제"
                     className="p-1.5 text-slate-300 hover:text-rose-500 rounded-lg transition"
                   >
@@ -738,6 +780,37 @@ export const ConnectedAssetsView: React.FC<{
           </div>
         </div>
       )}
+
+      {/* Per-account ledger */}
+      <AccountLedgerModal
+        isOpen={Boolean(ledgerAccountId)}
+        accountId={ledgerAccountId || ""}
+        onClose={() => setLedgerAccountId(null)}
+        onEdit={(tx) => setTxModal({ open: true, editing: tx })}
+        onAdd={() =>
+          setTxModal({
+            open: true,
+            editing: null,
+            accountId: ledgerAccountId || undefined,
+          })
+        }
+        onImport={() => setCsvAccountId(ledgerAccountId)}
+      />
+
+      {/* Add or edit a single entry */}
+      <AddTransactionModal
+        isOpen={txModal.open}
+        editing={txModal.editing}
+        defaultAccountId={txModal.accountId}
+        onClose={() => setTxModal({ open: false, editing: null })}
+      />
+
+      {/* Statement import */}
+      <CsvImportModal
+        isOpen={csvAccountId !== null}
+        defaultAccountId={csvAccountId || undefined}
+        onClose={() => setCsvAccountId(null)}
+      />
     </div>
   );
 };

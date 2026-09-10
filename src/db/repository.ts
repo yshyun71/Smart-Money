@@ -320,6 +320,71 @@ export function deleteTransaction(id: string): void {
   run("DELETE FROM transactions WHERE id = ? AND user_id = ?", [id, requireUser()]);
 }
 
+/** Rewrites an entry in place, keeping its id. */
+export function updateTransaction(tx: Transaction): void {
+  run(
+    `UPDATE transactions SET
+       date = ?, time = ?, type = ?, expense_type = ?, category = ?, merchant = ?,
+       amount = ?, payment_method = ?, account_id = ?, memo = ?,
+       is_fixed_recurring = ?, recurring_day = ?
+     WHERE id = ? AND user_id = ?`,
+    [
+      tx.date,
+      tx.time || "12:00",
+      tx.type,
+      tx.expenseType,
+      tx.category,
+      tx.merchant,
+      Number(tx.amount || 0),
+      tx.paymentMethod || "카드결제",
+      tx.accountId || "",
+      tx.memo || "",
+      tx.isFixedRecurring ? 1 : 0,
+      tx.recurringDay ?? null,
+      tx.id,
+      requireUser(),
+    ]
+  );
+}
+
+/**
+ * Applies a statement import in one write.
+ *
+ * Unlike a manual entry this does NOT move account balances. An imported
+ * statement is a record of what already happened, and the balance the user
+ * entered for the account is a figure from that same statement — adjusting it
+ * again per row would count everything twice.
+ */
+export function applyImport(inserts: Transaction[], updates: Transaction[]): void {
+  const userId = requireUser();
+  runBatch([
+    ...inserts.map((tx) => insertStatement(tx, userId)),
+    ...updates.map((tx) => ({
+      sql: `UPDATE transactions SET
+              date = ?, time = ?, type = ?, expense_type = ?, category = ?, merchant = ?,
+              amount = ?, payment_method = ?, account_id = ?, memo = ?,
+              is_fixed_recurring = ?, recurring_day = ?
+            WHERE id = ? AND user_id = ?`,
+      params: [
+        tx.date,
+        tx.time || "12:00",
+        tx.type,
+        tx.expenseType,
+        tx.category,
+        tx.merchant,
+        Number(tx.amount || 0),
+        tx.paymentMethod || "카드결제",
+        tx.accountId || "",
+        tx.memo || "",
+        tx.isFixedRecurring ? 1 : 0,
+        tx.recurringDay ?? null,
+        tx.id,
+        userId,
+      ],
+    })),
+  ]);
+}
+
 export function toggleTransactionFixed(id: string): "FIXED" | "VARIABLE" | null {
   const userId = requireUser();
   const row = queryOne<{ expense_type: string }>(

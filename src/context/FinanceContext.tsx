@@ -82,7 +82,10 @@ interface FinanceContextType {
   // Actions
   addTransaction: (tx: Omit<Transaction, "id">) => void;
   addTransactions: (txs: Omit<Transaction, "id">[]) => void;
+  updateTransaction: (tx: Transaction) => void;
   deleteTransaction: (id: string) => void;
+  /** Applies a statement import: new rows inserted, chosen duplicates rewritten. */
+  importTransactions: (inserts: Omit<Transaction, "id">[], updates: Transaction[]) => void;
   addAccount: (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => void;
   deleteAccount: (id: string) => void;
   toggleFixedType: (id: string) => void;
@@ -590,6 +593,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const updateTransaction = (tx: Transaction) => {
+    try {
+      repo.updateTransaction(tx);
+      setTransactions((prev) => prev.map((t) => (t.id === tx.id ? tx : t)));
+    } catch (error) {
+      console.error("거래를 수정하지 못했습니다:", error);
+    }
+  };
+
   const deleteTransaction = (id: string) => {
     try {
       repo.deleteTransaction(id);
@@ -597,6 +609,31 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       syncStats();
     } catch (error) {
       console.error("거래를 삭제하지 못했습니다:", error);
+    }
+  };
+
+  const importTransactions = (
+    inserts: Omit<Transaction, "id">[],
+    updates: Transaction[]
+  ) => {
+    const withIds: Transaction[] = inserts.map((tx, idx) => ({
+      ...tx,
+      id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+    }));
+    try {
+      repo.applyImport(withIds, updates);
+      setTransactions((prev) => {
+        const replaced = prev.map(
+          (t) => updates.find((u) => u.id === t.id) ?? t
+        );
+        return [...withIds, ...replaced].sort((a, b) =>
+          `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)
+        );
+      });
+      syncStats();
+    } catch (error) {
+      console.error("가져오기를 저장하지 못했습니다:", error);
+      throw error;
     }
   };
 
@@ -805,7 +842,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         importDatabaseFile,
         addTransaction,
         addTransactions,
+        updateTransaction,
         deleteTransaction,
+        importTransactions,
         addAccount,
         deleteAccount,
         toggleFixedType,

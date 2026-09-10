@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
-import { CategoryType, ExpenseType, TransactionType } from "../../types/finance";
-import { X, Plus, Pin, ShoppingBag, Coins } from "lucide-react";
+import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
+import { X, Plus, Pin, ShoppingBag, Coins, Save, Trash2 } from "lucide-react";
 
 const CATEGORIES: CategoryType[] = [
   "식비",
@@ -22,8 +22,12 @@ const CATEGORIES: CategoryType[] = [
 export const AddTransactionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-}> = ({ isOpen, onClose }) => {
-  const { addTransaction, accounts } = useFinance();
+  /** Present to edit an existing entry instead of creating one. */
+  editing?: Transaction | null;
+  /** Pre-selects the account when adding from an account's own ledger. */
+  defaultAccountId?: string;
+}> = ({ isOpen, onClose, editing = null, defaultAccountId }) => {
+  const { addTransaction, updateTransaction, deleteTransaction, accounts } = useFinance();
 
   const [formType, setFormType] = useState<"VARIABLE" | "FIXED" | "INCOME">(
     "VARIABLE"
@@ -37,6 +41,38 @@ export const AddTransactionModal: React.FC<{
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [recurringDay, setRecurringDay] = useState("5");
   const [memo, setMemo] = useState("");
+
+  // Load the entry being edited, or start clean, each time the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (editing) {
+      setFormType(
+        editing.type === "INCOME"
+          ? "INCOME"
+          : editing.expenseType === "FIXED"
+          ? "FIXED"
+          : "VARIABLE"
+      );
+      setAmount(String(editing.amount));
+      setMerchant(editing.merchant);
+      setCategory(editing.category);
+      setSelectedAccountId(editing.accountId || accounts[0]?.id || "");
+      setDate(editing.date);
+      setRecurringDay(String(editing.recurringDay ?? 5));
+      setMemo(editing.memo || "");
+    } else {
+      setFormType("VARIABLE");
+      setAmount("");
+      setMerchant("");
+      setCategory("식비");
+      setSelectedAccountId(defaultAccountId || accounts[0]?.id || "");
+      setDate(new Date().toISOString().split("T")[0]);
+      setRecurringDay("5");
+      setMemo("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, editing]);
 
   if (!isOpen) return null;
 
@@ -59,9 +95,9 @@ export const AddTransactionModal: React.FC<{
         ? "FIXED"
         : "VARIABLE";
 
-    addTransaction({
+    const payload = {
       date,
-      time: new Date().toTimeString().substring(0, 5),
+      time: editing?.time || new Date().toTimeString().substring(0, 5),
       type,
       expenseType,
       category,
@@ -72,13 +108,22 @@ export const AddTransactionModal: React.FC<{
       memo: memo.trim() || undefined,
       isFixedRecurring: formType === "FIXED",
       recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
-    });
+    };
+
+    if (editing) {
+      updateTransaction({ ...payload, id: editing.id });
+    } else {
+      addTransaction(payload);
+    }
 
     onClose();
-    // Reset form
-    setAmount("");
-    setMerchant("");
-    setMemo("");
+  };
+
+  const handleDelete = () => {
+    if (!editing) return;
+    if (!confirm(`'${editing.merchant}' 내역을 삭제할까요?`)) return;
+    deleteTransaction(editing.id);
+    onClose();
   };
 
   return (
@@ -86,7 +131,9 @@ export const AddTransactionModal: React.FC<{
       <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">거래 내역 직접 추가</h2>
+          <h2 className="text-base font-bold text-slate-900">
+            {editing ? "거래 내역 수정" : "거래 내역 직접 추가"}
+          </h2>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
@@ -283,9 +330,20 @@ export const AddTransactionModal: React.FC<{
             type="submit"
             className="w-full mt-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition flex items-center justify-center gap-1.5"
           >
-            <Plus className="w-4 h-4" />
-            <span>가계부에 등록하기</span>
+            {editing ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            <span>{editing ? "수정 내용 저장" : "가계부에 등록하기"}</span>
           </button>
+
+          {editing && (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="w-full rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold py-3 text-xs transition flex items-center justify-center gap-1.5"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>이 내역 삭제</span>
+            </button>
+          )}
         </form>
       </div>
     </div>
