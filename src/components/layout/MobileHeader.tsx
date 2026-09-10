@@ -1,12 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { useAuth } from "../../context/AuthContext";
 import { UserSecurityModal } from "../auth/UserSecurityModal";
-import { PWAInstallButton } from "../pwa/PWAInstallButton";
+import { PinSetupModal } from "../auth/PinSetupModal";
+import { AIKeyModal } from "../settings/AIKeyModal";
+import { PWAInstallGuideModal } from "../pwa/PWAInstallButton";
+import { hasApiKey, onApiKeyChange } from "../../services/aiClient";
 import { NavTab } from "./BottomNavigation";
 import {
   RefreshCw,
-  Wallet,
   Smartphone,
   Maximize2,
   Calendar,
@@ -15,9 +17,9 @@ import {
   Bell,
   CreditCard,
   ShieldCheck,
-  Lock,
-  LogOut,
-  User,
+  Settings,
+  KeyRound,
+  Sparkles,
 } from "lucide-react";
 
 export const MobileHeader: React.FC<{
@@ -35,6 +37,24 @@ export const MobileHeader: React.FC<{
 
   const { user } = useAuth();
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [showPwaGuide, setShowPwaGuide] = useState(false);
+  const [showAIKeyModal, setShowAIKeyModal] = useState(false);
+  const [aiKeyRegistered, setAiKeyRegistered] = useState(hasApiKey);
+
+  // Keep the "미등록" badge in sync when the key is added or removed
+  useEffect(() => onApiKeyChange(setAiKeyRegistered), []);
+
+  // Dismiss the settings dropdown with Escape
+  useEffect(() => {
+    if (!showSettingsMenu) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowSettingsMenu(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showSettingsMenu]);
 
   const currentActualMonth = `${new Date().getFullYear()}-${String(
     new Date().getMonth() + 1
@@ -69,6 +89,37 @@ export const MobileHeader: React.FC<{
   };
 
   const alertCount = budgetAlerts.length;
+
+  const settingsMenuItems = [
+    {
+      icon: CreditCard,
+      label: "연동된 카드 및 계좌관리",
+      description: "은행 계좌·카드 등록 및 잔액 확인",
+      badge: undefined as string | undefined,
+      onSelect: () => onNavigateTab?.("assets"),
+    },
+    {
+      icon: KeyRound,
+      label: "간편비밀번호 등록/변경",
+      description: "잠금 해제에 사용할 6자리 PIN",
+      badge: undefined,
+      onSelect: () => setShowPinModal(true),
+    },
+    {
+      icon: Sparkles,
+      label: "AI 등록",
+      description: "내 API 키로 AI 절약 분석·문자 인식 사용",
+      badge: aiKeyRegistered ? undefined : "미등록",
+      onSelect: () => setShowAIKeyModal(true),
+    },
+    {
+      icon: Smartphone,
+      label: "스마트폰에 '스마트 머니' 전용앱 설치",
+      description: "설치 안내 및 모바일 전용 링크·QR 코드",
+      badge: undefined,
+      onSelect: () => setShowPwaGuide(true),
+    },
+  ];
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-4 pt-2.5 pb-2.5 select-none w-full shadow-2xs">
@@ -119,15 +170,6 @@ export const MobileHeader: React.FC<{
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 group-hover:scale-110 transition-transform" />
           </button>
 
-          {/* Connected Assets Quick Access */}
-          <button
-            onClick={() => onNavigateTab?.("assets")}
-            title="연동된 카드 및 계좌 관리"
-            className="p-1.5 rounded-xl border border-slate-200/80 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 transition active:scale-95"
-          >
-            <CreditCard className="w-4 h-4" />
-          </button>
-
           {/* Budget Alert Bell */}
           <button
             onClick={() => onNavigateTab?.("budget")}
@@ -155,8 +197,74 @@ export const MobileHeader: React.FC<{
             />
           </button>
 
-          {/* PWA Install Icon */}
-          <PWAInstallButton compact />
+          {/* Settings Menu */}
+          <div className="relative">
+            <button
+              id="settings-menu-btn"
+              onClick={() => setShowSettingsMenu((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={showSettingsMenu}
+              title="설정"
+              className={`p-1.5 rounded-xl border transition active:scale-95 ${
+                showSettingsMenu
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200/80 text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+              }`}
+            >
+              <Settings
+                className={`w-4 h-4 transition-transform duration-200 ${
+                  showSettingsMenu ? "rotate-45" : ""
+                }`}
+              />
+            </button>
+
+            {showSettingsMenu && (
+              <>
+                {/* Click-outside catcher */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowSettingsMenu(false)}
+                />
+
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full mt-2 z-50 w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl bg-white border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                >
+                  <div className="px-3 pt-2.5 pb-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                    설정
+                  </div>
+                  {settingsMenuItems.map(({ icon: Icon, label, description, badge, onSelect }) => (
+                    <button
+                      key={label}
+                      role="menuitem"
+                      onClick={() => {
+                        setShowSettingsMenu(false);
+                        onSelect();
+                      }}
+                      className="w-full px-3 py-2.5 flex items-start gap-2.5 text-left hover:bg-slate-50 active:bg-slate-100 transition border-t border-slate-100 first-of-type:border-t-0"
+                    >
+                      <div className="w-7 h-7 shrink-0 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                        <Icon className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold text-slate-900 leading-snug flex items-center gap-1.5">
+                          <span className="min-w-0">{label}</span>
+                          {badge && (
+                            <span className="shrink-0 text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200/70 px-1.5 py-0.5 rounded-full leading-none">
+                              {badge}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 leading-snug mt-0.5">
+                          {description}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* View mode toggle (Phone frame vs Wide) */}
           <button
@@ -221,6 +329,22 @@ export const MobileHeader: React.FC<{
       <UserSecurityModal
         isOpen={showSecurityModal}
         onClose={() => setShowSecurityModal(false)}
+      />
+
+      {/* Settings menu targets */}
+      <PinSetupModal
+        isOpen={showPinModal}
+        onClose={() => setShowPinModal(false)}
+      />
+
+      <AIKeyModal
+        isOpen={showAIKeyModal}
+        onClose={() => setShowAIKeyModal(false)}
+      />
+
+      <PWAInstallGuideModal
+        isOpen={showPwaGuide}
+        onClose={() => setShowPwaGuide(false)}
       />
     </header>
   );

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { Transaction } from "../../types/finance";
+import { parsePaymentMessages, type ParsedTransaction } from "../../services/aiClient";
 import {
   X,
   Sparkles,
@@ -34,13 +35,16 @@ export const SMSParserModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { addTransaction, accounts } = useFinance();
+  const { addTransactions, accounts } = useFinance();
 
   const [rawText, setRawText] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [parsedResult, setParsedResult] = useState<any | null>(null);
+  const [parsedList, setParsedList] = useState<ParsedTransaction[]>([]);
   const [isAddedSuccess, setIsAddedSuccess] = useState(false);
+
+  // The preview card shows the first hit; a message can contain several.
+  const parsedResult = parsedList[0] || null;
 
   if (!isOpen) return null;
 
@@ -49,58 +53,55 @@ export const SMSParserModal: React.FC<{
 
     setIsParsing(true);
     setParseError(null);
-    setParsedResult(null);
+    setParsedList([]);
     setIsAddedSuccess(false);
 
     try {
-      const res = await fetch("/api/ai/parse-sms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: rawText }),
-      });
-
-      const data = await res.json();
-      if (data.success && data.data) {
-        setParsedResult(data.data);
+      const results = await parsePaymentMessages(rawText);
+      if (results.length === 0) {
+        setParseError("문자에서 거래 내역을 찾지 못했습니다. 원문을 그대로 붙여넣어 주세요.");
       } else {
-        setParseError(data.error || "문자 내역을 분석하지 못했습니다.");
+        setParsedList(results);
       }
     } catch (err: any) {
-      setParseError("서버 분석 요청 중 오류가 발생했습니다.");
+      setParseError(err?.message || "문자 분석 중 오류가 발생했습니다.");
     } finally {
       setIsParsing(false);
     }
   };
 
   const handleSaveToLedger = () => {
-    if (!parsedResult) return;
+    if (parsedList.length === 0) return;
 
-    // match account or use default
-    const matchedAccount = accounts.find((a) =>
-      parsedResult.paymentMethod.includes(a.institution) ||
-      parsedResult.paymentMethod.includes(a.name)
-    ) || accounts[0];
+    const newTxs: Omit<Transaction, "id">[] = parsedList.map((item) => {
+      const paymentMethod = item.paymentMethod || "";
+      const matchedAccount =
+        accounts.find(
+          (a) =>
+            paymentMethod.includes(a.institution) || paymentMethod.includes(a.name)
+        ) || accounts[0];
 
-    const newTx: Omit<Transaction, "id"> = {
-      date: parsedResult.date || new Date().toISOString().split("T")[0],
-      time: parsedResult.time || new Date().toTimeString().substring(0, 5),
-      type: parsedResult.type || "EXPENSE",
-      expenseType: parsedResult.expenseType || "VARIABLE",
-      category: parsedResult.category || "식비",
-      merchant: parsedResult.merchant || "기타 가맹점",
-      amount: parsedResult.amount || 0,
-      paymentMethod: parsedResult.paymentMethod || matchedAccount?.name || "카드/계좌",
-      accountId: matchedAccount?.id,
-      memo: parsedResult.memo || "문자 자동 인식",
-      isFixedRecurring: parsedResult.expenseType === "FIXED",
-    };
+      return {
+        date: item.date || new Date().toISOString().split("T")[0],
+        time: item.time || new Date().toTimeString().substring(0, 5),
+        type: item.type || "EXPENSE",
+        expenseType: item.expenseType || "VARIABLE",
+        category: item.category || "기타지출",
+        merchant: item.merchant || "기타 가맹점",
+        amount: item.amount || 0,
+        paymentMethod: paymentMethod || matchedAccount?.name || "카드/계좌",
+        accountId: matchedAccount?.id || "",
+        memo: item.memo || "문자 자동 인식",
+        isFixedRecurring: item.expenseType === "FIXED",
+      };
+    });
 
-    addTransaction(newTx);
+    addTransactions(newTxs);
     setIsAddedSuccess(true);
     setTimeout(() => {
       onClose();
       setRawText("");
-      setParsedResult(null);
+      setParsedList([]);
       setIsAddedSuccess(false);
     }, 1000);
   };
@@ -185,7 +186,9 @@ export const SMSParserModal: React.FC<{
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                분석 완료 (가계부 미리보기)
+                {parsedList.length > 1
+                  ? `${parsedList.length}건 인식 (첫 건 미리보기)`
+                  : "분석 완료 (가계부 미리보기)"}
               </span>
               <span
                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${

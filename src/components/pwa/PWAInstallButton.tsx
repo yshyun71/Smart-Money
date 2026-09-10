@@ -1,25 +1,29 @@
 import React, { useState } from "react";
 import { usePWAInstall, useOnlineStatus } from "../../hooks/usePWAInstall";
 import {
-  Download,
   Smartphone,
   X,
-  CheckCircle,
   Copy,
   Check,
-  ExternalLink,
+  CheckCircle,
+  Download,
   QrCode,
 } from "lucide-react";
 
-export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
-  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
-  const [showGuide, setShowGuide] = useState(false);
+/**
+ * Install guide for the standalone mobile app: QR code, direct link and
+ * per-browser steps. Shown when the browser cannot trigger a native install
+ * prompt, and reachable from the header settings menu at any time.
+ */
+export const PWAInstallGuideModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+}> = ({ isOpen, onClose }) => {
+  const { isInstallable, isInstalled, install } = usePWAInstall();
   const [copied, setCopied] = useState(false);
 
-  const directAppUrl =
-    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
-      ? window.location.origin
-      : "https://ais-pre-3mw7omingtco3lahcwyzhg-664342969479.asia-northeast1.run.app";
+  const directAppUrl = typeof window !== "undefined" ? window.location.origin : "";
+  const isLocalOrigin = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(directAppUrl);
 
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
     directAppUrl
@@ -37,159 +41,144 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
     }
   };
 
-  // If already installed in standalone mode
-  if (isInstalled) {
-    if (compact) {
-      return (
-        <span
-          title="모바일 앱(PWA) 단독 실행 중"
-          className="inline-flex items-center justify-center p-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200/80"
-        >
-          <CheckCircle className="w-4 h-4 text-emerald-600" />
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-        <CheckCircle className="w-3 h-3 text-emerald-600" />
-        앱 설치됨
-      </span>
-    );
-  }
+  if (!isOpen) return null;
 
   return (
-    <>
-      <button
-        id="pwa-install-btn"
-        onClick={() => {
-          if (isInstallable) {
-            install();
-          } else {
-            setShowGuide(true);
-          }
-        }}
-        title="스마트폰에 '스마트 머니' 전용 앱 설치 및 모바일 링크"
-        className={
-          compact
-            ? "p-1.5 rounded-xl border border-emerald-200/80 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition active:scale-95 flex items-center justify-center"
-            : "flex items-center gap-1.5 rounded-full bg-emerald-600 font-medium text-white shadow-xs hover:bg-emerald-700 transition active:scale-95 px-3 py-1.5 text-xs"
-        }
-      >
-        <Smartphone className="w-4 h-4 text-emerald-600" />
-        {!compact && <span>폰에 앱 설치</span>}
-      </button>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl text-left animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+              <Smartphone className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                휴대폰에 '스마트 머니' 앱 설치하기
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                전용 단독 모바일 웹앱(PWA) 설치 안내
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
-      {/* Direct Mobile App Installation Modal */}
-      {showGuide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl text-left animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
-                  <Smartphone className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">
-                    휴대폰에 '스마트 머니' 앱 설치하기
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    전용 단독 모바일 웹앱(PWA) 설치 안내
-                  </p>
-                </div>
-              </div>
+        {/* Serving from localhost: the QR below points at this machine only */}
+        {isLocalOrigin && (
+          <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-900 leading-relaxed">
+            지금은 <strong>개발 서버(localhost)</strong>에서 실행 중입니다. 아래 주소는 이 컴퓨터에서만
+            열리므로 휴대폰에서는 접속되지 않습니다. 폰에 설치하려면 먼저 <strong>HTTPS 주소로 배포</strong>한 뒤
+            그 주소에서 이 화면을 열어주세요.
+          </div>
+        )}
+
+        {/* Native install prompt, when this browser can offer one */}
+        {isInstalled ? (
+          <div className="mt-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200/80 text-xs font-bold text-emerald-800 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>이 기기에는 이미 전용 앱으로 설치되어 있습니다.</span>
+          </div>
+        ) : isInstallable ? (
+          <button
+            onClick={() => {
+              install();
+              onClose();
+            }}
+            className="mt-3 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition active:scale-95"
+          >
+            <Download className="w-4 h-4" />
+            <span>지금 바로 이 기기에 앱 설치</span>
+          </button>
+        ) : null}
+
+        {/* QR Code & Direct Link */}
+        <div className="mt-3 p-4 bg-slate-50 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row items-center gap-4">
+          <div className="w-32 h-32 bg-white p-2 rounded-xl border border-slate-200 shadow-2xs shrink-0 flex items-center justify-center">
+            <img
+              src={qrImageUrl}
+              alt="QR Code"
+              className="w-full h-full object-contain"
+            />
+          </div>
+
+          <div className="flex-1 space-y-2 text-left w-full">
+            <div className="text-xs font-bold text-slate-900 flex items-center gap-1">
+              <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+              <span>스마트폰 카메라로 QR 스캔</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              휴대폰 카메라를 켜고 화면의 QR 코드를 비추면 즉시 전용 앱 화면으로 이동합니다.
+            </p>
+
+            <div className="pt-1">
               <button
-                onClick={() => setShowGuide(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+                onClick={handleCopyLink}
+                className="w-full py-2 px-3 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 flex items-center justify-center gap-1.5 shadow-2xs transition active:scale-95"
               >
-                <X className="w-5 h-5" />
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">전용 링크 복사 완료!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-slate-500" />
+                    <span>모바일 전용 URL 복사하기</span>
+                  </>
+                )}
               </button>
             </div>
-
-            {/* QR Code & Direct Link */}
-            <div className="mt-3 p-4 bg-slate-50 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row items-center gap-4">
-              <div className="w-32 h-32 bg-white p-2 rounded-xl border border-slate-200 shadow-2xs shrink-0 flex items-center justify-center">
-                <img
-                  src={qrImageUrl}
-                  alt="QR Code"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-
-              <div className="flex-1 space-y-2 text-left w-full">
-                <div className="text-xs font-bold text-slate-900 flex items-center gap-1">
-                  <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>스마트폰 카메라로 QR 스캔</span>
-                </div>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  휴대폰 카메라를 켜고 화면의 QR 코드를 비추면 즉시 전용 앱 화면으로 이동합니다.
-                </p>
-
-                <div className="pt-1">
-                  <button
-                    onClick={handleCopyLink}
-                    className="w-full py-2 px-3 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 flex items-center justify-center gap-1.5 shadow-2xs transition active:scale-95"
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="text-emerald-700">전용 링크 복사 완료!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5 text-slate-500" />
-                        <span>모바일 전용 URL 복사하기</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Step by step installation */}
-            <div className="mt-4 space-y-2">
-              <div className="text-xs font-bold text-slate-800">
-                📱 안드로이드 크롬(Chrome)에서 설치 방법
-              </div>
-              <ol className="space-y-1.5 text-xs text-slate-600 pl-1 list-decimal list-inside leading-relaxed bg-slate-50/80 p-3 rounded-xl border border-slate-100">
-                <li>
-                  복사한 전용 URL을 휴대폰 <strong>크롬(Chrome) 주소창</strong>에 붙여넣고 접속합니다.
-                </li>
-                <li>
-                  크롬 우측 상단의 <strong>점 세 개(⋮)</strong> 메뉴를 누릅니다.
-                </li>
-                <li>
-                  <strong>[홈 화면에 추가]</strong> 또는 <strong>[앱 설치]</strong>를 터치합니다.
-                </li>
-                <li className="font-semibold text-emerald-700">
-                  앱 이름이 <strong>'스마트 머니'</strong>로 표시되며 홈 화면에 앱 아이콘이 생성됩니다!
-                </li>
-              </ol>
-
-              {/* Already Installed Note */}
-              <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-900 leading-relaxed">
-                <div className="font-bold flex items-center gap-1.5 text-amber-800 mb-1">
-                  <span>💡 메뉴에 '스마트 머니 열기'만 보이는 경우</span>
-                </div>
-                이미 기기에 '스마트 머니' 앱이 설치되어 있는 상태입니다.
-                새로운 <strong>골드 코인 아이콘</strong>으로 갱신하시려면:
-                <div className="mt-1.5 space-y-1 text-[11px] text-amber-800/90 pl-1">
-                  <div>1. <strong>[스마트 머니 열기]</strong> 클릭 후 앱 창 우측 상단 메뉴(⋮)에서 <strong>[앱 삭제]</strong> 선택 (또는 홈 화면에서 길게 눌러 삭제)</div>
-                  <div>2. 브라우저로 돌아와 <strong>새로고침</strong>하시면 다시 <strong>[앱 설치]</strong>가 나타납니다!</div>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowGuide(false)}
-              className="mt-4 w-full rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 shadow-2xs transition"
-            >
-              확인
-            </button>
           </div>
         </div>
-      )}
-    </>
+
+        {/* Step by step installation */}
+        <div className="mt-4 space-y-2">
+          <div className="text-xs font-bold text-slate-800">
+            📱 안드로이드 크롬(Chrome)에서 설치 방법
+          </div>
+          <ol className="space-y-1.5 text-xs text-slate-600 pl-1 list-decimal list-inside leading-relaxed bg-slate-50/80 p-3 rounded-xl border border-slate-100">
+            <li>
+              복사한 전용 URL을 휴대폰 <strong>크롬(Chrome) 주소창</strong>에 붙여넣고 접속합니다.
+            </li>
+            <li>
+              크롬 우측 상단의 <strong>점 세 개(⋮)</strong> 메뉴를 누릅니다.
+            </li>
+            <li>
+              <strong>[홈 화면에 추가]</strong> 또는 <strong>[앱 설치]</strong>를 터치합니다.
+            </li>
+            <li className="font-semibold text-emerald-700">
+              앱 이름이 <strong>'스마트 머니'</strong>로 표시되며 홈 화면에 앱 아이콘이 생성됩니다!
+            </li>
+          </ol>
+
+          {/* Already Installed Note */}
+          <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-900 leading-relaxed">
+            <div className="font-bold flex items-center gap-1.5 text-amber-800 mb-1">
+              <span>💡 메뉴에 '스마트 머니 열기'만 보이는 경우</span>
+            </div>
+            이미 기기에 '스마트 머니' 앱이 설치되어 있는 상태입니다.
+            새로운 <strong>골드 코인 아이콘</strong>으로 갱신하시려면:
+            <div className="mt-1.5 space-y-1 text-[11px] text-amber-800/90 pl-1">
+              <div>1. <strong>[스마트 머니 열기]</strong> 클릭 후 앱 창 우측 상단 메뉴(⋮)에서 <strong>[앱 삭제]</strong> 선택 (또는 홈 화면에서 길게 눌러 삭제)</div>
+              <div>2. 브라우저로 돌아와 <strong>새로고침</strong>하시면 다시 <strong>[앱 설치]</strong>가 나타납니다!</div>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="mt-4 w-full rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 shadow-2xs transition"
+        >
+          확인
+        </button>
+      </div>
+    </div>
   );
 };
 
@@ -337,4 +326,3 @@ export const PWAHomeBanner: React.FC = () => {
     </>
   );
 };
-

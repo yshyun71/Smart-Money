@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import { askCoach } from "../../services/aiClient";
 import {
+  AlertCircle,
   Sparkles,
   RefreshCw,
   CheckCircle,
@@ -25,6 +27,8 @@ export const AISavingsCoachView: React.FC = () => {
     totalExpense,
     fixedExpenseTotal,
     variableExpenseTotal,
+    aiError,
+    clearAiError,
   } = useFinance();
 
   // Chat state
@@ -42,6 +46,10 @@ export const AISavingsCoachView: React.FC = () => {
   // Checked state for weekly action checklist
   const [checkedItems, setCheckedItems] = useState<{ [idx: number]: boolean }>({});
 
+  // null means "no analysis has been run on this device yet"
+  const healthScore = aiAnalysis?.healthScore ?? null;
+  const potentialSavings = aiAnalysis?.totalPotentialMonthlySavings ?? null;
+
   const handleAskCoach = async (promptText?: string) => {
     const q = promptText || chatQuestion;
     if (!q.trim() || isAskingChat) return;
@@ -51,27 +59,16 @@ export const AISavingsCoachView: React.FC = () => {
     setIsAskingChat(true);
 
     try {
-      const res = await fetch("/api/ai/ask-coach", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: q,
-          context: {
-            totalIncome,
-            totalExpense,
-            fixedExpenseTotal,
-            variableExpenseTotal,
-            implementedSavingsTotal,
-            recommendations: aiAnalysis?.savingsRecommendations?.map((r) => r.title),
-          },
-        }),
+      const answer = await askCoach(q, {
+        totalIncome,
+        totalExpense,
+        fixedExpenseTotal,
+        variableExpenseTotal,
+        implementedSavingsTotal,
+        recommendations: aiAnalysis?.savingsRecommendations?.map((r) => r.title),
       });
-      const data = await res.json();
-      if (data.success && data.answer) {
-        setChatAnswers((prev) => [
-          ...prev,
-          { sender: "coach", text: data.answer },
-        ]);
+      if (answer) {
+        setChatAnswers((prev) => [...prev, { sender: "coach", text: answer }]);
       } else {
         setChatAnswers((prev) => [
           ...prev,
@@ -81,12 +78,12 @@ export const AISavingsCoachView: React.FC = () => {
           },
         ]);
       }
-    } catch (err) {
+    } catch (err: any) {
       setChatAnswers((prev) => [
         ...prev,
         {
           sender: "coach",
-          text: "서버 연결에 실패했습니다. 네트워크 상태를 확인해주세요.",
+          text: err?.message || "답변을 가져오지 못했습니다.",
         },
       ]);
     } finally {
@@ -127,20 +124,22 @@ export const AISavingsCoachView: React.FC = () => {
           </button>
         </div>
 
-        {/* Health score & big numbers */}
+        {/* Health score & big numbers — blank until an analysis has actually run */}
         <div className="grid grid-cols-2 gap-3 relative z-10">
           <div>
             <span className="text-xs text-emerald-100">가계부 재무 건강도</span>
             <div className="flex items-baseline gap-1 mt-0.5">
               <span className="text-3xl font-black tracking-tight">
-                {aiAnalysis?.healthScore || 78}
+                {healthScore ?? "–"}
               </span>
-              <span className="text-sm font-semibold text-emerald-200">/ 100점</span>
+              <span className="text-sm font-semibold text-emerald-200">
+                {healthScore === null ? "아직 분석 전" : "/ 100점"}
+              </span>
             </div>
             <div className="w-full h-1.5 bg-black/20 rounded-full mt-2 overflow-hidden">
               <div
                 className="h-full bg-white rounded-full transition-all"
-                style={{ width: `${aiAnalysis?.healthScore || 78}%` }}
+                style={{ width: `${healthScore ?? 0}%` }}
               />
             </div>
           </div>
@@ -148,10 +147,14 @@ export const AISavingsCoachView: React.FC = () => {
           <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-3 border border-white/15">
             <span className="text-[11px] text-emerald-100">매월 절약 가능액</span>
             <div className="text-lg font-black tracking-tight text-white mt-0.5">
-              +{(aiAnalysis?.totalPotentialMonthlySavings || 0).toLocaleString()}원
+              {potentialSavings === null
+                ? "–"
+                : `+${potentialSavings.toLocaleString()}원`}
             </div>
             <span className="text-[10px] text-emerald-200">
-              연간 약 {(((aiAnalysis?.totalPotentialMonthlySavings || 0) * 12) / 10000).toFixed(0)}만원 절감
+              {potentialSavings === null
+                ? "분석하면 절약 가능액이 계산됩니다"
+                : `연간 약 ${((potentialSavings * 12) / 10000).toFixed(0)}만원 절감`}
             </span>
           </div>
         </div>
@@ -169,6 +172,46 @@ export const AISavingsCoachView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Analysis failure (missing key, quota, offline …) */}
+      {aiError && (
+        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200/80 text-xs text-rose-800 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+          <div className="min-w-0 flex-1">
+            <div className="font-bold">AI 분석을 완료하지 못했습니다</div>
+            <p className="mt-0.5 leading-relaxed break-words">{aiError}</p>
+            <p className="mt-1 text-[11px] text-rose-700/80">
+              상단 톱니바퀴 &gt; <strong>AI 등록</strong>에서 내 API 키를 확인할 수 있습니다.
+            </p>
+          </div>
+          <button
+            onClick={clearAiError}
+            className="text-rose-400 hover:text-rose-700 text-[11px] font-bold shrink-0 px-1"
+          >
+            닫기
+          </button>
+        </div>
+      )}
+
+      {/* Nothing analysed on this device yet */}
+      {!aiAnalysis && !isAnalyzingAI && !aiError && (
+        <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-2xs text-center space-y-2.5">
+          <div className="w-10 h-10 mx-auto rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div className="text-xs font-bold text-slate-900">
+            아직 분석한 기록이 없습니다
+          </div>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            이번 달 거래를 등록한 뒤 위의 <strong>[새로 분석하기]</strong>를 누르면
+            <br />
+            재무 건강도와 맞춤 절약 항목이 계산됩니다.
+          </p>
+          <p className="text-[10px] text-slate-400">
+            AI 기능에는 상단 톱니바퀴 &gt; <strong>AI 등록</strong>에서 내 API 키가 필요합니다.
+          </p>
+        </div>
+      )}
 
       {/* Summary comment from AI */}
       {aiAnalysis && (
