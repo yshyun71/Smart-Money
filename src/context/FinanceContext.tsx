@@ -15,13 +15,13 @@ import {
   BudgetAlert,
 } from "../types/finance";
 import {
-  clearAllData,
   exportDatabaseBytes,
   getDatabase,
   getDbStats,
   importDatabaseBytes,
 } from "../db/database";
 import * as repo from "../db/repository";
+import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 
 interface MonthlyHistoricalItem {
@@ -50,6 +50,9 @@ export interface DBStatsInfo {
   tables: Record<string, number>;
   lastSavedAt: string;
   schemaVersion: number;
+  /** Rows belonging to the signed-in user, not the whole device. */
+  userAccounts: number;
+  userTransactions: number;
 }
 
 interface FinanceContextType {
@@ -141,6 +144,7 @@ function emptyBudgetConfig(month: string): MonthlyBudgetConfig {
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  const { currentUserId } = useAuth();
   const [isDbReady, setIsDbReady] = useState(false);
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -177,14 +181,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // On-device database
   // -------------------------------------------------------------------------
 
+  const readStats = useCallback((): DBStatsInfo => {
+    const counts = repo.countUserRows();
+    return {
+      ...getDbStats(),
+      userAccounts: counts.accounts,
+      userTransactions: counts.transactions,
+    };
+  }, []);
+
   const refreshDbData = useCallback(async () => {
     await getDatabase();
+
+    // Nobody signed in yet: hold empty state rather than reading another
+    // user's ledger.
+    if (!currentUserId) {
+      setAccounts([]);
+      setTransactions([]);
+      setBudgetConfig(emptyBudgetConfig(selectedMonth));
+      setAiAnalysis(null);
+      setDbStats(null);
+      return;
+    }
+
     setAccounts(repo.listAccounts());
     setTransactions(repo.listTransactions());
     setBudgetConfig(repo.getBudgetConfig(selectedMonth));
     setAiAnalysis(repo.getAnalysis(selectedMonth));
-    setDbStats(getDbStats());
-  }, [selectedMonth]);
+    setDbStats(readStats());
+  }, [selectedMonth, currentUserId, readStats]);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,11 +233,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const syncStats = useCallback(() => {
     try {
-      setDbStats(getDbStats());
+      setDbStats(readStats());
     } catch {
-      /* database not open yet */
+      /* database not open, or nobody signed in */
     }
-  }, []);
+  }, [readStats]);
 
   // -------------------------------------------------------------------------
   // Derived metrics for the selected month
@@ -706,9 +731,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // Database maintenance
   // -------------------------------------------------------------------------
 
+  // Both reset only the signed-in user's ledger; other users are untouched.
   const resetToClean = async () => {
     try {
-      await clearAllData();
+      await repo.clearUserData();
       await refreshDbData();
     } catch (error) {
       console.error("데이터를 비우지 못했습니다:", error);
@@ -718,7 +744,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const resetToSample = async () => {
     try {
-      await clearAllData();
+      await repo.clearUserData();
       await repo.installSampleData();
       await refreshDbData();
     } catch (error) {

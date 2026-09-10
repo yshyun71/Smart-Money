@@ -4,6 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { UserSecurityModal } from "../auth/UserSecurityModal";
 import { PinSetupModal } from "../auth/PinSetupModal";
 import { AIKeyModal } from "../settings/AIKeyModal";
+import { UserManageModal } from "../settings/UserManageModal";
 import { PWAInstallGuideModal } from "../pwa/PWAInstallButton";
 import { hasApiKey, onApiKeyChange } from "../../services/aiClient";
 import { NavTab } from "./BottomNavigation";
@@ -20,6 +21,8 @@ import {
   Settings,
   KeyRound,
   Sparkles,
+  UserPlus,
+  LogOut,
 } from "lucide-react";
 
 export const MobileHeader: React.FC<{
@@ -35,12 +38,13 @@ export const MobileHeader: React.FC<{
     budgetAlerts,
   } = useFinance();
 
-  const { profile } = useAuth();
+  const { currentUser, users, logout } = useAuth();
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showAIKeyModal, setShowAIKeyModal] = useState(false);
+  const [showUserModal, setShowUserModal] = useState(false);
   const [aiKeyRegistered, setAiKeyRegistered] = useState(hasApiKey);
 
   // Keep the "미등록" badge in sync when the key is added or removed
@@ -96,13 +100,15 @@ export const MobileHeader: React.FC<{
       label: "연동된 카드 및 계좌관리",
       description: "은행 계좌·카드 등록 및 잔액 확인",
       badge: undefined as string | undefined,
+      danger: false,
       onSelect: () => onNavigateTab?.("assets"),
     },
     {
       icon: KeyRound,
       label: "간편비밀번호 등록/변경",
-      description: "잠금 해제에 사용할 6자리 PIN",
+      description: "로그인에 사용할 6자리 PIN",
       badge: undefined,
+      danger: false,
       onSelect: () => setShowPinModal(true),
     },
     {
@@ -110,14 +116,32 @@ export const MobileHeader: React.FC<{
       label: "AI 등록",
       description: "내 API 키로 AI 절약 분석·문자 인식 사용",
       badge: aiKeyRegistered ? undefined : "미등록",
+      danger: false,
       onSelect: () => setShowAIKeyModal(true),
+    },
+    {
+      icon: UserPlus,
+      label: "사용자 추가",
+      description: `사용자별 가계부 관리 · 현재 ${users.length}명`,
+      badge: undefined,
+      danger: false,
+      onSelect: () => setShowUserModal(true),
     },
     {
       icon: Smartphone,
       label: "스마트폰에 '스마트 머니' 전용앱 설치",
       description: "설치 안내 및 모바일 전용 링크·QR 코드",
       badge: undefined,
+      danger: false,
       onSelect: () => setShowPwaGuide(true),
+    },
+    {
+      icon: LogOut,
+      label: "로그아웃",
+      description: "로그인 화면으로 돌아갑니다",
+      badge: undefined,
+      danger: true,
+      onSelect: logout,
     },
   ];
 
@@ -165,7 +189,7 @@ export const MobileHeader: React.FC<{
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
             <span className="font-bold text-slate-800 text-[11px] max-w-[42px] sm:max-w-[70px] truncate">
-              {profile?.name || "내 정보"}
+              {currentUser?.name || "내 정보"}
             </span>
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 group-hover:scale-110 transition-transform" />
           </button>
@@ -233,7 +257,7 @@ export const MobileHeader: React.FC<{
                   <div className="px-3 pt-2.5 pb-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
                     설정
                   </div>
-                  {settingsMenuItems.map(({ icon: Icon, label, description, badge, onSelect }) => (
+                  {settingsMenuItems.map(({ icon: Icon, label, description, badge, danger, onSelect }) => (
                     <button
                       key={label}
                       role="menuitem"
@@ -241,13 +265,25 @@ export const MobileHeader: React.FC<{
                         setShowSettingsMenu(false);
                         onSelect();
                       }}
-                      className="w-full px-3 py-2.5 flex items-start gap-2.5 text-left hover:bg-slate-50 active:bg-slate-100 transition border-t border-slate-100 first-of-type:border-t-0"
+                      className={`w-full px-3 py-2.5 flex items-start gap-2.5 text-left transition border-t border-slate-100 first-of-type:border-t-0 ${
+                        danger
+                          ? "hover:bg-rose-50 active:bg-rose-100"
+                          : "hover:bg-slate-50 active:bg-slate-100"
+                      }`}
                     >
-                      <div className="w-7 h-7 shrink-0 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                      <div
+                        className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center ${
+                          danger ? "bg-rose-50 text-rose-600" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
                         <Icon className="w-3.5 h-3.5" />
                       </div>
                       <div className="min-w-0">
-                        <div className="text-[11px] font-bold text-slate-900 leading-snug flex items-center gap-1.5">
+                        <div
+                          className={`text-[11px] font-bold leading-snug flex items-center gap-1.5 ${
+                            danger ? "text-rose-700" : "text-slate-900"
+                          }`}
+                        >
                           <span className="min-w-0">{label}</span>
                           {badge && (
                             <span className="shrink-0 text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200/70 px-1.5 py-0.5 rounded-full leading-none">
@@ -340,6 +376,11 @@ export const MobileHeader: React.FC<{
       <AIKeyModal
         isOpen={showAIKeyModal}
         onClose={() => setShowAIKeyModal(false)}
+      />
+
+      <UserManageModal
+        isOpen={showUserModal}
+        onClose={() => setShowUserModal(false)}
       />
 
       <PWAInstallGuideModal

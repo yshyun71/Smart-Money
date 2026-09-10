@@ -15,7 +15,7 @@ import type { Database } from "sql.js";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export interface Migration {
   version: number;
@@ -53,6 +53,11 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "users", column: "pin_hash", type: "TEXT" },
   { table: "users", column: "pin_salt", type: "TEXT" },
   { table: "users", column: "pin_iterations", type: "INTEGER" },
+  { table: "accounts", column: "user_id", type: "TEXT" },
+  { table: "transactions", column: "user_id", type: "TEXT" },
+  { table: "budgets", column: "user_id", type: "TEXT" },
+  { table: "budget_configs", column: "user_id", type: "TEXT" },
+  { table: "ai_analyses", column: "user_id", type: "TEXT" },
 ];
 
 /** Returns the columns it had to add, for logging. */
@@ -172,7 +177,127 @@ export const MIGRATIONS: Migration[] = [
       db.run("UPDATE users SET pin = NULL");
     },
   },
+  {
+    version: 3,
+    description: "사용자별 데이터 분리 (거래·계좌·예산에 소유자 추가)",
+    up: (db) => {
+      // Everything recorded so far belongs to whoever is already registered.
+      const owner = firstUserId(db) ?? PRIMARY_USER_ID;
+
+      addColumn(db, "accounts", "user_id", "TEXT");
+      addColumn(db, "transactions", "user_id", "TEXT");
+      db.run("UPDATE accounts SET user_id = ? WHERE user_id IS NULL", [owner]);
+      db.run("UPDATE transactions SET user_id = ? WHERE user_id IS NULL", [owner]);
+
+      db.run(`
+        CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
+        CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
+      `);
+
+      /*
+        These three are keyed by month, so the owner has to become part of the
+        key — two people must be able to budget the same month. SQLite cannot
+        alter a primary key, so each table is rebuilt and its rows carried
+        across.
+      */
+      rebuild(
+        db,
+        "budgets",
+        `CREATE TABLE budgets (
+           user_id TEXT NOT NULL,
+           month TEXT NOT NULL,
+           category TEXT NOT NULL,
+           amount REAL NOT NULL,
+           PRIMARY KEY (user_id, month, category)
+         )`,
+        `INSERT INTO budgets (user_id, month, category, amount)
+           SELECT ?, month, category, amount FROM budgets_old`,
+        owner
+      );
+
+      rebuild(
+        db,
+        "budget_configs",
+        `CREATE TABLE budget_configs (
+           user_id TEXT NOT NULL,
+           month TEXT NOT NULL,
+           monthly_income REAL DEFAULT 0,
+           fixed_expenses REAL DEFAULT 0,
+           savings_target REAL DEFAULT 0,
+           alert_threshold_percent INTEGER DEFAULT 80,
+           enable_push_alerts INTEGER DEFAULT 1,
+           updated_at TEXT NOT NULL,
+           PRIMARY KEY (user_id, month)
+         )`,
+        `INSERT INTO budget_configs (user_id, month, monthly_income, fixed_expenses,
+             savings_target, alert_threshold_percent, enable_push_alerts, updated_at)
+           SELECT ?, month, monthly_income, fixed_expenses, savings_target,
+                  alert_threshold_percent, enable_push_alerts, updated_at
+           FROM budget_configs_old`,
+        owner
+      );
+
+      rebuild(
+        db,
+        "ai_analyses",
+        `CREATE TABLE ai_analyses (
+           user_id TEXT NOT NULL,
+           month TEXT NOT NULL,
+           analysis_json TEXT NOT NULL,
+           health_score INTEGER,
+           updated_at TEXT NOT NULL,
+           PRIMARY KEY (user_id, month)
+         )`,
+        `INSERT INTO ai_analyses (user_id, month, analysis_json, health_score, updated_at)
+           SELECT ?, month, analysis_json, health_score, updated_at FROM ai_analyses_old`,
+        owner
+      );
+    },
+  },
 ];
+
+/**
+ * Who existing rows belong to. Earlier builds seeded a nameless placeholder
+ * user, and handing the data to that row would make it invisible — so a
+ * registered user is preferred over merely the oldest one.
+ */
+function firstUserId(db: Database): string | null {
+  const pick = (sql: string): string | null => {
+    try {
+      const stmt = db.prepare(sql);
+      const id = stmt.step() ? String((stmt.getAsObject() as { id?: unknown }).id ?? "") : "";
+      stmt.free();
+      return id || null;
+    } catch {
+      return null;
+    }
+  };
+
+  return (
+    pick(
+      "SELECT id FROM users WHERE name IS NOT NULL AND TRIM(name) != '' ORDER BY created_at LIMIT 1"
+    ) ?? pick("SELECT id FROM users ORDER BY created_at LIMIT 1")
+  );
+}
+
+/**
+ * Swaps a table for one with a different primary key, carrying its rows over.
+ * Skipped when the table already has the owner column, so re-running is safe.
+ */
+function rebuild(
+  db: Database,
+  table: string,
+  createSql: string,
+  copySql: string,
+  owner: string
+): void {
+  if (columnNames(db, table).includes("user_id")) return;
+
+  db.run(`ALTER TABLE ${table} RENAME TO ${table}_old`);
+  db.run(createSql);
+  db.run(copySql, [owner]);
+  db.run(`DROP TABLE ${table}_old`);
+}
 
 /**
  * The only rows written at first launch. No accounts, no transactions, no

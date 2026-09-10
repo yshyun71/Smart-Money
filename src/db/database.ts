@@ -3,7 +3,6 @@ import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import {
   DEFAULT_CATEGORIES,
   MIGRATIONS,
-  PRIMARY_USER_ID,
   SCHEMA_VERSION,
   repairMissingColumns,
 } from "./schema";
@@ -112,9 +111,9 @@ function migrate(target: Database): { from: number; to: number } {
 }
 
 /**
- * Rows the app cannot run without. Deliberately does NOT create accounts,
- * transactions, budgets or any personal detail — a fresh install is empty and
- * unregistered until the user acts.
+ * Rows the app cannot run without — the default categories, and nothing else.
+ * No user is created: a fresh install has zero users, which is what sends it
+ * to the first-run setup screen.
  */
 function seedEssentials(target: Database): void {
   const categoryCount = queryOneOn<{ count: number }>(
@@ -128,18 +127,6 @@ function seedEssentials(target: Database): void {
         [`cat_${encodeURIComponent(category.name)}`, category.name, category.type, category.color]
       );
     }
-  }
-
-  const userCount = queryOneOn<{ count: number }>(
-    target,
-    "SELECT COUNT(*) as count FROM users"
-  );
-  if (!userCount || userCount.count === 0) {
-    target.run(
-      `INSERT INTO users (id, name, email, phone, pin, auth_provider, provider_label, is_authenticated, is_biometric_enabled, authenticated_at, created_at)
-       VALUES (?, '', '', '', NULL, 'KAKAO', '카카오 간편인증', 0, 1, NULL, ?)`,
-      [PRIMARY_USER_ID, new Date().toISOString()]
-    );
   }
 }
 
@@ -321,19 +308,6 @@ export function getDbStats(): DBStats {
 
 export function exportDatabaseBytes(): Uint8Array {
   return requireDb().export();
-}
-
-/** Wipes every user-owned row, keeping the schema and default categories. */
-export async function clearAllData(): Promise<void> {
-  const target = requireDb();
-  target.run(`
-    DELETE FROM transactions;
-    DELETE FROM accounts;
-    DELETE FROM budgets;
-    DELETE FROM budget_configs;
-    DELETE FROM ai_analyses;
-  `);
-  await persist();
 }
 
 /**

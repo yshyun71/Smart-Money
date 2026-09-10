@@ -207,7 +207,7 @@ const MainContent: React.FC = () => {
 };
 
 const AppGuard: React.FC = () => {
-  const { isLoading, isRegistered, isUnlocked } = useAuth();
+  const { isLoading, currentUserId } = useAuth();
   const { isDbReady } = useFinance();
 
   // The on-device database has to be open before any screen can render
@@ -222,8 +222,8 @@ const AppGuard: React.FC = () => {
     );
   }
 
-  // Setup on first run, PIN entry on every launch after that
-  if (!isRegistered || !isUnlocked) {
+  // Setup on first run, user pick + PIN on every launch after that
+  if (!currentUserId) {
     return <PinAuthScreen />;
   }
 

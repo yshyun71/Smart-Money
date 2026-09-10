@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../../context/AuthContext";
 import {
   ShieldCheck,
-  Lock,
+  LogOut,
   X,
   UserRound,
   Phone,
@@ -38,7 +38,7 @@ export const UserSecurityModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { profile, saveProfile, lock, authError, clearAuthError } = useAuth();
+  const { currentUser, users, saveProfile, logout, authError, clearAuthError } = useAuth();
 
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
@@ -49,8 +49,8 @@ export const UserSecurityModal: React.FC<{
     if (!isOpen) return;
 
     setIsEditing(false);
-    setName(profile?.name || "");
-    setPhone(profile?.phone || "");
+    setName(currentUser?.name || "");
+    setPhone(currentUser?.phone || "");
     setSavedMsg(null);
     clearAuthError();
 
@@ -80,9 +80,9 @@ export const UserSecurityModal: React.FC<{
     }
   };
 
-  const handleLock = () => {
+  const handleLogout = () => {
     onClose();
-    lock();
+    logout();
   };
 
   const modalContent = (
@@ -166,8 +166,8 @@ export const UserSecurityModal: React.FC<{
                 type="button"
                 onClick={() => {
                   setIsEditing(false);
-                  setName(profile?.name || "");
-                  setPhone(profile?.phone || "");
+                  setName(currentUser?.name || "");
+                  setPhone(currentUser?.phone || "");
                   clearAuthError();
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 transition cursor-pointer"
@@ -187,19 +187,19 @@ export const UserSecurityModal: React.FC<{
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-sm shrink-0">
-                  {(profile?.name || "회").substring(0, 1)}
+                  {(currentUser?.name || "회").substring(0, 1)}
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-black text-slate-900 truncate">
-                      {profile?.name || "미등록"} 님
+                      {currentUser?.name || "미등록"} 님
                     </span>
                     <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold shrink-0">
                       PIN 인증 완료
                     </span>
                   </div>
                   <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
-                    {profile?.phone || "-"}
+                    {currentUser?.phone || "-"}
                   </div>
                 </div>
               </div>
@@ -221,7 +221,7 @@ export const UserSecurityModal: React.FC<{
                   등록 일시
                 </span>
                 <span className="font-bold text-slate-800">
-                  {formatDateTime(profile?.registeredAt || null)}
+                  {formatDateTime(currentUser?.createdAt || null)}
                 </span>
               </div>
               <div>
@@ -230,7 +230,7 @@ export const UserSecurityModal: React.FC<{
                   최근 로그인
                 </span>
                 <span className="font-bold text-slate-800">
-                  {formatDateTime(profile?.lastUnlockedAt || null)}
+                  {formatDateTime(currentUser?.lastUnlockedAt || null)}
                 </span>
               </div>
             </div>
@@ -262,24 +262,26 @@ export const UserSecurityModal: React.FC<{
             비밀번호를 바꾸려면 상단 톱니바퀴 &gt; <strong>간편비밀번호 등록/변경</strong>을 이용하세요.
           </p>
 
-          {/* Quick Lock Button */}
+          {/* Sign out */}
           <button
             type="button"
-            onClick={handleLock}
-            className="w-full p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-left flex items-center justify-between transition touch-manipulation cursor-pointer"
+            onClick={handleLogout}
+            className="w-full p-3 rounded-2xl bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-left flex items-center justify-between transition touch-manipulation cursor-pointer group"
           >
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                <Lock className="w-4 h-4" />
+              <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                <LogOut className="w-4 h-4" />
               </div>
               <div>
-                <div className="text-xs font-bold text-slate-900">즉시 화면 잠금</div>
+                <div className="text-xs font-bold text-slate-900">로그아웃</div>
                 <div className="text-[10px] text-slate-400">
-                  다시 열 때 간편 비밀번호가 필요합니다
+                  {users.length > 1
+                    ? "로그인 화면에서 다른 사용자로 전환할 수 있습니다"
+                    : "다시 열 때 간편 비밀번호가 필요합니다"}
                 </div>
               </div>
             </div>
-            <span className="text-xs text-amber-700 font-bold">잠금</span>
+            <span className="text-xs text-rose-700 font-bold">로그아웃</span>
           </button>
         </div>
 

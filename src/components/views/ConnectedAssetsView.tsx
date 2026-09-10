@@ -425,7 +425,7 @@ export const ConnectedAssetsView: React.FC<{
                 </span>
               </div>
               <div className="text-[10px] text-slate-400">
-                이 기기에만 저장됩니다 · 앱을 갱신해도 데이터는 유지됩니다
+                내 가계부만 표시 · 앱을 갱신해도 데이터는 유지됩니다
               </div>
             </div>
           </div>
@@ -452,13 +452,13 @@ export const ConnectedAssetsView: React.FC<{
           <div className="p-2 bg-slate-800/60 rounded-xl">
             <div className="text-[10px] text-slate-400">연동 자산/계좌</div>
             <div className="text-xs font-mono font-bold text-slate-100">
-              {dbStats?.tables?.accounts ?? accounts.length}개
+              {dbStats?.userAccounts ?? accounts.length}개
             </div>
           </div>
           <div className="p-2 bg-slate-800/60 rounded-xl">
             <div className="text-[10px] text-slate-400">저장된 거래내역</div>
             <div className="text-xs font-mono font-bold text-slate-100">
-              {dbStats?.tables?.transactions ?? 0}건
+              {dbStats?.userTransactions ?? 0}건
             </div>
           </div>
         </div>
