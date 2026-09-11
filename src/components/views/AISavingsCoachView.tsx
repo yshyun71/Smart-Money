@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { askCoach } from "../../services/aiClient";
+import { shortWon } from "../../utils/format";
 import {
   AlertCircle,
   Sparkles,
@@ -154,7 +155,7 @@ export const AISavingsCoachView: React.FC = () => {
             <span className="text-[10px] text-emerald-200">
               {potentialSavings === null
                 ? "분석하면 절약 가능액이 계산됩니다"
-                : `연간 약 ${((potentialSavings * 12) / 10000).toFixed(0)}만원 절감`}
+                : `연간 약 ${shortWon(potentialSavings * 12)} 절감`}
             </span>
           </div>
         </div>

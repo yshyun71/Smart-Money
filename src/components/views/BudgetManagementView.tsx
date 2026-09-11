@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import { formatAmountInput, parseAmountInput, withCommas } from "../../utils/format";
 import {
   Sliders,
   DollarSign,
@@ -36,9 +37,9 @@ export const BudgetManagementView: React.FC<{
     totalBudgeted,
   } = useFinance();
 
-  const [incomeInput, setIncomeInput] = useState(budgetConfig.monthlyIncome.toString());
-  const [fixedInput, setFixedInput] = useState(budgetConfig.fixedExpenses.toString());
-  const [savingsInput, setSavingsInput] = useState(budgetConfig.savingsTarget.toString());
+  const [incomeInput, setIncomeInput] = useState(formatAmountInput(String(budgetConfig.monthlyIncome)));
+  const [fixedInput, setFixedInput] = useState(formatAmountInput(String(budgetConfig.fixedExpenses)));
+  const [savingsInput, setSavingsInput] = useState(formatAmountInput(String(budgetConfig.savingsTarget)));
   const [showNotificationToast, setShowNotificationToast] = useState<string | null>(null);
 
   // Apply income/fixed change
@@ -57,8 +58,8 @@ export const BudgetManagementView: React.FC<{
 
   // Sync with actual current month data
   const handleSyncActuals = () => {
-    setIncomeInput(totalIncome.toString());
-    setFixedInput(fixedExpenseTotal.toString());
+    setIncomeInput(formatAmountInput(String(totalIncome)));
+    setFixedInput(formatAmountInput(String(fixedExpenseTotal)));
     updateBudgetConfig({
       monthlyIncome: totalIncome,
       fixedExpenses: fixedExpenseTotal,
@@ -250,8 +251,8 @@ export const BudgetManagementView: React.FC<{
               <input
                 type="text"
                 value={incomeInput}
-                onChange={(e) => setIncomeInput(e.target.value)}
-                placeholder="예: 3482000"
+                onChange={(e) => setIncomeInput(formatAmountInput(e.target.value))}
+                placeholder="예: 3,482,000"
                 className="w-full bg-transparent text-sm font-black text-slate-900 outline-hidden"
               />
               <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
@@ -273,8 +274,8 @@ export const BudgetManagementView: React.FC<{
               <input
                 type="text"
                 value={fixedInput}
-                onChange={(e) => setFixedInput(e.target.value)}
-                placeholder="예: 995690"
+                onChange={(e) => setFixedInput(formatAmountInput(e.target.value))}
+                placeholder="예: 995,690"
                 className="w-full bg-transparent text-sm font-black text-slate-900 outline-hidden"
               />
               <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
@@ -296,8 +297,8 @@ export const BudgetManagementView: React.FC<{
               <input
                 type="text"
                 value={savingsInput}
-                onChange={(e) => setSavingsInput(e.target.value)}
-                placeholder="예: 600000"
+                onChange={(e) => setSavingsInput(formatAmountInput(e.target.value))}
+                placeholder="예: 600,000"
                 className="w-full bg-transparent text-sm font-black text-slate-900 outline-hidden"
               />
               <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
@@ -315,9 +316,9 @@ export const BudgetManagementView: React.FC<{
               카테고리 배분 가능 가용 변동비 예산
             </span>
             <span className="text-[10px] text-emerald-700">
-              (수입 {parseInt(incomeInput || "0").toLocaleString()}원 - 고정비{" "}
-              {parseInt(fixedInput || "0").toLocaleString()}원 - 저축{" "}
-              {parseInt(savingsInput || "0").toLocaleString()}원)
+              (수입 {withCommas(parseAmountInput(incomeInput))}원 - 고정비{" "}
+              {withCommas(parseAmountInput(fixedInput))}원 - 저축{" "}
+              {withCommas(parseAmountInput(savingsInput))}원)
             </span>
           </div>
           <div className="text-right">

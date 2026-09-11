@@ -327,7 +327,137 @@ ${rawText}
 }
 
 // ---------------------------------------------------------------------------
-// 3. Coach Q&A
+// 3. Classifying imported entries
+// ---------------------------------------------------------------------------
+
+export interface ClassifyItem {
+  index: number;
+  date: string;
+  merchant: string;
+  amount: number;
+  isIncome: boolean;
+  currentCategory: string;
+  currentExpenseType: string;
+  /** Evidence computed from the user's own history, not guessed. */
+  recurrence: string;
+  recurrenceQualifies: boolean;
+  paymentDay: number | null;
+}
+
+export interface ClassifyResult {
+  index: number;
+  expenseType: "FIXED" | "VARIABLE" | "INCOME";
+  category: string;
+  reason?: string;
+}
+
+const CATEGORY_NAMES = [
+  "식비", "카페/간식", "주거/통신", "구독/미디어", "교통", "쇼핑",
+  "문화/여가", "생활/의료", "금융/보험", "급여", "기타수입", "기타지출",
+];
+
+/** Kept small enough that one response stays well inside the output limit. */
+const CLASSIFY_BATCH_SIZE = 40;
+
+async function classifyBatch(items: ClassifyItem[]): Promise<ClassifyResult[]> {
+  const prompt = `
+다음은 사용자의 가계부 거래 내역입니다. 각 항목의 **지출구분(고정비/변동비)**과 **카테고리**를 분류하세요.
+
+[카테고리 목록 — 반드시 이 중 하나]
+${CATEGORY_NAMES.join(", ")}
+
+[지출구분 판단 규칙]
+1. 수입(isIncome=true)은 반드시 expenseType="INCOME".
+2. 성격이 명확한 항목은 이름으로 판단합니다.
+   - 고정비: 월세, 관리비, 통신요금, 보험료, 대출이자, 정기구독(넷플릭스·유튜브·쿠팡와우 등), 학원비, 정기 적금/저축
+   - 변동비: 외식, 배달, 카페, 마트·편의점, 택시, 쇼핑, 문화생활, 병원·약국
+3. **고정비인지 변동비인지 모호한 경우**에는 아래 recurrence(사용자 실제 거래 이력에서 계산한 반복 결제 근거)를 기준으로 판단하세요.
+   - recurrenceQualifies=true 이면 고정비로 분류합니다.
+     (같은 가맹점/내역명이 서로 다른 3개월 이상에서, 매월 거의 같은 날짜에 반복됨. 공휴일·주말로 결제일이 밀리는 경우와 월말 날짜 차이는 이미 보정되어 있습니다.)
+   - recurrenceQualifies=false 이면 변동비로 분류합니다.
+4. 이미 지정된 currentExpenseType이 규칙과 맞으면 유지해도 됩니다.
+
+[분류 대상]
+${JSON.stringify(
+  items.map((item) => ({
+    index: item.index,
+    date: item.date,
+    merchant: item.merchant,
+    amount: item.amount,
+    isIncome: item.isIncome,
+    currentCategory: item.currentCategory,
+    currentExpenseType: item.currentExpenseType,
+    recurrence: item.recurrence,
+    recurrenceQualifies: item.recurrenceQualifies,
+  })),
+  null,
+  0
+)}
+
+모든 항목에 대해 index를 그대로 유지한 결과를 빠짐없이 반환하세요.
+`;
+
+  const response = await client().models.generateContent({
+    model: AI_MODEL,
+    contents: prompt,
+    config: {
+      systemInstruction:
+        "한국 가계부 거래 내역을 고정비/변동비와 카테고리로 정확히 분류하는 분류기입니다. 제공된 반복 결제 근거를 우선 신뢰하고, 추측을 덧붙이지 말고 JSON만 출력하세요.",
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          results: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                index: { type: Type.INTEGER, description: "입력의 index 값" },
+                expenseType: {
+                  type: Type.STRING,
+                  enum: ["FIXED", "VARIABLE", "INCOME"],
+                },
+                category: { type: Type.STRING, enum: CATEGORY_NAMES },
+                reason: { type: Type.STRING, description: "한 줄 근거" },
+              },
+              required: ["index", "expenseType", "category"],
+            },
+          },
+        },
+        required: ["results"],
+      },
+    },
+  });
+
+  const parsed = JSON.parse(response.text || '{"results":[]}');
+  return Array.isArray(parsed.results) ? parsed.results : [];
+}
+
+/**
+ * Classifies in batches and reports progress, so a few hundred imported rows
+ * do not look like a hung screen.
+ */
+export async function classifyTransactions(
+  items: ClassifyItem[],
+  onProgress?: (done: number, total: number) => void
+): Promise<ClassifyResult[]> {
+  try {
+    const all: ClassifyResult[] = [];
+
+    for (let start = 0; start < items.length; start += CLASSIFY_BATCH_SIZE) {
+      const batch = items.slice(start, start + CLASSIFY_BATCH_SIZE);
+      all.push(...(await classifyBatch(batch)));
+      onProgress?.(Math.min(start + batch.length, items.length), items.length);
+    }
+
+    return all;
+  } catch (error) {
+    throw describeFailure(error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Coach Q&A
 // ---------------------------------------------------------------------------
 
 export async function askCoach(question: string, context: unknown): Promise<string> {

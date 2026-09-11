@@ -83,6 +83,8 @@ interface FinanceContextType {
   addTransaction: (tx: Omit<Transaction, "id">) => void;
   addTransactions: (txs: Omit<Transaction, "id">[]) => void;
   updateTransaction: (tx: Transaction) => void;
+  /** Rewrites several entries under one save — used by the bulk classifier. */
+  updateTransactions: (txs: Transaction[]) => void;
   deleteTransaction: (id: string) => void;
   /** Applies a statement import: new rows inserted, chosen duplicates rewritten. */
   importTransactions: (inserts: Omit<Transaction, "id">[], updates: Transaction[]) => void;
@@ -602,6 +604,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const updateTransactions = (txs: Transaction[]) => {
+    if (txs.length === 0) return;
+    try {
+      repo.applyImport([], txs);
+      setTransactions((prev) =>
+        prev.map((t) => txs.find((candidate) => candidate.id === t.id) ?? t)
+      );
+    } catch (error) {
+      console.error("거래를 일괄 수정하지 못했습니다:", error);
+      throw error;
+    }
+  };
+
   const deleteTransaction = (id: string) => {
     try {
       repo.deleteTransaction(id);
@@ -843,6 +858,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         addTransaction,
         addTransactions,
         updateTransaction,
+        updateTransactions,
         deleteTransaction,
         importTransactions,
         addAccount,

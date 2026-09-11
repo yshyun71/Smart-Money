@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
+import { formatAmountInput } from "../../utils/format";
 import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
 import { X, Plus, Pin, ShoppingBag, Coins, Save, Trash2 } from "lucide-react";
 
@@ -54,7 +55,7 @@ export const AddTransactionModal: React.FC<{
           ? "FIXED"
           : "VARIABLE"
       );
-      setAmount(String(editing.amount));
+      setAmount(formatAmountInput(String(editing.amount)));
       setMerchant(editing.merchant);
       setCategory(editing.category);
       setSelectedAccountId(editing.accountId || accounts[0]?.id || "");
@@ -126,8 +127,16 @@ export const AddTransactionModal: React.FC<{
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-xs animate-in fade-in">
+  /*
+    Rendered into <body> and above the other sheets.
+    This modal used to live inside the view's own tree with a z-index of 50,
+    which put it behind the account ledger — that sheet is portalled to <body>
+    at a far higher layer, and a z-index inside the device frame's stacking
+    context can never climb out of it. Opening an entry for edit therefore did
+    nothing visible until the ledger underneath was closed.
+  */
+  const modalContent = (
+    <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-xs animate-in fade-in">
       <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -215,8 +224,7 @@ export const AddTransactionModal: React.FC<{
                 type="text"
                 value={amount}
                 onChange={(e) => {
-                  const val = e.target.value.replace(/[^0-9]/g, "");
-                  setAmount(val ? Number(val).toLocaleString() : "");
+                  setAmount(formatAmountInput(e.target.value));
                 }}
                 placeholder="0"
                 className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-base font-bold text-slate-900 focus:border-emerald-500 focus:outline-hidden pr-8"
@@ -348,4 +356,7 @@ export const AddTransactionModal: React.FC<{
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(modalContent, document.body);
 };

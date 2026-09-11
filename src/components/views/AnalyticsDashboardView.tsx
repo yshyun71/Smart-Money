@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import { shortWon } from "../../utils/format";
 import {
   PieChart as PieIcon,
   BarChart3,
@@ -70,11 +71,7 @@ export const AnalyticsDashboardView: React.FC<{
 
   // Format currency
   const formatKRW = (val: number) => `${val.toLocaleString()}원`;
-  const formatShortKRW = (val: number) => {
-    if (val >= 100000000) return `${(val / 100000000).toFixed(1)}억원`;
-    if (val >= 10000) return `${Math.round(val / 10000)}만원`;
-    return `${val.toLocaleString()}원`;
-  };
+  const formatShortKRW = (val: number) => shortWon(val);
 
   /**
    * Insight strips under the charts. They describe the transactions actually
