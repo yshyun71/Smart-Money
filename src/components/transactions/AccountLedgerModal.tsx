@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import type { CategoryType, ExpenseType, Transaction } from "../../types/finance";
-import { classifyTransactions, type ClassifyItem } from "../../services/aiClient";
+import {
+  classifyTransactions,
+  type ClassifyItem,
+  type ClassifyProgress,
+} from "../../services/aiClient";
 import {
   buildRecurrenceIndex,
   describeRecurrence,
@@ -45,7 +49,7 @@ export const AccountLedgerModal: React.FC<{
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isClassifying, setIsClassifying] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<ClassifyProgress | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
@@ -158,9 +162,8 @@ export const AccountLedgerModal: React.FC<{
         };
       });
 
-      const results = await classifyTransactions(items, (done, total) =>
-        setProgress({ done, total })
-      );
+      const run = await classifyTransactions(items, setProgress);
+      const results = run.results;
 
       let fixedCount = 0;
       let changed = 0;
@@ -206,13 +209,27 @@ export const AccountLedgerModal: React.FC<{
       });
 
       updateTransactions(updates);
-      setSelected(new Set());
-      setNotice({
-        ok: true,
-        text: `${updates.length}건 분류 완료 · 고정비 ${fixedCount}건 / 변동비 ${
-          updates.length - fixedCount
-        }건 · 변경 ${changed}건`,
-      });
+
+      // Anything that came back is done; leave the rest selected so a retry
+      // picks up exactly what failed.
+      const settled = new Set(updates.map((tx) => tx.id));
+      setSelected((prev) => new Set([...prev].filter((id) => !settled.has(id))));
+
+      const summary = `${updates.length}건 분류 완료 · 고정비 ${fixedCount}건 / 변동비 ${
+        updates.length - fixedCount
+      }건 · 변경 ${changed}건`;
+
+      setNotice(
+        run.failed > 0
+          ? {
+              ok: false,
+              text: `${summary}
+남은 ${run.failed}건은 실패했습니다(${
+                run.error || "일시적 오류"
+              }). 선택이 유지되어 있으니 잠시 후 다시 눌러주세요.`,
+            }
+          : { ok: true, text: summary }
+      );
     } catch (error) {
       setNotice({
         ok: false,
@@ -344,8 +361,12 @@ export const AccountLedgerModal: React.FC<{
               {isClassifying ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>
-                    AI 분류 중{progress ? ` (${progress.done}/${progress.total})` : ""}...
+                  <span className="truncate">
+                    {progress?.note
+                      ? progress.note
+                      : `AI 분류 중${
+                          progress ? ` (${progress.done}/${progress.total})` : ""
+                        }...`}
                   </span>
                 </>
               ) : (
@@ -369,7 +390,7 @@ export const AccountLedgerModal: React.FC<{
                 ) : (
                   <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
                 )}
-                <span className="min-w-0 break-words">{notice.text}</span>
+                <span className="min-w-0 break-words whitespace-pre-line">{notice.text}</span>
               </div>
             )}
 

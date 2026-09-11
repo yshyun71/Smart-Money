@@ -72,21 +72,70 @@ function client(): GoogleGenAI {
   return new GoogleGenAI({ apiKey: key });
 }
 
+/**
+ * Conditions worth another attempt: the model being busy, a per-minute rate
+ * limit, a gateway hiccup. Google returns these as 503 UNAVAILABLE with
+ * "high demand", which is explicitly temporary.
+ */
+const RETRYABLE = /\b(429|500|502|503|504)\b|UNAVAILABLE|overloaded|high demand|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED|INTERNAL/i;
+
 /** Turns SDK failures into messages that mean something to the user. */
 function describeFailure(error: unknown): Error {
   if (error instanceof MissingApiKeyError) return error;
   const message = error instanceof Error ? error.message : String(error);
 
-  if (/api[_ ]?key|API_KEY_INVALID|401|403/i.test(message)) {
+  if (/api[_ ]?key|API_KEY_INVALID|\b401\b|\b403\b/i.test(message)) {
     return new Error("AI 키가 올바르지 않거나 권한이 없습니다. 설정 > AI 등록에서 키를 확인해주세요.");
   }
-  if (/quota|429|RESOURCE_EXHAUSTED/i.test(message)) {
-    return new Error("AI 사용량 한도를 초과했습니다. 잠시 후 다시 시도해주세요.");
+  if (/\b503\b|UNAVAILABLE|overloaded|high demand/i.test(message)) {
+    return new Error(
+      "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요."
+    );
+  }
+  if (/quota|\b429\b|RESOURCE_EXHAUSTED/i.test(message)) {
+    return new Error("AI 사용량 한도에 도달했습니다. 잠시 후 다시 시도해주세요.");
+  }
+  if (/DEADLINE_EXCEEDED|timeout/i.test(message)) {
+    return new Error("AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.");
   }
   if (/fetch|network|Failed to fetch/i.test(message)) {
     return new Error("네트워크에 연결되어 있지 않습니다. AI 기능은 인터넷 연결이 필요합니다.");
   }
+  if (/\b(500|502|504)\b|INTERNAL/i.test(message)) {
+    return new Error("AI 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
   return new Error(message || "AI 요청에 실패했습니다.");
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Attempts per request, including the first. */
+const RETRY_ATTEMPTS = 4;
+
+/** Retries a transient failure with backoff; anything else is thrown at once. */
+async function withRetry<T>(
+  run: () => Promise<T>,
+  attempts: number,
+  onWait?: (waitMs: number, attempt: number) => void
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt === attempts || !RETRYABLE.test(message)) throw error;
+
+      // Backoff with jitter, so parallel clients do not line up
+      const waitMs = Math.round(1200 * 2 ** (attempt - 1) * (1 + Math.random() * 0.4));
+      onWait?.(waitMs, attempt);
+      await sleep(waitMs);
+    }
+  }
+
+  throw lastError;
 }
 
 /** Verifies a key by making the smallest possible call. */
@@ -147,7 +196,7 @@ export async function analyzeSpending(
 `;
 
   try {
-    const response = await client().models.generateContent({
+    const response = await withRetry(() => client().models.generateContent({
       model: AI_MODEL,
       contents: prompt,
       config: {
@@ -241,7 +290,7 @@ export async function analyzeSpending(
           ],
         },
       },
-    });
+    }), RETRY_ATTEMPTS);
 
     return JSON.parse(response.text || "{}");
   } catch (error) {
@@ -277,7 +326,7 @@ ${rawText}
 `;
 
   try {
-    const response = await client().models.generateContent({
+    const response = await withRetry(() => client().models.generateContent({
       model: AI_MODEL,
       contents: prompt,
       config: {
@@ -317,7 +366,7 @@ ${rawText}
           required: ["transactions"],
         },
       },
-    });
+    }), RETRY_ATTEMPTS);
 
     const parsed = JSON.parse(response.text || '{"transactions":[]}');
     return Array.isArray(parsed.transactions) ? parsed.transactions : [];
@@ -433,27 +482,82 @@ ${JSON.stringify(
   return Array.isArray(parsed.results) ? parsed.results : [];
 }
 
+export interface ClassifyProgress {
+  done: number;
+  total: number;
+  /** Shown to the user while waiting out a busy model. */
+  note?: string;
+}
+
+export interface ClassifyRun {
+  results: ClassifyResult[];
+  /** Entries whose batch never came back, after retries. */
+  failed: number;
+  /** Why the last batch gave up, if any did. */
+  error?: string;
+}
+
+/** A small gap between batches, to avoid walking into a rate limit. */
+const BATCH_GAP_MS = 400;
+
 /**
- * Classifies in batches and reports progress, so a few hundred imported rows
- * do not look like a hung screen.
+ * Classifies in batches, retrying a busy model and keeping whatever came back.
+ *
+ * A few hundred rows is several requests, and losing all of them because the
+ * seventh hit "high demand" would waste the six that succeeded — so batches
+ * are applied independently and failures are reported alongside the results.
  */
 export async function classifyTransactions(
   items: ClassifyItem[],
-  onProgress?: (done: number, total: number) => void
-): Promise<ClassifyResult[]> {
-  try {
-    const all: ClassifyResult[] = [];
+  onProgress?: (progress: ClassifyProgress) => void
+): Promise<ClassifyRun> {
+  const results: ClassifyResult[] = [];
+  let failed = 0;
+  let lastError: string | undefined;
+  let done = 0;
 
-    for (let start = 0; start < items.length; start += CLASSIFY_BATCH_SIZE) {
-      const batch = items.slice(start, start + CLASSIFY_BATCH_SIZE);
-      all.push(...(await classifyBatch(batch)));
-      onProgress?.(Math.min(start + batch.length, items.length), items.length);
+  for (let start = 0; start < items.length; start += CLASSIFY_BATCH_SIZE) {
+    const batch = items.slice(start, start + CLASSIFY_BATCH_SIZE);
+
+    try {
+      const batchResults = await withRetry(
+        () => classifyBatch(batch),
+        RETRY_ATTEMPTS,
+        (waitMs, attempt) =>
+          onProgress?.({
+            done,
+            total: items.length,
+            note: `AI 서버가 혼잡합니다. ${Math.round(waitMs / 1000)}초 후 재시도 (${attempt}/${
+              RETRY_ATTEMPTS - 1
+            })`,
+          })
+      );
+      results.push(...batchResults);
+    } catch (error) {
+      const described = describeFailure(error);
+      // A bad key, no network, or an exhausted quota will not clear between
+      // batches — stop rather than retrying six more times.
+      if (error instanceof MissingApiKeyError || /키|네트워크|한도/.test(described.message)) {
+        if (results.length === 0) throw described;
+        return { results, failed: items.length - results.length, error: described.message };
+      }
+      failed += batch.length;
+      lastError = described.message;
     }
 
-    return all;
-  } catch (error) {
-    throw describeFailure(error);
+    done = Math.min(start + batch.length, items.length);
+    onProgress?.({ done, total: items.length });
+
+    if (start + CLASSIFY_BATCH_SIZE < items.length) {
+      await sleep(BATCH_GAP_MS);
+    }
   }
+
+  if (results.length === 0) {
+    throw new Error(lastError || "AI 분류에 실패했습니다.");
+  }
+
+  return { results, failed, error: lastError };
 }
 
 // ---------------------------------------------------------------------------
@@ -476,11 +580,15 @@ ${question}
   `;
 
   try {
-    const response = await client().models.generateContent({
-      model: AI_MODEL,
-      contents: [{ role: "user", parts: [{ text: userContent }] }],
-      config: { systemInstruction: systemPrompt },
-    });
+    const response = await withRetry(
+      () =>
+        client().models.generateContent({
+          model: AI_MODEL,
+          contents: [{ role: "user", parts: [{ text: userContent }] }],
+          config: { systemInstruction: systemPrompt },
+        }),
+      RETRY_ATTEMPTS
+    );
     return response.text || "";
   } catch (error) {
     throw describeFailure(error);
