@@ -3,10 +3,16 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import type { CategoryType, ExpenseType, Transaction } from "../../types/finance";
 import {
+  activeProviderLabel,
   classifyTransactions,
   type ClassifyItem,
   type ClassifyProgress,
 } from "../../services/aiClient";
+import {
+  ClassifyResultModal,
+  type ClassifyChange,
+  type ClassifySummary,
+} from "./ClassifyResultModal";
 import {
   buildRecurrenceIndex,
   describeRecurrence,
@@ -51,6 +57,7 @@ export const AccountLedgerModal: React.FC<{
   const [isClassifying, setIsClassifying] = useState(false);
   const [progress, setProgress] = useState<ClassifyProgress | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [summary, setSummary] = useState<ClassifySummary | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -58,6 +65,7 @@ export const AccountLedgerModal: React.FC<{
     setSelected(new Set());
     setNotice(null);
     setProgress(null);
+    setSummary(null);
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -165,8 +173,23 @@ export const AccountLedgerModal: React.FC<{
       const run = await classifyTransactions(items, setProgress);
       const results = run.results;
 
-      let fixedCount = 0;
-      let changed = 0;
+      let toFixed = 0;
+      let toVariable = 0;
+      let categoryCorrected = 0;
+      let paymentDaySet = 0;
+      let unchanged = 0;
+      const changes: ClassifyChange[] = [];
+
+      const describe = (tx: Transaction) =>
+        `${
+          tx.expenseType === "INCOME"
+            ? "수입"
+            : tx.expenseType === "FIXED"
+            ? "고정비"
+            : "변동비"
+        } · ${tx.category}${
+          tx.expenseType === "FIXED" && tx.recurringDay ? ` · 매월 ${tx.recurringDay}일` : ""
+        }`;
 
       const updates = results.flatMap((result) => {
         const tx = targets[result.index];
@@ -180,7 +203,6 @@ export const AccountLedgerModal: React.FC<{
             : result.expenseType;
 
         const isFixed = expenseType === "FIXED";
-        if (isFixed) fixedCount++;
 
         // The billing day comes from the dates themselves, not the model
         const info = recurrenceFor(tx, index);
@@ -189,23 +211,37 @@ export const AccountLedgerModal: React.FC<{
           : undefined;
 
         const category = (result.category as CategoryType) || tx.category;
-        if (
-          tx.expenseType !== expenseType ||
-          tx.category !== category ||
-          tx.recurringDay !== recurringDay
-        ) {
-          changed++;
+
+        const typeChanged = tx.expenseType !== expenseType;
+        const categoryChanged = tx.category !== category;
+        const dayChanged = (tx.recurringDay ?? null) !== (recurringDay ?? null);
+
+        if (typeChanged && isFixed) toFixed++;
+        if (typeChanged && expenseType === "VARIABLE") toVariable++;
+        if (categoryChanged) categoryCorrected++;
+        if (dayChanged && recurringDay) paymentDaySet++;
+
+        const updated: Transaction = {
+          ...tx,
+          expenseType,
+          category,
+          isFixedRecurring: isFixed,
+          recurringDay,
+        };
+
+        if (typeChanged || categoryChanged || dayChanged) {
+          changes.push({
+            merchant: tx.merchant,
+            date: tx.date,
+            amount: tx.amount,
+            before: describe(tx),
+            after: describe(updated),
+          });
+        } else {
+          unchanged++;
         }
 
-        return [
-          {
-            ...tx,
-            expenseType,
-            category,
-            isFixedRecurring: isFixed,
-            recurringDay,
-          },
-        ];
+        return [updated];
       });
 
       updateTransactions(updates);
@@ -215,21 +251,20 @@ export const AccountLedgerModal: React.FC<{
       const settled = new Set(updates.map((tx) => tx.id));
       setSelected((prev) => new Set([...prev].filter((id) => !settled.has(id))));
 
-      const summary = `${updates.length}건 분류 완료 · 고정비 ${fixedCount}건 / 변동비 ${
-        updates.length - fixedCount
-      }건 · 변경 ${changed}건`;
-
-      setNotice(
-        run.failed > 0
-          ? {
-              ok: false,
-              text: `${summary}
-남은 ${run.failed}건은 실패했습니다(${
-                run.error || "일시적 오류"
-              }). 선택이 유지되어 있으니 잠시 후 다시 눌러주세요.`,
-            }
-          : { ok: true, text: summary }
-      );
+      // Shown as a popup, so the outcome is waiting whenever the user returns
+      setSummary({
+        requested: targets.length,
+        classified: updates.length,
+        toFixed,
+        toVariable,
+        categoryCorrected,
+        paymentDaySet,
+        unchanged,
+        failed: run.failed,
+        error: run.error,
+        provider: activeProviderLabel(),
+        changes,
+      });
     } catch (error) {
       setNotice({
         ok: false,
@@ -525,5 +560,10 @@ export const AccountLedgerModal: React.FC<{
   );
 
   if (typeof document === "undefined") return null;
-  return createPortal(modalContent, document.body);
+  return (
+    <>
+      {createPortal(modalContent, document.body)}
+      <ClassifyResultModal summary={summary} onClose={() => setSummary(null)} />
+    </>
+  );
 };

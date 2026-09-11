@@ -5,10 +5,10 @@ import type { Transaction } from "../../types/finance";
 import {
   autoDetectMapping,
   buildDrafts,
-  decodeFile,
   draftToTransaction,
   duplicateKey,
   EMPTY_MAPPING,
+  loadStatementFile,
   parseDelimited,
   type ColumnMapping,
   type DraftRow,
@@ -18,6 +18,8 @@ import {
   X,
   Upload,
   FileSpreadsheet,
+  Loader2,
+  Table2,
   ArrowRight,
   ArrowLeft,
   CheckCircle2,
@@ -50,6 +52,10 @@ export const CsvImportModal: React.FC<{
   const [accountId, setAccountId] = useState(defaultAccountId || accounts[0]?.id || "");
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
+  const [isReading, setIsReading] = useState(false);
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [usedSheet, setUsedSheet] = useState<string | null>(null);
   const [table, setTable] = useState<ParsedTable | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping>(EMPTY_MAPPING);
   const [duplicates, setDuplicates] = useState<DuplicateItem[]>([]);
@@ -65,6 +71,10 @@ export const CsvImportModal: React.FC<{
     setStep("PICK");
     setFileName("");
     setFileError(null);
+    setIsReading(false);
+    setSourceFile(null);
+    setSheetNames([]);
+    setUsedSheet(null);
     setTable(null);
     setMapping(EMPTY_MAPPING);
     setDuplicates([]);
@@ -89,17 +99,28 @@ export const CsvImportModal: React.FC<{
 
   if (!isOpen) return null;
 
-  const handleFile = async (file: File) => {
+  /** Reads a CSV or an Excel workbook; a workbook becomes CSV on the way in. */
+  const handleFile = async (file: File, sheet?: string) => {
     setFileError(null);
     setFileName(file.name);
+    setSourceFile(file);
+    setIsReading(true);
 
     try {
-      const text = decodeFile(await file.arrayBuffer());
-      const parsed = parseDelimited(text);
+      const loaded = await loadStatementFile(file, sheet);
+      const parsed = parseDelimited(loaded.text);
+
+      setSheetNames(loaded.sheetNames);
+      setUsedSheet(loaded.usedSheet);
 
       if (parsed.headers.length === 0 || parsed.rows.length === 0) {
-        setFileError("파일에서 표를 찾지 못했습니다. CSV로 저장한 파일인지 확인해주세요.");
+        setFileError(
+          loaded.sheetNames.length > 1
+            ? "이 시트에서 표를 찾지 못했습니다. 다른 시트를 선택해보세요."
+            : "파일에서 표를 찾지 못했습니다. 거래내역이 담긴 파일인지 확인해주세요."
+        );
         setTable(null);
+        setStep(loaded.sheetNames.length > 1 ? "MAP" : "PICK");
         return;
       }
 
@@ -108,8 +129,14 @@ export const CsvImportModal: React.FC<{
       setStep("MAP");
     } catch (error) {
       console.error(error);
-      setFileError("파일을 읽지 못했습니다.");
+      setFileError(
+        error instanceof Error && error.message
+          ? error.message
+          : "파일을 읽지 못했습니다."
+      );
       setTable(null);
+    } finally {
+      setIsReading(false);
     }
   };
 
@@ -181,8 +208,13 @@ export const CsvImportModal: React.FC<{
   };
 
   const headings: Record<Step, { title: string; sub: string }> = {
-    PICK: { title: "내역 가져오기", sub: "은행·카드사에서 받은 CSV 파일" },
-    MAP: { title: "항목 확인", sub: `${fileName} · ${table?.rows.length ?? 0}줄` },
+    PICK: { title: "내역 가져오기", sub: "은행·카드사에서 받은 엑셀·CSV 파일" },
+    MAP: {
+      title: "항목 확인",
+      sub: `${fileName}${usedSheet ? ` · [${usedSheet}]` : ""} · ${
+        table?.rows.length ?? 0
+      }줄`,
+    },
     REVIEW: { title: "중복 확인", sub: `새 내역 ${fresh.length}건 · 중복 ${duplicates.length}건` },
     DONE: { title: "가져오기 완료", sub: "가계부에 반영되었습니다" },
   };
@@ -309,7 +341,8 @@ export const CsvImportModal: React.FC<{
 
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-[10px] text-slate-500 leading-relaxed space-y-1">
               <div>
-                엑셀(.xlsx) 파일은 <strong>다른 이름으로 저장 → CSV</strong>로 변환한 뒤 올려주세요.
+                엑셀(.xls·.xlsx)은 <strong>앱이 내부에서 CSV로 변환</strong>해 처리합니다. 따로
+                저장할 필요가 없습니다.
               </div>
               <div>
                 한글이 깨지는 파일(EUC-KR)도 자동으로 인식합니다.
@@ -322,6 +355,48 @@ export const CsvImportModal: React.FC<{
         )}
 
         {/* ---------------- MAP ---------------- */}
+        {step === "MAP" && sheetNames.length > 1 && (
+          <div>
+            <label className="text-[10px] font-bold text-slate-600 flex items-center gap-1 mb-1">
+              <Table2 className="w-3 h-3 text-slate-400" />
+              시트 선택
+              <span className="font-normal text-slate-400">
+                · 통합문서에 {sheetNames.length}개
+              </span>
+            </label>
+            <select
+              value={usedSheet ?? ""}
+              disabled={isReading}
+              onChange={(e) => {
+                if (sourceFile) void handleFile(sourceFile, e.target.value);
+              }}
+              className="w-full px-2.5 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none disabled:opacity-50"
+            >
+              {sheetNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {step === "MAP" && fileError && (
+          <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-bold">
+            {fileError}
+          </div>
+        )}
+
+        {step === "MAP" && !table && (
+          <button
+            type="button"
+            onClick={() => setStep("PICK")}
+            className="w-full py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+          >
+            다른 파일 선택
+          </button>
+        )}
+
         {step === "MAP" && table && (
           <>
             <div className="grid grid-cols-2 gap-2.5">

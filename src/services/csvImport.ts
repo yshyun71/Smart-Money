@@ -44,6 +44,74 @@ export function decodeFile(buffer: ArrayBuffer): string {
 }
 
 // ---------------------------------------------------------------------------
+// Excel
+// ---------------------------------------------------------------------------
+
+export function isSpreadsheetFile(file: File): boolean {
+  return (
+    /\.(xlsx|xlsm|xlsb|xls)$/i.test(file.name) ||
+    file.type.includes("spreadsheet") ||
+    file.type.includes("ms-excel")
+  );
+}
+
+export interface LoadedFile {
+  /** Delimited text, whatever the file started as. */
+  text: string;
+  /** Sheet names, when the file was a workbook. */
+  sheetNames: string[];
+  usedSheet: string | null;
+}
+
+/**
+ * Reads a statement, whether it arrived as CSV or as the .xls/.xlsx most banks
+ * actually hand out. A workbook is converted to CSV first and then goes through
+ * exactly the same path as a CSV upload.
+ *
+ * The spreadsheet reader is imported on demand — it is a large library, and
+ * most sessions never open an Excel file.
+ */
+export async function loadStatementFile(
+  file: File,
+  sheetName?: string
+): Promise<LoadedFile> {
+  const buffer = await file.arrayBuffer();
+
+  if (!isSpreadsheetFile(file)) {
+    return { text: decodeFile(buffer), sheetNames: [], usedSheet: null };
+  }
+
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(new Uint8Array(buffer), {
+    type: "array",
+    // Otherwise dates arrive as Excel serial numbers
+    cellDates: true,
+  });
+
+  const sheetNames = workbook.SheetNames;
+  if (sheetNames.length === 0) {
+    throw new Error("엑셀 파일에 시트가 없습니다.");
+  }
+
+  // The requested sheet, else the first one with any content
+  const chosen =
+    (sheetName && sheetNames.includes(sheetName) && sheetName) ||
+    sheetNames.find((name) => {
+      const sheet = workbook.Sheets[name];
+      return sheet && Object.keys(sheet).some((cell) => !cell.startsWith("!"));
+    }) ||
+    sheetNames[0];
+
+  const text = XLSX.utils.sheet_to_csv(workbook.Sheets[chosen], {
+    blankrows: false,
+    // Use the displayed value, so dates and amounts read as the bank wrote them
+    rawNumbers: false,
+  });
+
+  return { text, sheetNames, usedSheet: chosen };
+}
+
+// ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
 

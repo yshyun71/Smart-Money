@@ -6,7 +6,11 @@ import { PinSetupModal } from "../auth/PinSetupModal";
 import { AIKeyModal } from "../settings/AIKeyModal";
 import { UserManageModal } from "../settings/UserManageModal";
 import { PWAInstallGuideModal } from "../pwa/PWAInstallButton";
-import { hasApiKey, onApiKeyChange } from "../../services/aiClient";
+import {
+  activeProviderLabel,
+  hasApiKey,
+  onAiSettingsChange,
+} from "../../services/aiClient";
 import { NavTab } from "./BottomNavigation";
 import {
   RefreshCw,
@@ -45,10 +49,18 @@ export const MobileHeader: React.FC<{
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showAIKeyModal, setShowAIKeyModal] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
-  const [aiKeyRegistered, setAiKeyRegistered] = useState(hasApiKey);
+  const [aiKeyRegistered, setAiKeyRegistered] = useState(() => hasApiKey());
+  const [aiProvider, setAiProvider] = useState(() => activeProviderLabel());
 
-  // Keep the "미등록" badge in sync when the key is added or removed
-  useEffect(() => onApiKeyChange(setAiKeyRegistered), []);
+  // Keep the menu row in sync when a key is added, removed or switched
+  useEffect(
+    () =>
+      onAiSettingsChange(() => {
+        setAiKeyRegistered(hasApiKey());
+        setAiProvider(activeProviderLabel());
+      }),
+    []
+  );
 
   // Dismiss the settings dropdown with Escape
   useEffect(() => {
@@ -114,7 +126,9 @@ export const MobileHeader: React.FC<{
     {
       icon: Sparkles,
       label: "AI 등록",
-      description: "내 API 키로 AI 절약 분석·문자 인식 사용",
+      description: aiProvider
+        ? `사용 중: ${aiProvider}`
+        : "Gemini·Claude·ChatGPT 중 내 키를 등록",
       badge: aiKeyRegistered ? undefined : "미등록",
       danger: false,
       onSelect: () => setShowAIKeyModal(true),

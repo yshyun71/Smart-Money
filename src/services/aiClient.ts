@@ -1,156 +1,59 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import type { AISpendingAnalysis, Transaction } from "../types/finance";
+import {
+  describeAiFailure,
+  generateJson,
+  generateText,
+  MissingApiKeyError,
+  RETRY_ATTEMPTS,
+  sleep,
+  withRetry,
+  type JsonSchema,
+} from "./ai";
+
+export {
+  activeProviderLabel,
+  clearProviderConfig,
+  getAiSettings,
+  hasApiKey,
+  maskApiKey,
+  MissingApiKeyError,
+  onAiSettingsChange,
+  PROVIDER_ORDER,
+  PROVIDERS,
+  saveProviderConfig,
+  setActiveProvider,
+  validateProvider,
+  type ProviderId,
+  type ProviderInfo,
+} from "./ai";
 
 /**
- * AI features run straight from the device against the user's own API key.
- * The key is stored only in this browser's localStorage and is never sent
- * anywhere except to Google's API.
+ * The app's AI features, expressed once and run against whichever provider the
+ * user registered. Schemas are written so the strictest provider accepts them:
+ * every property listed in `required`, `additionalProperties: false` on every
+ * object.
  */
 
-const STORAGE_KEY = "smartmoney_ai_api_key_v1";
-const AI_MODEL = "gemini-3.8-flash";
+const str = (description?: string): JsonSchema => ({ type: "string", description });
+const int = (description?: string): JsonSchema => ({ type: "integer", description });
 
-export const AI_KEY_ISSUE_URL = "https://aistudio.google.com/apikey";
-export const AI_MODEL_NAME = AI_MODEL;
-
-export class MissingApiKeyError extends Error {
-  constructor() {
-    super("AI 키가 등록되지 않았습니다. 설정 메뉴의 [AI 등록]에서 키를 먼저 입력해주세요.");
-    this.name = "MissingApiKeyError";
-  }
+function object(
+  properties: Record<string, JsonSchema>,
+  description?: string
+): JsonSchema {
+  return {
+    type: "object",
+    description,
+    properties,
+    required: Object.keys(properties),
+    additionalProperties: false,
+  };
 }
 
-type Listener = (hasKey: boolean) => void;
-const listeners = new Set<Listener>();
-
-export function getApiKey(): string {
-  try {
-    return localStorage.getItem(STORAGE_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-export function hasApiKey(): boolean {
-  return getApiKey().trim().length > 0;
-}
-
-export function saveApiKey(key: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, key.trim());
-  } catch (error) {
-    console.error("AI 키를 저장하지 못했습니다:", error);
-  }
-  listeners.forEach((listener) => listener(hasApiKey()));
-}
-
-export function clearApiKey(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch (error) {
-    console.error("AI 키를 삭제하지 못했습니다:", error);
-  }
-  listeners.forEach((listener) => listener(false));
-}
-
-/** Subscribe to key changes; returns an unsubscribe function. */
-export function onApiKeyChange(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-/** Masks the stored key for display, e.g. "AIza••••••••7fQ2". */
-export function maskApiKey(key: string): string {
-  const trimmed = key.trim();
-  if (trimmed.length <= 8) return "•".repeat(trimmed.length);
-  return `${trimmed.slice(0, 4)}${"•".repeat(8)}${trimmed.slice(-4)}`;
-}
-
-function client(): GoogleGenAI {
-  const key = getApiKey().trim();
-  if (!key) throw new MissingApiKeyError();
-  return new GoogleGenAI({ apiKey: key });
-}
-
-/**
- * Conditions worth another attempt: the model being busy, a per-minute rate
- * limit, a gateway hiccup. Google returns these as 503 UNAVAILABLE with
- * "high demand", which is explicitly temporary.
- */
-const RETRYABLE = /\b(429|500|502|503|504)\b|UNAVAILABLE|overloaded|high demand|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED|INTERNAL/i;
-
-/** Turns SDK failures into messages that mean something to the user. */
-function describeFailure(error: unknown): Error {
-  if (error instanceof MissingApiKeyError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-
-  if (/api[_ ]?key|API_KEY_INVALID|\b401\b|\b403\b/i.test(message)) {
-    return new Error("AI 키가 올바르지 않거나 권한이 없습니다. 설정 > AI 등록에서 키를 확인해주세요.");
-  }
-  if (/\b503\b|UNAVAILABLE|overloaded|high demand/i.test(message)) {
-    return new Error(
-      "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요."
-    );
-  }
-  if (/quota|\b429\b|RESOURCE_EXHAUSTED/i.test(message)) {
-    return new Error("AI 사용량 한도에 도달했습니다. 잠시 후 다시 시도해주세요.");
-  }
-  if (/DEADLINE_EXCEEDED|timeout/i.test(message)) {
-    return new Error("AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.");
-  }
-  if (/fetch|network|Failed to fetch/i.test(message)) {
-    return new Error("네트워크에 연결되어 있지 않습니다. AI 기능은 인터넷 연결이 필요합니다.");
-  }
-  if (/\b(500|502|504)\b|INTERNAL/i.test(message)) {
-    return new Error("AI 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.");
-  }
-  return new Error(message || "AI 요청에 실패했습니다.");
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Attempts per request, including the first. */
-const RETRY_ATTEMPTS = 4;
-
-/** Retries a transient failure with backoff; anything else is thrown at once. */
-async function withRetry<T>(
-  run: () => Promise<T>,
-  attempts: number,
-  onWait?: (waitMs: number, attempt: number) => void
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await run();
-    } catch (error) {
-      lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (attempt === attempts || !RETRYABLE.test(message)) throw error;
-
-      // Backoff with jitter, so parallel clients do not line up
-      const waitMs = Math.round(1200 * 2 ** (attempt - 1) * (1 + Math.random() * 0.4));
-      onWait?.(waitMs, attempt);
-      await sleep(waitMs);
-    }
-  }
-
-  throw lastError;
-}
-
-/** Verifies a key by making the smallest possible call. */
-export async function validateApiKey(key: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const probe = new GoogleGenAI({ apiKey: key.trim() });
-    await probe.models.generateContent({
-      model: AI_MODEL,
-      contents: "ping",
-    });
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: describeFailure(error).message };
-  }
-}
+const CATEGORY_NAMES = [
+  "식비", "카페/간식", "주거/통신", "구독/미디어", "교통", "쇼핑",
+  "문화/여가", "생활/의료", "금융/보험", "급여", "기타수입", "기타지출",
+];
 
 // ---------------------------------------------------------------------------
 // 1. Spending analysis & savings coaching
@@ -166,6 +69,45 @@ export interface SpendingAnalysisInput {
   variableTopCategories: { category: string; amount: number; percentage: number }[];
   recentTransactions: Transaction[];
 }
+
+const ANALYSIS_SCHEMA = object({
+  summary: str("이번 달 소비에 대한 종합 진단 요약"),
+  healthScore: int("재무 건강 점수 (0-100)"),
+  fixedRatioAnalysis: str("고정비 비율 적정성 평가 및 피드백"),
+  variablePaceAnalysis: str("변동비 지출 속도 및 과소비 요인 분석"),
+  totalPotentialMonthlySavings: int("추천 항목 실천 시 예상되는 월간 총 절약 가능 금액 (원)"),
+  savingsRecommendations: {
+    type: "array",
+    items: object({
+      title: str("절약 항목 명칭"),
+      category: str("관련 카테고리"),
+      type: str("고정비 절약 또는 변동비 절약"),
+      estimatedMonthlySavings: int("월 예상 절약액 (원)"),
+      difficulty: str("난이도 (쉬움, 보통, 도전)"),
+      currentIssue: str("현재 지출 현황 및 문제점"),
+      actionPlan: str("구체적 실천 팁과 방법"),
+      concreteExample: str("Before & After 수치가 명시된 구체적 실천 예시"),
+    }),
+  },
+  habitImprovements: {
+    type: "array",
+    items: object({
+      title: str("습관 개선 타이틀"),
+      category: str("습관 분류"),
+      description: str("개선 원리 및 설명"),
+      concreteExample: str("구체적 실천 사례"),
+      expectedMonthlyBenefit: int("예상 월 혜택/절약액"),
+      badge: str("핵심 효과 뱃지"),
+      tag: str("분류 태그"),
+    }),
+  },
+  weeklyActionChecklist: {
+    type: "array",
+    items: str(),
+    description: "이번 주 즉시 실천할 3~4가지 액션 체크리스트",
+  },
+  coachEncouragement: str("동기 부여가 되는 한마디"),
+});
 
 export async function analyzeSpending(
   input: SpendingAnalysisInput
@@ -196,105 +138,17 @@ export async function analyzeSpending(
 `;
 
   try {
-    const response = await withRetry(() => client().models.generateContent({
-      model: AI_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction:
+    return await withRetry(() =>
+      generateJson<Omit<AISpendingAnalysis, "analyzedAt">>({
+        system:
           "당신은 친절하면서도 숫자에 정밀한 금융 가계부 전문 AI입니다. 한국 소비자의 실생활 물가와 금융 상품(알뜰폰, OTT, 배달비, 대중교통 등)에 맞춘 현실적 조언과 구체적 사례를 JSON으로 출력하세요.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            summary: { type: Type.STRING, description: "이번 달 소비에 대한 종합 진단 요약" },
-            healthScore: { type: Type.INTEGER, description: "재무 건강 점수 (0-100)" },
-            fixedRatioAnalysis: { type: Type.STRING, description: "고정비 비율 적정성 평가 및 피드백" },
-            variablePaceAnalysis: { type: Type.STRING, description: "변동비 지출 속도 및 과소비 요인 분석" },
-            totalPotentialMonthlySavings: {
-              type: Type.INTEGER,
-              description: "추천 항목 실천 시 예상되는 월간 총 절약 가능 금액 (원)",
-            },
-            savingsRecommendations: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING, description: "절약 항목 명칭" },
-                  category: {
-                    type: Type.STRING,
-                    description: "관련 카테고리 (주거/통신, 구독/미디어, 식비/배달, 교통, 쇼핑 등)",
-                  },
-                  type: { type: Type.STRING, description: "고정비 절약 또는 변동비 절약" },
-                  estimatedMonthlySavings: { type: Type.INTEGER, description: "월 예상 절약액 (원)" },
-                  difficulty: { type: Type.STRING, description: "난이도 (쉬움, 보통, 도전)" },
-                  currentIssue: { type: Type.STRING, description: "현재 지출 현황 및 문제점" },
-                  actionPlan: { type: Type.STRING, description: "구체적 실천 팁과 방법" },
-                  concreteExample: {
-                    type: Type.STRING,
-                    description: "Before & After 수치와 실행 브랜드/방법이 명시된 구체적 실천 예시",
-                  },
-                },
-                required: [
-                  "title",
-                  "category",
-                  "type",
-                  "estimatedMonthlySavings",
-                  "difficulty",
-                  "currentIssue",
-                  "actionPlan",
-                  "concreteExample",
-                ],
-              },
-            },
-            habitImprovements: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING, description: "습관 개선 타이틀" },
-                  category: { type: Type.STRING, description: "습관 분류" },
-                  description: { type: Type.STRING, description: "개선 원리 및 설명" },
-                  concreteExample: { type: Type.STRING, description: "구체적 실천 사례" },
-                  expectedMonthlyBenefit: { type: Type.INTEGER, description: "예상 월 혜택/절약액" },
-                  badge: { type: Type.STRING, description: "핵심 효과 뱃지" },
-                  tag: { type: Type.STRING, description: "분류 태그" },
-                },
-                required: [
-                  "title",
-                  "category",
-                  "description",
-                  "concreteExample",
-                  "expectedMonthlyBenefit",
-                  "badge",
-                  "tag",
-                ],
-              },
-            },
-            weeklyActionChecklist: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: "이번 주 즉시 실천할 3~4가지 액션 체크리스트",
-            },
-            coachEncouragement: { type: Type.STRING, description: "동기 부여가 되는 한마디" },
-          },
-          required: [
-            "summary",
-            "healthScore",
-            "fixedRatioAnalysis",
-            "variablePaceAnalysis",
-            "totalPotentialMonthlySavings",
-            "savingsRecommendations",
-            "habitImprovements",
-            "weeklyActionChecklist",
-            "coachEncouragement",
-          ],
-        },
-      },
-    }), RETRY_ATTEMPTS);
-
-    return JSON.parse(response.text || "{}");
+        prompt,
+        schema: ANALYSIS_SCHEMA,
+        schemaName: "spending_analysis",
+      })
+    );
   } catch (error) {
-    throw describeFailure(error);
+    throw describeAiFailure(error);
   }
 }
 
@@ -302,13 +156,32 @@ export async function analyzeSpending(
 // 2. Payment notification (SMS / push) parsing
 // ---------------------------------------------------------------------------
 
-export type ParsedTransaction = Omit<Transaction, "id" | "accountId"> & { accountId?: string };
+export type ParsedTransaction = Omit<Transaction, "id" | "accountId"> & {
+  accountId?: string;
+};
+
+const SMS_SCHEMA = object({
+  transactions: {
+    type: "array",
+    items: object({
+      merchant: str("상호명 또는 입금처"),
+      amount: int("원 단위 금액 (양의 정수)"),
+      type: { type: "string", enum: ["EXPENSE", "INCOME"] },
+      expenseType: { type: "string", enum: ["FIXED", "VARIABLE", "INCOME"] },
+      category: { type: "string", enum: CATEGORY_NAMES },
+      paymentMethod: str("문자 내 카드명 또는 계좌명"),
+      date: str("YYYY-MM-DD"),
+      time: str("HH:mm, 없으면 12:00"),
+      memo: str("추가 메모, 없으면 빈 문자열"),
+    }),
+  },
+});
 
 export async function parsePaymentMessages(rawText: string): Promise<ParsedTransaction[]> {
   const currentYear = new Date().getFullYear();
 
   const prompt = `
-다음 한국 은행/카드 결제 알림 문자(SMS) 또는 푸시 알림 텍스트를 분석하여 구조화된 가계부 거래 내역 JSON 배열로 변환하세요.
+다음 한국 은행/카드 결제 알림 문자(SMS) 또는 푸시 알림 텍스트를 분석하여 구조화된 가계부 거래 내역으로 변환하세요.
 여러 건이 포함되어 있을 수 있습니다.
 
 [알림 문자 텍스트]:
@@ -318,7 +191,7 @@ ${rawText}
 1. 금액(amount): 원 단위 숫자 (양의 정수)
 2. 유형(type): "EXPENSE"(지출) 또는 "INCOME"(수입)
 3. 지출구분(expenseType): 고정비 성격(월세, 관리비, 넷플릭스, 쿠팡와우, 유튜브, 통신요금, 보험료, 대출이자, 학원비 등 정기결제)은 "FIXED", 그 외 일반 소비(식비, 카페, 마트, 쇼핑, 택시 등)는 "VARIABLE". 수입인 경우 "INCOME".
-4. 카테고리(category): "식비", "카페/간식", "주거/통신", "구독/미디어", "교통", "쇼핑", "문화/여가", "생활/의료", "금융/보험", "급여", "기타수입", "기타지출" 중 하나로 매핑.
+4. 카테고리(category): 목록 중 하나로 매핑.
 5. 날짜(date): YYYY-MM-DD 형식 (연도가 없으면 ${currentYear}년으로 간주)
 6. 시간(time): HH:mm (없으면 "12:00")
 7. 결제수단(paymentMethod): 문자 내 카드명/계좌명 (예: "KB국민카드", "신한카드", "카카오뱅크", "토스뱅크" 등)
@@ -326,52 +199,18 @@ ${rawText}
 `;
 
   try {
-    const response = await withRetry(() => client().models.generateContent({
-      model: AI_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction:
+    const parsed = await withRetry(() =>
+      generateJson<{ transactions?: ParsedTransaction[] }>({
+        system:
           "한국 신용카드, 체크카드, 은행 입출금 SMS 및 푸시 알림 문자를 정확히 파싱하는 금융 NLP 도우미입니다.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            transactions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  merchant: { type: Type.STRING },
-                  amount: { type: Type.INTEGER },
-                  type: { type: Type.STRING, enum: ["EXPENSE", "INCOME"] },
-                  expenseType: { type: Type.STRING, enum: ["FIXED", "VARIABLE", "INCOME"] },
-                  category: { type: Type.STRING },
-                  paymentMethod: { type: Type.STRING },
-                  date: { type: Type.STRING },
-                  time: { type: Type.STRING },
-                  memo: { type: Type.STRING },
-                },
-                required: [
-                  "merchant",
-                  "amount",
-                  "type",
-                  "expenseType",
-                  "category",
-                  "paymentMethod",
-                  "date",
-                ],
-              },
-            },
-          },
-          required: ["transactions"],
-        },
-      },
-    }), RETRY_ATTEMPTS);
-
-    const parsed = JSON.parse(response.text || '{"transactions":[]}');
+        prompt,
+        schema: SMS_SCHEMA,
+        schemaName: "parsed_transactions",
+      })
+    );
     return Array.isArray(parsed.transactions) ? parsed.transactions : [];
   } catch (error) {
-    throw describeFailure(error);
+    throw describeAiFailure(error);
   }
 }
 
@@ -400,10 +239,17 @@ export interface ClassifyResult {
   reason?: string;
 }
 
-const CATEGORY_NAMES = [
-  "식비", "카페/간식", "주거/통신", "구독/미디어", "교통", "쇼핑",
-  "문화/여가", "생활/의료", "금융/보험", "급여", "기타수입", "기타지출",
-];
+const CLASSIFY_SCHEMA = object({
+  results: {
+    type: "array",
+    items: object({
+      index: int("입력의 index 값"),
+      expenseType: { type: "string", enum: ["FIXED", "VARIABLE", "INCOME"] },
+      category: { type: "string", enum: CATEGORY_NAMES },
+      reason: str("한 줄 근거"),
+    }),
+  },
+});
 
 /** Kept small enough that one response stays well inside the output limit. */
 const CLASSIFY_BATCH_SIZE = 40;
@@ -438,47 +284,21 @@ ${JSON.stringify(
     currentExpenseType: item.currentExpenseType,
     recurrence: item.recurrence,
     recurrenceQualifies: item.recurrenceQualifies,
-  })),
-  null,
-  0
+  }))
 )}
 
 모든 항목에 대해 index를 그대로 유지한 결과를 빠짐없이 반환하세요.
 `;
 
-  const response = await client().models.generateContent({
-    model: AI_MODEL,
-    contents: prompt,
-    config: {
-      systemInstruction:
-        "한국 가계부 거래 내역을 고정비/변동비와 카테고리로 정확히 분류하는 분류기입니다. 제공된 반복 결제 근거를 우선 신뢰하고, 추측을 덧붙이지 말고 JSON만 출력하세요.",
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          results: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                index: { type: Type.INTEGER, description: "입력의 index 값" },
-                expenseType: {
-                  type: Type.STRING,
-                  enum: ["FIXED", "VARIABLE", "INCOME"],
-                },
-                category: { type: Type.STRING, enum: CATEGORY_NAMES },
-                reason: { type: Type.STRING, description: "한 줄 근거" },
-              },
-              required: ["index", "expenseType", "category"],
-            },
-          },
-        },
-        required: ["results"],
-      },
-    },
+  const parsed = await generateJson<{ results?: ClassifyResult[] }>({
+    system:
+      "한국 가계부 거래 내역을 고정비/변동비와 카테고리로 정확히 분류하는 분류기입니다. 제공된 반복 결제 근거를 우선 신뢰하고, 추측을 덧붙이지 말고 JSON만 출력하세요.",
+    prompt,
+    schema: CLASSIFY_SCHEMA,
+    schemaName: "transaction_classification",
+    bulk: true,
   });
 
-  const parsed = JSON.parse(response.text || '{"results":[]}');
   return Array.isArray(parsed.results) ? parsed.results : [];
 }
 
@@ -534,10 +354,13 @@ export async function classifyTransactions(
       );
       results.push(...batchResults);
     } catch (error) {
-      const described = describeFailure(error);
-      // A bad key, no network, or an exhausted quota will not clear between
-      // batches — stop rather than retrying six more times.
-      if (error instanceof MissingApiKeyError || /키|네트워크|한도/.test(described.message)) {
+      const described = describeAiFailure(error);
+      // A bad key, no network, a wrong model name or an exhausted quota will
+      // not clear between batches — stop rather than repeating it six times.
+      if (
+        error instanceof MissingApiKeyError ||
+        /키|네트워크|한도|모델 이름/.test(described.message)
+      ) {
         if (results.length === 0) throw described;
         return { results, failed: items.length - results.length, error: described.message };
       }
@@ -565,13 +388,13 @@ export async function classifyTransactions(
 // ---------------------------------------------------------------------------
 
 export async function askCoach(question: string, context: unknown): Promise<string> {
-  const systemPrompt = `
+  const system = `
 당신은 사용자의 금융 데이터(총 수입, 고정비, 변동비, 카드 및 계좌 지출 내역)를 꼼꼼히 파악하고 있는 AI 스마트 머니 절약 코치입니다.
 사용자의 질문에 대해 현실적이고 수치에 근거한 절약 조언, 예산 관리 팁, 고정비 절감 노하우를 명확하고 정중한 한국어로 답변하세요.
 답변은 300자 내외로 핵심을 짚어주고, 2~3가지의 즉시 실행 가능한 행동 팁(Bullet points)을 포함하세요.
   `;
 
-  const userContent = `
+  const prompt = `
 [사용자 현재 재무 상황 요약]:
 ${JSON.stringify(context || {})}
 
@@ -580,17 +403,8 @@ ${question}
   `;
 
   try {
-    const response = await withRetry(
-      () =>
-        client().models.generateContent({
-          model: AI_MODEL,
-          contents: [{ role: "user", parts: [{ text: userContent }] }],
-          config: { systemInstruction: systemPrompt },
-        }),
-      RETRY_ATTEMPTS
-    );
-    return response.text || "";
+    return await withRetry(() => generateText({ system, prompt }));
   } catch (error) {
-    throw describeFailure(error);
+    throw describeAiFailure(error);
   }
 }
