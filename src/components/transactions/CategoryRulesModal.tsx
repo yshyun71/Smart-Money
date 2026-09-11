@@ -3,7 +3,12 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { CategorySelect } from "./CategorySelect";
 import type { CategoryRule, CategoryType, Transaction } from "../../types/finance";
-import { resolveCategory } from "../../services/categoryRules";
+import { pickRule } from "../../services/categoryRules";
+import {
+  CategoryApplyResultModal,
+  type AppliedRule,
+  type CategoryApplyResult,
+} from "./CategoryApplyResultModal";
 import { BUILT_IN_CATEGORIES } from "../../constants/categories";
 import {
   X,
@@ -63,8 +68,14 @@ export const CategoryRulesModal: React.FC<{
   const [draftCategory, setDraftCategory] = useState<CategoryType>("식비");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
-  /** Which categories a bulk apply may move entries into. null = not asking. */
-  const [applyTargets, setApplyTargets] = useState<Set<CategoryType> | null>(null);
+  /*
+    Which rules a bulk apply will use, held as the ones left OUT rather than
+    the ones taken in: every rule starts ticked, and one added while this sheet
+    is open joins in on its own instead of being quietly skipped.
+  */
+  const [excludedRuleIds, setExcludedRuleIds] = useState<Set<string>>(new Set());
+  /** What the last bulk apply did, shown as a popup over this sheet. */
+  const [result, setResult] = useState<CategoryApplyResult | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -74,17 +85,18 @@ export const CategoryRulesModal: React.FC<{
     setDraftCategory("식비");
     setError(null);
     setNotice(null);
-    setApplyTargets(null);
+    setExcludedRuleIds(new Set());
+    setResult(null);
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !result) onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, result]);
 
   const account = accounts.find((a: { id: string }) => a.id === accountId);
 
@@ -111,94 +123,93 @@ export const CategoryRulesModal: React.FC<{
     [accountEntries]
   );
 
-  /**
-   * Everything already recorded on this account that the current rules would
-   * file somewhere else — the same order of precedence used when an entry
-   * arrives, so a rule written after the fact reaches what it was written for.
-   */
-  const pending = useMemo(
-    () =>
-      accountEntries.flatMap((tx) => {
-        const decided = resolveCategory(
-          rules,
-          tx.merchant,
-          accountId,
-          tx.type === "INCOME"
-        );
-        if (!decided || decided === tx.category) return [];
-        return [{ ...tx, category: decided }];
-      }),
-    [accountEntries, rules, accountId]
+  /** The ticked rules, in the same precedence order as the full set. */
+  const chosenRules = useMemo(
+    () => rules.filter((rule) => !excludedRuleIds.has(rule.id)),
+    [rules, excludedRuleIds]
   );
 
   /**
-   * Every registered category, with how many entries would move into it.
-   *
-   * The whole list is offered rather than only the categories with something
-   * waiting: the choice is "which categories may this touch", and an answer
-   * of none is worth seeing spelled out next to the others. Categories with
-   * entries waiting are listed first.
+   * What the ticked rules would change across everything recorded on this
+   * account. Only those rules are consulted — nothing else gets to weigh in,
+   * so what the list says is what the button does.
    */
-  const applyChoices = useMemo(() => {
-    const counts = new Map<CategoryType, number>();
-    for (const tx of pending) {
-      counts.set(tx.category, (counts.get(tx.category) || 0) + 1);
-    }
+  const pending = useMemo(() => {
+    if (chosenRules.length === 0) return [];
+    return accountEntries.flatMap((tx) => {
+      const rule = pickRule(chosenRules, tx.merchant, accountId);
+      if (!rule || rule.category === tx.category) return [];
+      return [{ ruleId: rule.id, tx: { ...tx, category: rule.category } }];
+    });
+  }, [accountEntries, chosenRules, accountId]);
 
-    // A rule may point at a category that is no longer on the list
-    const names: CategoryType[] = [...categories];
-    for (const name of counts.keys()) {
-      if (!names.includes(name)) names.push(name);
-    }
+  const allRulesChosen = rules.length > 0 && chosenRules.length === rules.length;
 
-    return names
-      .map((category) => ({ category, count: counts.get(category) || 0 }))
-      .sort((a, b) => b.count - a.count);
-  }, [pending, categories]);
-
-  const openApply = () => {
+  const toggleRule = (id: string) => {
     setNotice(null);
-    setIsAdding(false);
-    setEditingId(null);
-    // Everything on by default: the usual intent is to apply the lot
-    setApplyTargets(new Set(applyChoices.map((choice) => choice.category)));
-  };
-
-  const toggleTarget = (category: CategoryType) => {
-    setApplyTargets((prev) => {
-      if (!prev) return prev;
+    setExcludedRuleIds((prev) => {
       const next = new Set(prev);
-      if (next.has(category)) next.delete(category);
-      else next.add(category);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  const allTargetsChosen =
-    applyTargets !== null &&
-    applyChoices.length > 0 &&
-    applyChoices.every((choice) => applyTargets.has(choice.category));
-
-  const toggleAllTargets = () => {
-    setApplyTargets(
-      allTargetsChosen
-        ? new Set()
-        : new Set(applyChoices.map((choice) => choice.category))
+  const toggleAllRules = () => {
+    setNotice(null);
+    setExcludedRuleIds(
+      allRulesChosen ? new Set(rules.map((rule) => rule.id)) : new Set()
     );
   };
 
-  /** Only the entries heading for a category the user ticked. */
-  const chosen = applyTargets
-    ? pending.filter((tx) => applyTargets.has(tx.category))
-    : [];
-
   const runApply = () => {
-    if (chosen.length === 0) return;
+    setNotice(null);
+
+    if (chosenRules.length === 0) {
+      setNotice({ ok: false, text: "적용할 규칙을 먼저 선택해주세요." });
+      return;
+    }
+
+    if (pending.length === 0) {
+      setNotice({
+        ok: true,
+        text: `선택한 ${chosenRules.length}개 규칙으로 바뀌는 내역이 없습니다. 이 계좌 ${accountEntries.length}건은 이미 규칙에 맞게 분류되어 있습니다.`,
+      });
+      return;
+    }
+
+    if (
+      !confirm(
+        `선택한 ${chosenRules.length}개 규칙을 이 계좌 ${accountEntries.length}건 전체에 적용해 ${pending.length}건의 카테고리를 변경합니다. 계속할까요?`
+      )
+    ) {
+      return;
+    }
+
+    // Counted per rule before the write, since the rows change underneath
+    const counts = new Map<string, number>();
+    for (const item of pending) {
+      counts.set(item.ruleId, (counts.get(item.ruleId) || 0) + 1);
+    }
+
+    const applied: AppliedRule[] = chosenRules
+      .map((rule) => ({
+        pattern: rule.pattern,
+        category: rule.category,
+        source: rule.source,
+        count: counts.get(rule.id) || 0,
+      }))
+      .sort((a, b) => b.count - a.count);
 
     try {
-      updateTransactions(chosen);
-      setNotice({ ok: true, text: `${chosen.length}건의 카테고리를 변경했습니다.` });
-      setApplyTargets(null);
+      updateTransactions(pending.map((item) => item.tx));
+      setResult({
+        changed: pending.length,
+        scanned: accountEntries.length,
+        rulesUsed: chosenRules.length,
+        account: account.name,
+        applied,
+      });
     } catch {
       setNotice({ ok: false, text: "일괄 적용에 실패했습니다. 잠시 후 다시 시도해주세요." });
     }
@@ -222,7 +233,6 @@ export const CategoryRulesModal: React.FC<{
   const startAdd = () => {
     setIsAdding(true);
     setEditingId(null);
-    setApplyTargets(null);
     setDraftPattern("");
     setDraftCategory("식비");
     setError(null);
@@ -231,7 +241,6 @@ export const CategoryRulesModal: React.FC<{
   const startEdit = (rule: CategoryRule) => {
     setIsAdding(false);
     setEditingId(rule.id);
-    setApplyTargets(null);
     setDraftPattern(rule.pattern);
     setDraftCategory(rule.category);
     setError(null);
@@ -374,6 +383,9 @@ export const CategoryRulesModal: React.FC<{
           여기 등록된 규칙은 내역이 새로 등록될 때와 AI 자동 분류가 실행될 때 함께
           적용됩니다. <strong className="text-emerald-700">사용자</strong> 규칙이 언제나{" "}
           <strong className="text-indigo-700">AI</strong> 규칙보다 우선합니다.
+          <br />
+          아래에서 규칙을 선택하고 <strong>[카테고리 일괄 적용]</strong>을 누르면, 선택한
+          규칙을 이 계좌의 <strong>모든 내역</strong>에 다시 적용합니다.
         </p>
 
         {/* Add, and reapply what is already registered */}
@@ -391,106 +403,17 @@ export const CategoryRulesModal: React.FC<{
             </button>
             <button
               type="button"
-              onClick={openApply}
-              disabled={accountEntries.length === 0}
-              title="이 계좌에 등록된 모든 내역에 규칙을 다시 적용합니다"
+              onClick={runApply}
+              disabled={accountEntries.length === 0 || chosenRules.length === 0}
+              title="선택한 규칙을 이 계좌의 모든 내역에 적용합니다"
               className="py-2.5 px-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 disabled:opacity-40 cursor-pointer"
             >
               <Wand2 className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">카테고리 일괄 적용</span>
+              <span className="truncate">
+                카테고리 일괄 적용
+                {pending.length > 0 ? ` (${pending.length}건)` : ""}
+              </span>
             </button>
-          </div>
-        )}
-
-        {/* Which categories this bulk apply is allowed to move entries into */}
-        {applyTargets !== null && (
-          <div className="rounded-2xl border border-indigo-300 bg-indigo-50/50 p-3 space-y-2.5">
-            <div>
-              <div className="text-[11px] font-bold text-slate-800">
-                적용할 카테고리 선택
-              </div>
-              <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
-                이 계좌 {accountEntries.length}건 중 규칙과 다르게 분류된 것은{" "}
-                <strong>{pending.length}건</strong>입니다. 체크한 카테고리로 바뀌는 내역만
-                적용됩니다.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={toggleAllTargets}
-              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 hover:text-slate-900 transition cursor-pointer"
-            >
-              {allTargetsChosen ? (
-                <CheckSquare className="w-4 h-4 text-indigo-600" />
-              ) : (
-                <Square className="w-4 h-4 text-slate-400" />
-              )}
-              <span>전체 선택</span>
-            </button>
-
-            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden bg-white max-h-64 overflow-y-auto">
-              {applyChoices.map(({ category, count }) => {
-                const isChecked = applyTargets.has(category);
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    onClick={() => toggleTarget(category)}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left transition cursor-pointer ${
-                      isChecked ? "bg-indigo-50/60" : "bg-white hover:bg-slate-50"
-                    }`}
-                  >
-                    <span className="flex items-center gap-1.5 min-w-0">
-                      {isChecked ? (
-                        <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
-                      ) : (
-                        <Square className="w-4 h-4 text-slate-300 shrink-0" />
-                      )}
-                      <span
-                        className={`text-[11px] font-bold truncate ${
-                          count > 0 ? "text-slate-800" : "text-slate-400"
-                        }`}
-                      >
-                        {category}
-                      </span>
-                    </span>
-                    <span
-                      className={`text-[10px] shrink-0 ${
-                        count > 0 ? "font-bold text-indigo-700" : "text-slate-300"
-                      }`}
-                    >
-                      {count}건
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setApplyTargets(null)}
-                className="flex-1 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[11px] transition cursor-pointer"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={runApply}
-                disabled={chosen.length === 0}
-                className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-                <span>
-                  {chosen.length > 0
-                    ? `${chosen.length}건 적용`
-                    : pending.length === 0
-                    ? "변경할 내역 없음"
-                    : "선택된 항목 없음"}
-                </span>
-              </button>
-            </div>
           </div>
         )}
 
@@ -520,8 +443,23 @@ export const CategoryRulesModal: React.FC<{
           </div>
         ) : (
           <div className="space-y-1.5">
-            <div className="px-1 text-[11px] font-bold text-slate-700">
-              등록된 규칙 {rules.length}건
+            {/* 전체 선택 sits with the count, over the list it governs */}
+            <div className="flex items-center justify-between gap-2 px-1">
+              <button
+                type="button"
+                onClick={toggleAllRules}
+                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 hover:text-slate-900 transition cursor-pointer"
+              >
+                {allRulesChosen ? (
+                  <CheckSquare className="w-4 h-4 text-indigo-600" />
+                ) : (
+                  <Square className="w-4 h-4 text-slate-400" />
+                )}
+                <span>전체 선택</span>
+              </button>
+              <span className="text-[10px] text-slate-400">
+                규칙 {rules.length}건 중 {chosenRules.length}건 선택
+              </span>
             </div>
 
             <div className="rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
@@ -531,7 +469,27 @@ export const CategoryRulesModal: React.FC<{
                     {draftForm}
                   </div>
                 ) : (
-                  <div key={rule.id} className="flex items-center gap-1 px-3 py-2.5 bg-white">
+                  <div
+                    key={rule.id}
+                    className={`flex items-center gap-1 pr-3 py-2.5 transition ${
+                      excludedRuleIds.has(rule.id) ? "bg-white" : "bg-indigo-50/40"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleRule(rule.id)}
+                      aria-label={
+                        excludedRuleIds.has(rule.id) ? "일괄 적용에 포함" : "일괄 적용에서 제외"
+                      }
+                      className="pl-3 pr-1.5 shrink-0 cursor-pointer"
+                    >
+                      {excludedRuleIds.has(rule.id) ? (
+                        <Square className="w-4 h-4 text-slate-300" />
+                      ) : (
+                        <CheckSquare className="w-4 h-4 text-indigo-600" />
+                      )}
+                    </button>
+
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-[11px] font-bold text-slate-900 truncate font-mono">
@@ -641,5 +599,10 @@ export const CategoryRulesModal: React.FC<{
   );
 
   if (typeof document === "undefined") return null;
-  return createPortal(modalContent, document.body);
+  return (
+    <>
+      {createPortal(modalContent, document.body)}
+      <CategoryApplyResultModal result={result} onClose={() => setResult(null)} />
+    </>
+  );
 };
