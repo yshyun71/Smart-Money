@@ -360,7 +360,7 @@ export const AccountLedgerModal: React.FC<{
           the same description lands the same way next time.
         */
         const confirmedRule = pickRule(confirmed, tx.merchant, accountId);
-        const builtIn = builtInCategoryFor(tx.merchant);
+        const builtIn = builtInCategoryFor(tx.merchant, tx.type === "INCOME");
         const modelCategory = (result.category as CategoryType) || tx.category;
         const category = confirmedRule
           ? confirmedRule.category

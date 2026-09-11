@@ -106,12 +106,12 @@ export const AddTransactionModal: React.FC<{
   useEffect(() => {
     if (!isOpen) return;
     const hit = merchant.trim()
-      ? categoryForMerchant(merchant, selectedAccountId)
+      ? categoryForMerchant(merchant, selectedAccountId, formType === "INCOME")
       : null;
     setRuleHint(hit);
     if (hit && !editing && !categoryTouched) setCategory(hit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, merchant, selectedAccountId, editing, categoryTouched]);
+  }, [isOpen, merchant, selectedAccountId, editing, categoryTouched, formType]);
 
   // Follow the description until the user writes a pattern of their own
   useEffect(() => {

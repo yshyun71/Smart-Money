@@ -112,7 +112,9 @@ export const CsvImportModal: React.FC<{
     return {
       ...built,
       drafts: built.drafts.map((draft) => {
-        const ruled = accountId ? categoryForMerchant(draft.merchant, accountId) : null;
+        const ruled = accountId
+          ? categoryForMerchant(draft.merchant, accountId, draft.type === "INCOME")
+          : null;
         return ruled ? { ...draft, category: ruled } : draft;
       }),
     };

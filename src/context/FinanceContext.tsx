@@ -14,6 +14,7 @@ import {
   CategoryBudgetStatus,
   CategoryRule,
   CategoryType,
+  TransactionType,
   BudgetAlert,
   RuleSource,
   ValueSource,
@@ -28,7 +29,10 @@ import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 import { resolveCategory } from "../services/categoryRules";
-import { BUILT_IN_CATEGORIES } from "../constants/categories";
+import {
+  BUILT_IN_CATEGORIES,
+  FIXED_BUDGET_CATEGORIES,
+} from "../constants/categories";
 
 interface MonthlyHistoricalItem {
   month: string;
@@ -113,7 +117,11 @@ interface FinanceContextType {
   // Standing category rules
   categoryRules: CategoryRule[];
   /** The category a standing rule assigns to a description, if any. */
-  categoryForMerchant: (merchant: string, accountId: string) => CategoryType | null;
+  categoryForMerchant: (
+    merchant: string,
+    accountId: string,
+    isIncome?: boolean
+  ) => CategoryType | null;
   saveCategoryRule: (rule: {
     id?: string;
     accountId: string;
@@ -446,7 +454,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const totalVariableBudget = useMemo(
     () =>
       Object.entries(budgetConfig.categoryBudgets || {})
-        .filter(([cat]) => cat !== "주거/통신" && cat !== "금융/보험")
+        .filter(([cat]) => !FIXED_BUDGET_CATEGORIES.includes(cat as never))
         .reduce((acc: number, [, val]) => acc + Number(val || 0), 0),
     [budgetConfig.categoryBudgets]
   );
@@ -619,10 +627,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
    * A standing rule decides the category of anything arriving later that
    * matches it — whether typed in by hand or read out of a statement.
    */
-  const withRule = <T extends { merchant: string; accountId: string; category: CategoryType }>(
+  const withRule = <
+    T extends {
+      merchant: string;
+      accountId: string;
+      category: CategoryType;
+      type: TransactionType;
+    }
+  >(
     tx: T
   ): T => {
-    const decided = resolveCategory(categoryRules, tx.merchant, tx.accountId);
+    const decided = resolveCategory(
+      categoryRules,
+      tx.merchant,
+      tx.accountId,
+      tx.type === "INCOME"
+    );
     return decided ? { ...tx, category: decided } : tx;
   };
 
@@ -771,8 +791,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // -------------------------------------------------------------------------
 
   const categoryForMerchant = useCallback(
-    (merchant: string, accountId: string): CategoryType | null =>
-      resolveCategory(categoryRules, merchant, accountId),
+    (merchant: string, accountId: string, isIncome = false): CategoryType | null =>
+      resolveCategory(categoryRules, merchant, accountId, isIncome),
     [categoryRules]
   );
 

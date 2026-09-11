@@ -39,7 +39,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   "문화/여가": "#8B5CF6", // purple
   "생활/의료": "#10B981", // emerald
   "구독/미디어": "#3B82F6", // blue
-  "금융/보험": "#64748B", // slate
+  "보험": "#0D9488", // teal
+  "대출": "#7C3AED", // violet
+  "기타 금융": "#4F46E5", // indigo
   "카드대금": "#6366F1", // indigo
   "기타지출": "#94A3B8", // gray
 };

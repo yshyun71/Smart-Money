@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { CategorySelect } from "./CategorySelect";
-import type { CategoryRule, CategoryType } from "../../types/finance";
+import type { CategoryRule, CategoryType, Transaction } from "../../types/finance";
+import { resolveCategory } from "../../services/categoryRules";
 import { BUILT_IN_CATEGORIES } from "../../constants/categories";
 import {
   X,
@@ -13,6 +14,9 @@ import {
   Sparkles,
   UserCheck,
   Pencil,
+  Wand2,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 
 /** Counts how many descriptions a pattern covers, using the same loose match. */
@@ -48,6 +52,7 @@ export const CategoryRulesModal: React.FC<{
     setCategoryRuleSource,
     categories,
     deleteCategory,
+    updateTransactions,
   } = useFinance();
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -55,6 +60,7 @@ export const CategoryRulesModal: React.FC<{
   const [draftPattern, setDraftPattern] = useState("");
   const [draftCategory, setDraftCategory] = useState<CategoryType>("식비");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -63,6 +69,7 @@ export const CategoryRulesModal: React.FC<{
     setDraftPattern("");
     setDraftCategory("식비");
     setError(null);
+    setNotice(null);
   }, [isOpen]);
 
   useEffect(() => {
@@ -88,13 +95,59 @@ export const CategoryRulesModal: React.FC<{
     [categoryRules, accountId]
   );
 
-  const merchantNames: string[] = useMemo(
+  const accountEntries: Transaction[] = useMemo(
     () =>
-      allTransactions
-        .filter((tx: { accountId: string }) => tx.accountId === accountId)
-        .map((tx: { merchant: string }) => tx.merchant),
+      allTransactions.filter((tx: Transaction) => tx.accountId === accountId),
     [allTransactions, accountId]
   );
+
+  const merchantNames: string[] = useMemo(
+    () => accountEntries.map((tx) => tx.merchant),
+    [accountEntries]
+  );
+
+  /**
+   * Everything already recorded on this account, refiled by the current
+   * rules — the same order of precedence used when an entry arrives, so a
+   * rule added after the fact reaches the entries it was written for.
+   */
+  const handleApplyAll = () => {
+    setNotice(null);
+
+    const updates = accountEntries.flatMap((tx) => {
+      const decided = resolveCategory(
+        rules,
+        tx.merchant,
+        accountId,
+        tx.type === "INCOME"
+      );
+      if (!decided || decided === tx.category) return [];
+      return [{ ...tx, category: decided }];
+    });
+
+    if (updates.length === 0) {
+      setNotice({
+        ok: true,
+        text: `이 계좌의 ${accountEntries.length}건 모두 이미 규칙에 맞게 분류되어 있습니다.`,
+      });
+      return;
+    }
+
+    if (
+      !confirm(
+        `이 계좌 ${accountEntries.length}건 중 ${updates.length}건의 카테고리를 규칙에 맞게 변경합니다. 계속할까요?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      updateTransactions(updates);
+      setNotice({ ok: true, text: `${updates.length}건의 카테고리를 변경했습니다.` });
+    } catch {
+      setNotice({ ok: false, text: "일괄 적용에 실패했습니다. 잠시 후 다시 시도해주세요." });
+    }
+  };
 
   /** Categories the user typed in, as opposed to the ones the app ships. */
   const ownCategories: CategoryType[] = useMemo(
@@ -266,18 +319,45 @@ export const CategoryRulesModal: React.FC<{
           <strong className="text-indigo-700">AI</strong> 규칙보다 우선합니다.
         </p>
 
-        {/* Add */}
+        {/* Add, and reapply what is already registered */}
         {isAdding ? (
           draftForm
         ) : (
-          <button
-            type="button"
-            onClick={startAdd}
-            className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={startAdd}
+              className="py-2.5 px-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">새 규칙 등록</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleApplyAll}
+              disabled={accountEntries.length === 0}
+              title="이 계좌에 등록된 모든 내역에 규칙을 다시 적용합니다"
+              className="py-2.5 px-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 disabled:opacity-40 cursor-pointer"
+            >
+              <Wand2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">카테고리 일괄 적용</span>
+            </button>
+          </div>
+        )}
+
+        {notice && (
+          <div
+            className={`p-2.5 rounded-xl text-[10px] font-bold flex items-start gap-1.5 ${
+              notice.ok ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-700"
+            }`}
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>새 규칙 등록</span>
-          </button>
+            {notice.ok ? (
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-px" />
+            ) : (
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+            )}
+            <span className="min-w-0 break-words">{notice.text}</span>
+          </div>
         )}
 
         {/* Rules */}

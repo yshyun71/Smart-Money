@@ -1,6 +1,5 @@
 import type { CategoryType, ExpenseType, Transaction, TransactionType } from "../types/finance";
-import { isCardPayment } from "./categoryRules";
-import { CARD_PAYMENT_CATEGORY } from "../constants/categories";
+import { builtInCategoryFor } from "./categoryRules";
 
 /**
  * Reading a bank or card statement exported as CSV.
@@ -364,7 +363,6 @@ const CATEGORY_KEYWORDS: { category: CategoryType; words: string[] }[] = [
   { category: "교통", words: ["티머니", "카카오T", "택시", "지하철", "버스", "코레일", "SRT", "주유", "충전", "하이패스", "톨게이트", "주차"] },
   { category: "구독/미디어", words: ["넷플릭스", "netflix", "유튜브", "youtube", "왓챠", "웨이브", "티빙", "디즈니", "스포티파이", "멜론", "지니뮤직", "쿠팡와우", "구독"] },
   { category: "주거/통신", words: ["월세", "관리비", "전기", "가스", "수도", "SKT", "KT", "LG U+", "LGU", "통신", "인터넷", "임대료"] },
-  { category: "금융/보험", words: ["보험", "삼성화재", "현대해상", "DB손해", "KB손해", "대출", "이자", "상환", "적금", "펀드", "연금"] },
   { category: "쇼핑", words: ["쿠팡", "11번가", "지마켓", "옥션", "무신사", "올리브영", "다이소", "네이버페이", "SSG", "백화점"] },
   { category: "문화/여가", words: ["CGV", "메가박스", "롯데시네마", "영화", "서점", "교보", "yes24", "알라딘", "헬스", "피트니스", "PC방", "노래"] },
   { category: "생활/의료", words: ["약국", "병원", "의원", "치과", "한의원", "미용실", "세탁"] },
@@ -372,9 +370,11 @@ const CATEGORY_KEYWORDS: { category: CategoryType; words: string[] }[] = [
 ];
 
 export function guessCategory(merchant: string, isIncome: boolean): CategoryType {
-  // A card bill reads like a bank withdrawal and matches nothing else well,
-  // so it is settled before any keyword gets a look in.
-  if (!isIncome && isCardPayment(merchant)) return CARD_PAYMENT_CATEGORY;
+  // Card bills and the three financial categories are decided the same way
+  // everywhere else in the app, so they are settled before any keyword here
+  // gets a look in.
+  const builtIn = builtInCategoryFor(merchant, isIncome);
+  if (builtIn) return builtIn;
 
   const text = merchant.toLowerCase();
   for (const { category, words } of CATEGORY_KEYWORDS) {

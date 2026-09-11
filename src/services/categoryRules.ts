@@ -1,5 +1,5 @@
 import type { CategoryRule, CategoryType } from "../types/finance";
-import { CARD_PAYMENT_CATEGORY } from "../constants/categories";
+import { CARD_PAYMENT_CATEGORY, FINANCE_KEYWORDS } from "../constants/categories";
 
 /**
  * Standing category rules, matched loosely against a transaction's description.
@@ -135,12 +135,38 @@ export function isCardPayment(merchant: string): boolean {
 }
 
 /**
+ * Which of 보험 / 대출 / 기타 금융 a description belongs to, if any.
+ *
+ * These three replaced one 금융/보험 category, and the line itself says which
+ * one it is often enough to be worth deciding here rather than asking.
+ */
+export function financeCategoryFor(merchant: string): CategoryType | null {
+  const name = normalise(merchant);
+  if (!name) return null;
+
+  for (const { category, words } of FINANCE_KEYWORDS) {
+    if (words.some((word) => name.toLowerCase().includes(word.toLowerCase()))) {
+      return category;
+    }
+  }
+  return null;
+}
+
+/**
  * A category the app can work out from the description alone, with no rule
  * stored and no model asked. Ranks below a rule the user confirmed and above
  * anything the classifier decides.
+ *
+ * Money coming in is left alone: "예금이자" is income, not a loan repayment,
+ * and only the direction of the entry tells the two apart.
  */
-export function builtInCategoryFor(merchant: string): CategoryType | null {
-  return isCardPayment(merchant) ? CARD_PAYMENT_CATEGORY : null;
+export function builtInCategoryFor(
+  merchant: string,
+  isIncome = false
+): CategoryType | null {
+  if (isIncome) return null;
+  if (isCardPayment(merchant)) return CARD_PAYMENT_CATEGORY;
+  return financeCategoryFor(merchant);
 }
 
 /**
@@ -151,12 +177,13 @@ export function builtInCategoryFor(merchant: string): CategoryType | null {
 export function resolveCategory(
   rules: CategoryRule[],
   merchant: string,
-  accountId?: string
+  accountId?: string,
+  isIncome = false
 ): CategoryType | null {
   const confirmed = pickRule(userRulesOnly(rules), merchant, accountId);
   if (confirmed) return confirmed.category;
 
-  const builtIn = builtInCategoryFor(merchant);
+  const builtIn = builtInCategoryFor(merchant, isIncome);
   if (builtIn) return builtIn;
 
   return pickRule(rules, merchant, accountId)?.category ?? null;

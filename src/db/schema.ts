@@ -1,4 +1,5 @@
 import type { Database } from "sql.js";
+import { FINANCE_KEYWORDS } from "../constants/categories";
 
 /**
  * Schema version of the on-device database.
@@ -15,7 +16,7 @@ import type { Database } from "sql.js";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export interface Migration {
   version: number;
@@ -366,6 +367,56 @@ export const MIGRATIONS: Migration[] = [
       );
     },
   },
+
+  {
+    version: 6,
+    description: "금융/보험을 보험·대출·기타 금융으로 분리",
+    up: (db) => {
+      db.run(
+        `INSERT OR IGNORE INTO categories (id, name, type, color, is_default) VALUES
+           ('cat_insurance', '보험', 'FIXED', '#0D9488', 1),
+           ('cat_loan', '대출', 'FIXED', '#7C3AED', 1),
+           ('cat_finance_etc', '기타 금융', 'FIXED', '#4F46E5', 1)`
+      );
+
+      /*
+        Existing rows carry the old name, and the line itself usually says
+        which of the three it became. The keyword lists are the same ones the
+        app classifies with from now on, so a row lands where a fresh import
+        of it would.
+      */
+      for (const { category, words } of FINANCE_KEYWORDS) {
+        const clauses = words.map(() => "merchant LIKE ?").join(" OR ");
+        db.run(
+          `UPDATE transactions SET category = ?
+            WHERE category = '금융/보험' AND (${clauses})`,
+          [category, ...words.map((word) => `%${word}%`)]
+        );
+      }
+      // Whatever the words could not place is financial traffic all the same
+      db.run("UPDATE transactions SET category = '기타 금융' WHERE category = '금융/보험'");
+
+      // Standing rules are matched on their pattern, the same way
+      for (const { category, words } of FINANCE_KEYWORDS) {
+        const clauses = words.map(() => "pattern LIKE ?").join(" OR ");
+        db.run(
+          `UPDATE category_rules SET category = ?
+            WHERE category = '금융/보험' AND (${clauses})`,
+          [category, ...words.map((word) => `%${word}%`)]
+        );
+      }
+      db.run("UPDATE category_rules SET category = '기타 금융' WHERE category = '금융/보험'");
+
+      /*
+        A budget line cannot be split — one figure covered all three. It
+        carries over to 기타 금융, and the user can move the amounts across
+        the new categories from the budget screen.
+      */
+      db.run("UPDATE budgets SET category = '기타 금융' WHERE category = '금융/보험'");
+
+      db.run("DELETE FROM categories WHERE name = '금융/보험'");
+    },
+  },
 ];
 
 /**
@@ -424,7 +475,9 @@ export const DEFAULT_CATEGORIES = [
   { name: "쇼핑", type: "VARIABLE", color: "#EC4899" },
   { name: "문화/여가", type: "VARIABLE", color: "#10B981" },
   { name: "생활/의료", type: "VARIABLE", color: "#14B8A6" },
-  { name: "금융/보험", type: "FIXED", color: "#4F46E5" },
+  { name: "보험", type: "FIXED", color: "#0D9488" },
+  { name: "대출", type: "FIXED", color: "#7C3AED" },
+  { name: "기타 금융", type: "FIXED", color: "#4F46E5" },
   { name: "카드대금", type: "VARIABLE", color: "#6366F1" },
   { name: "급여", type: "INCOME", color: "#059669" },
   { name: "기타수입", type: "INCOME", color: "#10B981" },
@@ -489,7 +542,7 @@ export const SAMPLE_TRANSACTIONS = [
   { id: "tx-10", date: "2026-09-05", time: "16:00", type: "EXPENSE", expenseType: "VARIABLE", category: "쇼핑", merchant: "쿠팡 로켓배송", amount: 48500, paymentMethod: "신한카드 Mr.Life", accountId: "acc-4", memo: "생필품 구매" },
   { id: "tx-11", date: "2026-09-06", time: "13:30", type: "EXPENSE", expenseType: "VARIABLE", category: "식비", merchant: "이마트 역삼점", amount: 89000, paymentMethod: "신한카드 Mr.Life", accountId: "acc-4", memo: "주말 장보기" },
   { id: "tx-12", date: "2026-09-06", time: "23:10", type: "EXPENSE", expenseType: "VARIABLE", category: "교통", merchant: "카카오T 택시", amount: 18400, paymentMethod: "현대카드 M", accountId: "acc-3", memo: "심야 귀가 택시" },
-  { id: "tx-13", date: "2026-09-07", time: "09:00", type: "EXPENSE", expenseType: "FIXED", category: "금융/보험", merchant: "삼성화재 실비보험", amount: 78000, paymentMethod: "계좌자동이체", accountId: "acc-1", memo: "실손의료비", isFixedRecurring: true, recurringDay: 7 },
+  { id: "tx-13", date: "2026-09-07", time: "09:00", type: "EXPENSE", expenseType: "FIXED", category: "보험", merchant: "삼성화재 실비보험", amount: 78000, paymentMethod: "계좌자동이체", accountId: "acc-1", memo: "실손의료비", isFixedRecurring: true, recurringDay: 7 },
   { id: "tx-14", date: "2026-09-07", time: "18:30", type: "EXPENSE", expenseType: "VARIABLE", category: "식비", merchant: "배달의민족 (초밥)", amount: 36000, paymentMethod: "현대카드 M", accountId: "acc-3", memo: "저녁 배달 식사" },
   { id: "tx-15", date: "2026-09-08", time: "08:15", type: "EXPENSE", expenseType: "VARIABLE", category: "카페/간식", merchant: "메가커피", amount: 2000, paymentMethod: "신한카드 Mr.Life", accountId: "acc-4", memo: "아침 커피" },
 ];
