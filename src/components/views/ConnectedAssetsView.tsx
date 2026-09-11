@@ -180,7 +180,7 @@ export const ConnectedAssetsView: React.FC<{
               연동된 자산 (카드 & 통장)
             </h2>
             <p className="text-[11px] text-slate-500">
-              카드·통장 내역을 CSV로 가져와 카드별로 관리합니다
+              카드·통장 내역을 엑셀·CSV로 가져와 카드별로 관리합니다
             </p>
           </div>
 
@@ -207,7 +207,7 @@ export const ConnectedAssetsView: React.FC<{
             <span className="text-left min-w-0">
               <span className="block text-xs font-bold">카드내역 · 통장내역 가져오기</span>
               <span className="block text-[10px] text-slate-400">
-                은행·카드사에서 받은 CSV 파일을 그대로 올리세요
+                은행·카드사에서 받은 .xls · .xlsx · .csv 파일을 올리세요
               </span>
             </span>
           </span>

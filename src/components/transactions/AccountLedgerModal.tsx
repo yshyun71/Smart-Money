@@ -341,7 +341,7 @@ export const AccountLedgerModal: React.FC<{
             className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>CSV 가져오기</span>
+            <span>엑셀·CSV 가져오기</span>
           </button>
           <button
             type="button"
@@ -447,7 +447,7 @@ export const AccountLedgerModal: React.FC<{
             </div>
             {!query && (
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                CSV로 가져오거나 직접 추가해보세요.
+                엑셀·CSV로 가져오거나 직접 추가해보세요.
               </p>
             )}
           </div>

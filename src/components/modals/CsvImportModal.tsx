@@ -313,17 +313,24 @@ export const CsvImportModal: React.FC<{
                   : "border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/40 cursor-pointer"
               }`}
             >
-              <Upload className="w-7 h-7 mx-auto text-slate-400 mb-2" />
-              <div className="text-xs font-bold text-slate-800">CSV 파일 선택</div>
+              {isReading ? (
+                <Loader2 className="w-7 h-7 mx-auto text-slate-400 mb-2 animate-spin" />
+              ) : (
+                <Upload className="w-7 h-7 mx-auto text-slate-400 mb-2" />
+              )}
+              <div className="text-xs font-bold text-slate-800">
+                {isReading ? "파일 읽는 중..." : "엑셀 · CSV 파일 선택"}
+              </div>
               <div className="text-[10px] text-slate-400 mt-1 leading-relaxed">
                 은행·카드사 홈페이지에서 내려받은
                 <br />
-                거래내역 파일을 그대로 올리세요
+                <strong className="text-slate-500">.xls · .xlsx · .csv</strong> 파일을 그대로
+                올리세요
               </div>
               <input
                 type="file"
-                accept=".csv,.txt,text/csv"
-                disabled={accounts.length === 0}
+                accept=".csv,.txt,.xls,.xlsx,.xlsm,.xlsb,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                disabled={accounts.length === 0 || isReading}
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
