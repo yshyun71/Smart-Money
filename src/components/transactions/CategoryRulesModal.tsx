@@ -131,30 +131,37 @@ export const CategoryRulesModal: React.FC<{
     [accountEntries, rules, accountId]
   );
 
-  /** The categories those entries would move *to*, and how many each takes. */
-  const pendingByCategory = useMemo(() => {
+  /**
+   * Every registered category, with how many entries would move into it.
+   *
+   * The whole list is offered rather than only the categories with something
+   * waiting: the choice is "which categories may this touch", and an answer
+   * of none is worth seeing spelled out next to the others. Categories with
+   * entries waiting are listed first.
+   */
+  const applyChoices = useMemo(() => {
     const counts = new Map<CategoryType, number>();
     for (const tx of pending) {
       counts.set(tx.category, (counts.get(tx.category) || 0) + 1);
     }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  }, [pending]);
+
+    // A rule may point at a category that is no longer on the list
+    const names: CategoryType[] = [...categories];
+    for (const name of counts.keys()) {
+      if (!names.includes(name)) names.push(name);
+    }
+
+    return names
+      .map((category) => ({ category, count: counts.get(category) || 0 }))
+      .sort((a, b) => b.count - a.count);
+  }, [pending, categories]);
 
   const openApply = () => {
     setNotice(null);
     setIsAdding(false);
     setEditingId(null);
-
-    if (pending.length === 0) {
-      setNotice({
-        ok: true,
-        text: `이 계좌의 ${accountEntries.length}건은 이미 모두 규칙에 맞게 분류되어 있습니다.`,
-      });
-      return;
-    }
-
     // Everything on by default: the usual intent is to apply the lot
-    setApplyTargets(new Set(pendingByCategory.map(([category]) => category)));
+    setApplyTargets(new Set(applyChoices.map((choice) => choice.category)));
   };
 
   const toggleTarget = (category: CategoryType) => {
@@ -169,14 +176,14 @@ export const CategoryRulesModal: React.FC<{
 
   const allTargetsChosen =
     applyTargets !== null &&
-    pendingByCategory.length > 0 &&
-    pendingByCategory.every(([category]) => applyTargets.has(category));
+    applyChoices.length > 0 &&
+    applyChoices.every((choice) => applyTargets.has(choice.category));
 
   const toggleAllTargets = () => {
     setApplyTargets(
       allTargetsChosen
         ? new Set()
-        : new Set(pendingByCategory.map(([category]) => category))
+        : new Set(applyChoices.map((choice) => choice.category))
     );
   };
 
@@ -403,8 +410,9 @@ export const CategoryRulesModal: React.FC<{
                 적용할 카테고리 선택
               </div>
               <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
-                이 계좌 {accountEntries.length}건 중 규칙과 다르게 분류된{" "}
-                {pending.length}건입니다. 체크한 카테고리로 바뀌는 내역만 적용됩니다.
+                이 계좌 {accountEntries.length}건 중 규칙과 다르게 분류된 것은{" "}
+                <strong>{pending.length}건</strong>입니다. 체크한 카테고리로 바뀌는 내역만
+                적용됩니다.
               </p>
             </div>
 
@@ -421,8 +429,8 @@ export const CategoryRulesModal: React.FC<{
               <span>전체 선택</span>
             </button>
 
-            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden bg-white">
-              {pendingByCategory.map(([category, count]) => {
+            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden bg-white max-h-64 overflow-y-auto">
+              {applyChoices.map(({ category, count }) => {
                 const isChecked = applyTargets.has(category);
                 return (
                   <button
@@ -439,11 +447,21 @@ export const CategoryRulesModal: React.FC<{
                       ) : (
                         <Square className="w-4 h-4 text-slate-300 shrink-0" />
                       )}
-                      <span className="text-[11px] font-bold text-slate-800 truncate">
+                      <span
+                        className={`text-[11px] font-bold truncate ${
+                          count > 0 ? "text-slate-800" : "text-slate-400"
+                        }`}
+                      >
                         {category}
                       </span>
                     </span>
-                    <span className="text-[10px] text-slate-400 shrink-0">{count}건</span>
+                    <span
+                      className={`text-[10px] shrink-0 ${
+                        count > 0 ? "font-bold text-indigo-700" : "text-slate-300"
+                      }`}
+                    >
+                      {count}건
+                    </span>
                   </button>
                 );
               })}
@@ -465,7 +483,11 @@ export const CategoryRulesModal: React.FC<{
               >
                 <Wand2 className="w-3.5 h-3.5" />
                 <span>
-                  {chosen.length > 0 ? `${chosen.length}건 적용` : "선택된 항목 없음"}
+                  {chosen.length > 0
+                    ? `${chosen.length}건 적용`
+                    : pending.length === 0
+                    ? "변경할 내역 없음"
+                    : "선택된 항목 없음"}
                 </span>
               </button>
             </div>
