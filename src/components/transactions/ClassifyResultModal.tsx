@@ -118,7 +118,13 @@ export const ClassifyResultModal: React.FC<{
               )}
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-bold text-slate-900">AI 자동 분류 완료</h3>
+              <h3 className="text-sm font-bold text-slate-900">
+                {summary.classified === 0
+                  ? "AI 자동 분류 실패"
+                  : summary.failed > 0
+                  ? "AI 자동 분류 일부 완료"
+                  : "AI 자동 분류 완료"}
+              </h3>
               <p className="text-[10px] text-slate-400 truncate">
                 {summary.provider ? `${summary.provider} · ` : ""}
                 선택 {withCommas(summary.requested)}건 중 {withCommas(summary.classified)}건 처리
@@ -188,9 +194,17 @@ export const ClassifyResultModal: React.FC<{
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
             <div className="min-w-0">
               <div className="font-bold">{withCommas(summary.failed)}건은 처리하지 못했습니다</div>
-              <p className="mt-0.5 leading-relaxed">
-                {summary.error || "일시적인 오류"} — 해당 항목은 선택 상태로 남아 있으니 잠시 후
-                [AI 자동 분류]를 다시 누르면 남은 것만 처리됩니다.
+              <p className="mt-0.5 leading-relaxed">{summary.error || "일시적인 오류"}</p>
+              <p className="mt-1 leading-relaxed">
+                해당 항목은 <strong>선택 상태로 남아 있습니다.</strong> 잠시 후 [AI 자동 분류]를 다시
+                누르면 남은 것만 처리됩니다.
+                {/(한도|요청 한도)/.test(summary.error || "") && (
+                  <>
+                    <br />
+                    한 번에 40건씩 나눠 호출하므로, 무료 한도에서는{" "}
+                    <strong>100건 이하로 선택해 여러 번 나눠 실행</strong>하는 편이 안정적입니다.
+                  </>
+                )}
               </p>
             </div>
           </div>

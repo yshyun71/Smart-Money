@@ -266,9 +266,21 @@ export const AccountLedgerModal: React.FC<{
         changes,
       });
     } catch (error) {
-      setNotice({
-        ok: false,
-        text: error instanceof Error ? error.message : "자동 분류에 실패했습니다.",
+      // The popup carries the outcome either way — a run that classified
+      // nothing still needs to say why, and the user may be away from the
+      // screen when it gives up.
+      setSummary({
+        requested: targets.length,
+        classified: 0,
+        toFixed: 0,
+        toVariable: 0,
+        categoryCorrected: 0,
+        paymentDaySet: 0,
+        unchanged: 0,
+        failed: targets.length,
+        error: error instanceof Error ? error.message : "자동 분류에 실패했습니다.",
+        provider: activeProviderLabel(),
+        changes: [],
       });
     } finally {
       setIsClassifying(false);

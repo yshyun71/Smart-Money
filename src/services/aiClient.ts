@@ -317,8 +317,16 @@ export interface ClassifyRun {
   error?: string;
 }
 
-/** A small gap between batches, to avoid walking into a rate limit. */
-const BATCH_GAP_MS = 400;
+/**
+ * Pacing between batches.
+ *
+ * Free tiers cap requests per minute, and seven batches fired back to back is
+ * exactly the shape that trips one. The gap starts small and, once a rate
+ * limit has been seen, widens for the rest of the run — retrying at the
+ * original pace spends the quota that just ran out.
+ */
+const BATCH_GAP_MS = 1500;
+const THROTTLED_GAP_MS = 13000;
 
 /**
  * Classifies in batches, retrying a busy model and keeping whatever came back.
@@ -335,6 +343,7 @@ export async function classifyTransactions(
   let failed = 0;
   let lastError: string | undefined;
   let done = 0;
+  let throttled = false;
 
   for (let start = 0; start < items.length; start += CLASSIFY_BATCH_SIZE) {
     const batch = items.slice(start, start + CLASSIFY_BATCH_SIZE);
@@ -343,26 +352,33 @@ export async function classifyTransactions(
       const batchResults = await withRetry(
         () => classifyBatch(batch),
         RETRY_ATTEMPTS,
-        (waitMs, attempt) =>
+        (waitMs, attempt, rateLimited) => {
+          if (rateLimited) throttled = true;
           onProgress?.({
             done,
             total: items.length,
-            note: `AI 서버가 혼잡합니다. ${Math.round(waitMs / 1000)}초 후 재시도 (${attempt}/${
-              RETRY_ATTEMPTS - 1
-            })`,
-          })
+            note: `${
+              rateLimited ? "요청 한도에 걸려 대기 중" : "AI 서버가 혼잡합니다"
+            }. ${Math.round(waitMs / 1000)}초 후 재시도 (${attempt}/${RETRY_ATTEMPTS - 1})`,
+          });
+        }
       );
       results.push(...batchResults);
     } catch (error) {
       const described = describeAiFailure(error);
       // A bad key, no network, a wrong model name or an exhausted quota will
       // not clear between batches — stop rather than repeating it six times.
+      // The run is still returned, never thrown, so the caller can always show
+      // what happened instead of losing it to an exception.
       if (
         error instanceof MissingApiKeyError ||
         /키|네트워크|한도|모델 이름/.test(described.message)
       ) {
-        if (results.length === 0) throw described;
-        return { results, failed: items.length - results.length, error: described.message };
+        return {
+          results,
+          failed: items.length - results.length,
+          error: described.message,
+        };
       }
       failed += batch.length;
       lastError = described.message;
@@ -372,12 +388,16 @@ export async function classifyTransactions(
     onProgress?.({ done, total: items.length });
 
     if (start + CLASSIFY_BATCH_SIZE < items.length) {
-      await sleep(BATCH_GAP_MS);
+      const gap = throttled ? THROTTLED_GAP_MS : BATCH_GAP_MS;
+      if (throttled) {
+        onProgress?.({
+          done,
+          total: items.length,
+          note: `요청 한도를 피해 ${Math.round(gap / 1000)}초 간격으로 진행 중`,
+        });
+      }
+      await sleep(gap);
     }
-  }
-
-  if (results.length === 0) {
-    throw new Error(lastError || "AI 분류에 실패했습니다.");
   }
 
   return { results, failed, error: lastError };
