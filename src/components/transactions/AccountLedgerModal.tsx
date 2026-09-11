@@ -59,6 +59,15 @@ export const AccountLedgerModal: React.FC<{
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [summary, setSummary] = useState<ClassifySummary | null>(null);
 
+  /*
+    Reset only when the sheet opens.
+
+    This used to share an effect with the Escape listener below, which depends
+    on `onClose` — an inline arrow from the parent, so a new function on every
+    parent render. Saving the classified rows re-renders the parent, the effect
+    re-ran, and it cleared the result summary a moment after it appeared and
+    dropped the selection meant to survive for a retry.
+  */
   useEffect(() => {
     if (!isOpen) return;
     setQuery("");
@@ -66,9 +75,16 @@ export const AccountLedgerModal: React.FC<{
     setNotice(null);
     setProgress(null);
     setSummary(null);
+  }, [isOpen]);
+
+  // Escape to close, and no scrolling behind the sheet
+  useEffect(() => {
+    if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // While the result summary is on top, Escape belongs to it alone —
+      // otherwise one press would dismiss this sheet out from under it.
+      if (e.key === "Escape" && !summary) onClose();
     };
 
     const originalOverflow = document.body.style.overflow;
@@ -79,7 +95,7 @@ export const AccountLedgerModal: React.FC<{
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, summary]);
 
   const account = accounts.find((a) => a.id === accountId);
 
