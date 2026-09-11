@@ -17,6 +17,8 @@ import {
   Wand2,
   CheckCircle2,
   AlertCircle,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 
 /** Counts how many descriptions a pattern covers, using the same loose match. */
@@ -61,6 +63,8 @@ export const CategoryRulesModal: React.FC<{
   const [draftCategory, setDraftCategory] = useState<CategoryType>("식비");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  /** Which categories a bulk apply may move entries into. null = not asking. */
+  const [applyTargets, setApplyTargets] = useState<Set<CategoryType> | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -70,6 +74,7 @@ export const CategoryRulesModal: React.FC<{
     setDraftCategory("식비");
     setError(null);
     setNotice(null);
+    setApplyTargets(null);
   }, [isOpen]);
 
   useEffect(() => {
@@ -107,43 +112,86 @@ export const CategoryRulesModal: React.FC<{
   );
 
   /**
-   * Everything already recorded on this account, refiled by the current
-   * rules — the same order of precedence used when an entry arrives, so a
-   * rule added after the fact reaches the entries it was written for.
+   * Everything already recorded on this account that the current rules would
+   * file somewhere else — the same order of precedence used when an entry
+   * arrives, so a rule written after the fact reaches what it was written for.
    */
-  const handleApplyAll = () => {
+  const pending = useMemo(
+    () =>
+      accountEntries.flatMap((tx) => {
+        const decided = resolveCategory(
+          rules,
+          tx.merchant,
+          accountId,
+          tx.type === "INCOME"
+        );
+        if (!decided || decided === tx.category) return [];
+        return [{ ...tx, category: decided }];
+      }),
+    [accountEntries, rules, accountId]
+  );
+
+  /** The categories those entries would move *to*, and how many each takes. */
+  const pendingByCategory = useMemo(() => {
+    const counts = new Map<CategoryType, number>();
+    for (const tx of pending) {
+      counts.set(tx.category, (counts.get(tx.category) || 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [pending]);
+
+  const openApply = () => {
     setNotice(null);
+    setIsAdding(false);
+    setEditingId(null);
 
-    const updates = accountEntries.flatMap((tx) => {
-      const decided = resolveCategory(
-        rules,
-        tx.merchant,
-        accountId,
-        tx.type === "INCOME"
-      );
-      if (!decided || decided === tx.category) return [];
-      return [{ ...tx, category: decided }];
-    });
-
-    if (updates.length === 0) {
+    if (pending.length === 0) {
       setNotice({
         ok: true,
-        text: `이 계좌의 ${accountEntries.length}건 모두 이미 규칙에 맞게 분류되어 있습니다.`,
+        text: `이 계좌의 ${accountEntries.length}건은 이미 모두 규칙에 맞게 분류되어 있습니다.`,
       });
       return;
     }
 
-    if (
-      !confirm(
-        `이 계좌 ${accountEntries.length}건 중 ${updates.length}건의 카테고리를 규칙에 맞게 변경합니다. 계속할까요?`
-      )
-    ) {
-      return;
-    }
+    // Everything on by default: the usual intent is to apply the lot
+    setApplyTargets(new Set(pendingByCategory.map(([category]) => category)));
+  };
+
+  const toggleTarget = (category: CategoryType) => {
+    setApplyTargets((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  };
+
+  const allTargetsChosen =
+    applyTargets !== null &&
+    pendingByCategory.length > 0 &&
+    pendingByCategory.every(([category]) => applyTargets.has(category));
+
+  const toggleAllTargets = () => {
+    setApplyTargets(
+      allTargetsChosen
+        ? new Set()
+        : new Set(pendingByCategory.map(([category]) => category))
+    );
+  };
+
+  /** Only the entries heading for a category the user ticked. */
+  const chosen = applyTargets
+    ? pending.filter((tx) => applyTargets.has(tx.category))
+    : [];
+
+  const runApply = () => {
+    if (chosen.length === 0) return;
 
     try {
-      updateTransactions(updates);
-      setNotice({ ok: true, text: `${updates.length}건의 카테고리를 변경했습니다.` });
+      updateTransactions(chosen);
+      setNotice({ ok: true, text: `${chosen.length}건의 카테고리를 변경했습니다.` });
+      setApplyTargets(null);
     } catch {
       setNotice({ ok: false, text: "일괄 적용에 실패했습니다. 잠시 후 다시 시도해주세요." });
     }
@@ -167,6 +215,7 @@ export const CategoryRulesModal: React.FC<{
   const startAdd = () => {
     setIsAdding(true);
     setEditingId(null);
+    setApplyTargets(null);
     setDraftPattern("");
     setDraftCategory("식비");
     setError(null);
@@ -175,6 +224,7 @@ export const CategoryRulesModal: React.FC<{
   const startEdit = (rule: CategoryRule) => {
     setIsAdding(false);
     setEditingId(rule.id);
+    setApplyTargets(null);
     setDraftPattern(rule.pattern);
     setDraftCategory(rule.category);
     setError(null);
@@ -334,7 +384,7 @@ export const CategoryRulesModal: React.FC<{
             </button>
             <button
               type="button"
-              onClick={handleApplyAll}
+              onClick={openApply}
               disabled={accountEntries.length === 0}
               title="이 계좌에 등록된 모든 내역에 규칙을 다시 적용합니다"
               className="py-2.5 px-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 disabled:opacity-40 cursor-pointer"
@@ -342,6 +392,83 @@ export const CategoryRulesModal: React.FC<{
               <Wand2 className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">카테고리 일괄 적용</span>
             </button>
+          </div>
+        )}
+
+        {/* Which categories this bulk apply is allowed to move entries into */}
+        {applyTargets !== null && (
+          <div className="rounded-2xl border border-indigo-300 bg-indigo-50/50 p-3 space-y-2.5">
+            <div>
+              <div className="text-[11px] font-bold text-slate-800">
+                적용할 카테고리 선택
+              </div>
+              <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                이 계좌 {accountEntries.length}건 중 규칙과 다르게 분류된{" "}
+                {pending.length}건입니다. 체크한 카테고리로 바뀌는 내역만 적용됩니다.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleAllTargets}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 hover:text-slate-900 transition cursor-pointer"
+            >
+              {allTargetsChosen ? (
+                <CheckSquare className="w-4 h-4 text-indigo-600" />
+              ) : (
+                <Square className="w-4 h-4 text-slate-400" />
+              )}
+              <span>전체 선택</span>
+            </button>
+
+            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden bg-white">
+              {pendingByCategory.map(([category, count]) => {
+                const isChecked = applyTargets.has(category);
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    onClick={() => toggleTarget(category)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left transition cursor-pointer ${
+                      isChecked ? "bg-indigo-50/60" : "bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {isChecked ? (
+                        <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
+                      ) : (
+                        <Square className="w-4 h-4 text-slate-300 shrink-0" />
+                      )}
+                      <span className="text-[11px] font-bold text-slate-800 truncate">
+                        {category}
+                      </span>
+                    </span>
+                    <span className="text-[10px] text-slate-400 shrink-0">{count}건</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setApplyTargets(null)}
+                className="flex-1 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[11px] transition cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={runApply}
+                disabled={chosen.length === 0}
+                className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>
+                  {chosen.length > 0 ? `${chosen.length}건 적용` : "선택된 항목 없음"}
+                </span>
+              </button>
+            </div>
           </div>
         )}
 
