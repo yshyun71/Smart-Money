@@ -1,4 +1,5 @@
 import type { AISpendingAnalysis, Transaction } from "../types/finance";
+import { BUILT_IN_CATEGORIES } from "../constants/categories";
 import {
   describeAiFailure,
   generateJson,
@@ -50,10 +51,7 @@ function object(
   };
 }
 
-const CATEGORY_NAMES = [
-  "식비", "카페/간식", "주거/통신", "구독/미디어", "교통", "쇼핑",
-  "문화/여가", "생활/의료", "금융/보험", "급여", "기타수입", "기타지출",
-];
+const CATEGORY_NAMES: string[] = [...BUILT_IN_CATEGORIES];
 
 // ---------------------------------------------------------------------------
 // 1. Spending analysis & savings coaching
@@ -239,27 +237,33 @@ export interface ClassifyResult {
   reason?: string;
 }
 
-const CLASSIFY_SCHEMA = object({
-  results: {
-    type: "array",
-    items: object({
-      index: int("입력의 index 값"),
-      expenseType: { type: "string", enum: ["FIXED", "VARIABLE", "INCOME"] },
-      category: { type: "string", enum: CATEGORY_NAMES },
-      reason: str("한 줄 근거"),
-    }),
-  },
-});
+/** Built per run, since the user's own categories belong in the list too. */
+function classifySchema(categories: string[]) {
+  return object({
+    results: {
+      type: "array",
+      items: object({
+        index: int("입력의 index 값"),
+        expenseType: { type: "string", enum: ["FIXED", "VARIABLE", "INCOME"] },
+        category: { type: "string", enum: categories },
+        reason: str("한 줄 근거"),
+      }),
+    },
+  });
+}
 
 /** Kept small enough that one response stays well inside the output limit. */
 const CLASSIFY_BATCH_SIZE = 40;
 
-async function classifyBatch(items: ClassifyItem[]): Promise<ClassifyResult[]> {
+async function classifyBatch(
+  items: ClassifyItem[],
+  categories: string[]
+): Promise<ClassifyResult[]> {
   const prompt = `
 다음은 사용자의 가계부 거래 내역입니다. 각 항목의 **지출구분(고정비/변동비)**과 **카테고리**를 분류하세요.
 
 [카테고리 목록 — 반드시 이 중 하나]
-${CATEGORY_NAMES.join(", ")}
+${categories.join(", ")}
 
 [지출구분 판단 규칙]
 1. 수입(isIncome=true)은 반드시 expenseType="INCOME".
@@ -271,6 +275,9 @@ ${CATEGORY_NAMES.join(", ")}
      (같은 가맹점/내역명이 서로 다른 3개월 이상에서, 매월 거의 같은 날짜에 반복됨. 공휴일·주말로 결제일이 밀리는 경우와 월말 날짜 차이는 이미 보정되어 있습니다.)
    - recurrenceQualifies=false 이면 변동비로 분류합니다.
 4. 이미 지정된 currentExpenseType이 규칙과 맞으면 유지해도 됩니다.
+
+[카테고리 판단 규칙]
+- 가맹점/내역명이 카드사 이름과 "카드"로 이어지는 형태(예: KB카드, 우리카드출금, 삼성카드결재, 롯데카드1234, "1234 신한카드")는 카드 결제대금 출금이므로 반드시 category="카드대금" 입니다.
 
 [분류 대상]
 ${JSON.stringify(
@@ -294,7 +301,7 @@ ${JSON.stringify(
     system:
       "한국 가계부 거래 내역을 고정비/변동비와 카테고리로 정확히 분류하는 분류기입니다. 제공된 반복 결제 근거를 우선 신뢰하고, 추측을 덧붙이지 말고 JSON만 출력하세요.",
     prompt,
-    schema: CLASSIFY_SCHEMA,
+    schema: classifySchema(categories),
     schemaName: "transaction_classification",
     bulk: true,
   });
@@ -337,7 +344,9 @@ const THROTTLED_GAP_MS = 13000;
  */
 export async function classifyTransactions(
   items: ClassifyItem[],
-  onProgress?: (progress: ClassifyProgress) => void
+  onProgress?: (progress: ClassifyProgress) => void,
+  /** Defaults to the shipped list; pass the user's own to include theirs. */
+  categories: string[] = CATEGORY_NAMES
 ): Promise<ClassifyRun> {
   const results: ClassifyResult[] = [];
   let failed = 0;
@@ -350,7 +359,7 @@ export async function classifyTransactions(
 
     try {
       const batchResults = await withRetry(
-        () => classifyBatch(batch),
+        () => classifyBatch(batch, categories),
         RETRY_ATTEMPTS,
         (waitMs, attempt, rateLimited) => {
           if (rateLimited) throttled = true;

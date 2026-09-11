@@ -40,6 +40,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   "생활/의료": "#10B981", // emerald
   "구독/미디어": "#3B82F6", // blue
   "금융/보험": "#64748B", // slate
+  "카드대금": "#6366F1", // indigo
   "기타지출": "#94A3B8", // gray
 };
 

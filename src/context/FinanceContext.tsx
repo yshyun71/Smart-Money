@@ -12,7 +12,11 @@ import {
   AISpendingAnalysis,
   MonthlyBudgetConfig,
   CategoryBudgetStatus,
+  CategoryRule,
+  CategoryType,
   BudgetAlert,
+  RuleSource,
+  ValueSource,
 } from "../types/finance";
 import {
   exportDatabaseBytes,
@@ -23,6 +27,8 @@ import {
 import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
+import { resolveCategory } from "../services/categoryRules";
+import { BUILT_IN_CATEGORIES } from "../constants/categories";
 
 interface MonthlyHistoricalItem {
   month: string;
@@ -90,6 +96,41 @@ interface FinanceContextType {
   importTransactions: (inserts: Omit<Transaction, "id">[], updates: Transaction[]) => void;
   addAccount: (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => void;
   deleteAccount: (id: string) => void;
+  /** Records a balance together with the moment it is true as of. */
+  setAccountBalance: (
+    id: string,
+    balance: number,
+    asOf: string,
+    source?: ValueSource
+  ) => void;
+
+  /** Every category on offer: the built-in list plus the user's own. */
+  categories: CategoryType[];
+  /** Registers a category the user typed in. Existing names are ignored. */
+  addCategory: (name: string) => void;
+  deleteCategory: (name: string) => void;
+
+  // Standing category rules
+  categoryRules: CategoryRule[];
+  /** The category a standing rule assigns to a description, if any. */
+  categoryForMerchant: (merchant: string, accountId: string) => CategoryType | null;
+  saveCategoryRule: (rule: {
+    id?: string;
+    accountId: string;
+    pattern: string;
+    category: CategoryType;
+    source: RuleSource;
+  }) => void;
+  saveCategoryRules: (
+    rules: {
+      accountId: string;
+      pattern: string;
+      category: CategoryType;
+      source: RuleSource;
+    }[]
+  ) => void;
+  deleteCategoryRule: (id: string) => void;
+  setCategoryRuleSource: (id: string, source: RuleSource) => void;
   toggleFixedType: (id: string) => void;
   toggleRecommendation: (id: string) => void;
   runAISpendingAnalysis: () => Promise<void>;
@@ -153,6 +194,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isDbReady, setIsDbReady] = useState(false);
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [categoryRules, setCategoryRules] = useState<CategoryRule[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [aiAnalysis, setAiAnalysis] = useState<AISpendingAnalysis | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
   const [budgetConfig, setBudgetConfig] = useState<MonthlyBudgetConfig>(() =>
@@ -203,6 +246,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!currentUserId) {
       setAccounts([]);
       setTransactions([]);
+      setCategoryRules([]);
+      setCustomCategories([]);
       setBudgetConfig(emptyBudgetConfig(selectedMonth));
       setAiAnalysis(null);
       setDbStats(null);
@@ -211,6 +256,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setAccounts(repo.listAccounts());
     setTransactions(repo.listTransactions());
+    setCategoryRules(repo.listCategoryRules());
+    setCustomCategories(repo.listCustomCategories());
     setBudgetConfig(repo.getBudgetConfig(selectedMonth));
     setAiAnalysis(repo.getAnalysis(selectedMonth));
     setDbStats(readStats());
@@ -568,6 +615,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const newId = (prefix: string) =>
     `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
 
+  /**
+   * A standing rule decides the category of anything arriving later that
+   * matches it — whether typed in by hand or read out of a statement.
+   */
+  const withRule = <T extends { merchant: string; accountId: string; category: CategoryType }>(
+    tx: T
+  ): T => {
+    const decided = resolveCategory(categoryRules, tx.merchant, tx.accountId);
+    return decided ? { ...tx, category: decided } : tx;
+  };
+
+  /*
+    No standing rule is applied here: this is the one entry point where the
+    user picked the category on the form in front of them, and the form
+    already offers the matching rule as a suggestion before saving.
+  */
   const addTransaction = (tx: Omit<Transaction, "id">) => {
     const newTx: Transaction = { ...tx, id: newId("tx") };
     try {
@@ -582,7 +645,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const addTransactions = (txs: Omit<Transaction, "id">[]) => {
     const newItems: Transaction[] = txs.map((tx, idx) => ({
-      ...tx,
+      ...withRule(tx),
       id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
     }));
     try {
@@ -632,14 +695,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     updates: Transaction[]
   ) => {
     const withIds: Transaction[] = inserts.map((tx, idx) => ({
-      ...tx,
+      ...withRule(tx),
       id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
     }));
+    const rewritten = updates.map(withRule);
     try {
-      repo.applyImport(withIds, updates);
+      repo.applyImport(withIds, rewritten);
       setTransactions((prev) => {
         const replaced = prev.map(
-          (t) => updates.find((u) => u.id === t.id) ?? t
+          (t) => rewritten.find((u) => u.id === t.id) ?? t
         );
         return [...withIds, ...replaced].sort((a, b) =>
           `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)
@@ -674,9 +738,122 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       repo.deleteAccount(id);
       setAccounts((prev) => prev.filter((a) => a.id !== id));
+      setCategoryRules(repo.listCategoryRules());
       syncStats();
     } catch (error) {
       console.error("계좌를 삭제하지 못했습니다:", error);
+    }
+  };
+
+  const setAccountBalance = (
+    id: string,
+    balance: number,
+    asOf: string,
+    source: ValueSource = "USER"
+  ) => {
+    try {
+      repo.updateAccountBalance(id, balance, asOf, source);
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.id === id
+            ? { ...a, balanceOrBilled: balance, balanceAsOf: asOf, balanceSource: source }
+            : a
+        )
+      );
+      syncStats();
+    } catch (error) {
+      console.error("잔액을 수정하지 못했습니다:", error);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Standing category rules
+  // -------------------------------------------------------------------------
+
+  const categoryForMerchant = useCallback(
+    (merchant: string, accountId: string): CategoryType | null =>
+      resolveCategory(categoryRules, merchant, accountId),
+    [categoryRules]
+  );
+
+  // -------------------------------------------------------------------------
+  // Categories
+  // -------------------------------------------------------------------------
+
+  /** The shipped list first, then whatever the user added, in the order added. */
+  const categories = useMemo<CategoryType[]>(() => {
+    const seen = new Set<string>(BUILT_IN_CATEGORIES);
+    const extra = customCategories.filter((name) => name && !seen.has(name));
+    return [...BUILT_IN_CATEGORIES, ...extra];
+  }, [customCategories]);
+
+  const addCategory = (name: string) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed || categories.includes(trimmed)) return;
+    try {
+      repo.addCustomCategory(trimmed);
+      setCustomCategories(repo.listCustomCategories());
+    } catch (error) {
+      console.error("카테고리를 추가하지 못했습니다:", error);
+    }
+  };
+
+  const deleteCategory = (name: string) => {
+    try {
+      repo.deleteCustomCategory(name);
+      setCustomCategories((prev) => prev.filter((item) => item !== name));
+    } catch (error) {
+      console.error("카테고리를 삭제하지 못했습니다:", error);
+    }
+  };
+
+  const saveCategoryRule = (rule: {
+    id?: string;
+    accountId: string;
+    pattern: string;
+    category: CategoryType;
+    source: RuleSource;
+  }) => {
+    try {
+      repo.saveCategoryRule(rule);
+      setCategoryRules(repo.listCategoryRules());
+    } catch (error) {
+      console.error("카테고리 규칙을 저장하지 못했습니다:", error);
+    }
+  };
+
+  const saveCategoryRules = (
+    rules: {
+      accountId: string;
+      pattern: string;
+      category: CategoryType;
+      source: RuleSource;
+    }[]
+  ) => {
+    if (rules.length === 0) return;
+    try {
+      repo.saveCategoryRules(rules);
+      setCategoryRules(repo.listCategoryRules());
+    } catch (error) {
+      console.error("카테고리 규칙을 일괄 저장하지 못했습니다:", error);
+    }
+  };
+
+  const deleteCategoryRule = (id: string) => {
+    try {
+      repo.deleteCategoryRule(id);
+      setCategoryRules((prev) => prev.filter((rule) => rule.id !== id));
+    } catch (error) {
+      console.error("카테고리 규칙을 삭제하지 못했습니다:", error);
+    }
+  };
+
+  const setCategoryRuleSource = (id: string, source: RuleSource) => {
+    try {
+      repo.setCategoryRuleSource(id, source);
+      setCategoryRules(repo.listCategoryRules());
+    } catch (error) {
+      console.error("등록 구분을 변경하지 못했습니다:", error);
     }
   };
 
@@ -863,6 +1040,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         importTransactions,
         addAccount,
         deleteAccount,
+        setAccountBalance,
+        categories,
+        addCategory,
+        deleteCategory,
+        categoryRules,
+        categoryForMerchant,
+        saveCategoryRule,
+        saveCategoryRules,
+        deleteCategoryRule,
+        setCategoryRuleSource,
         toggleFixedType,
         toggleRecommendation,
         runAISpendingAnalysis,

@@ -3,22 +3,20 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput } from "../../utils/format";
 import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
-import { X, Plus, Pin, ShoppingBag, Coins, Save, Trash2 } from "lucide-react";
-
-const CATEGORIES: CategoryType[] = [
-  "식비",
-  "카페/간식",
-  "주거/통신",
-  "구독/미디어",
-  "교통",
-  "쇼핑",
-  "문화/여가",
-  "생활/의료",
-  "금융/보험",
-  "급여",
-  "기타수입",
-  "기타지출",
-];
+import { suggestPattern } from "../../services/categoryRules";
+import { CategorySelect } from "./CategorySelect";
+import {
+  X,
+  Plus,
+  Pin,
+  ShoppingBag,
+  Coins,
+  Save,
+  Trash2,
+  CheckSquare,
+  Square,
+  Tag,
+} from "lucide-react";
 
 export const AddTransactionModal: React.FC<{
   isOpen: boolean;
@@ -28,7 +26,14 @@ export const AddTransactionModal: React.FC<{
   /** Pre-selects the account when adding from an account's own ledger. */
   defaultAccountId?: string;
 }> = ({ isOpen, onClose, editing = null, defaultAccountId }) => {
-  const { addTransaction, updateTransaction, deleteTransaction, accounts } = useFinance();
+  const {
+    addTransaction,
+    updateTransaction,
+    deleteTransaction,
+    accounts,
+    saveCategoryRule,
+    categoryForMerchant,
+  } = useFinance();
 
   const [formType, setFormType] = useState<"VARIABLE" | "FIXED" | "INCOME">(
     "VARIABLE"
@@ -42,6 +47,19 @@ export const AddTransactionModal: React.FC<{
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [recurringDay, setRecurringDay] = useState("5");
   const [memo, setMemo] = useState("");
+
+  /*
+    Changing a category here is a decision about this description, not only
+    about this one row, so the same choice is offered as a standing rule: every
+    later entry with a matching description lands in the same category, and the
+    bulk classifier honours it ahead of whatever the model says.
+  */
+  const [makeRule, setMakeRule] = useState(false);
+  const [rulePattern, setRulePattern] = useState("");
+  const [patternTouched, setPatternTouched] = useState(false);
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  /** The rule that would decide this description, shown as a hint. */
+  const [ruleHint, setRuleHint] = useState<CategoryType | null>(null);
 
   // Load the entry being edited, or start clean, each time the modal opens
   useEffect(() => {
@@ -72,10 +90,45 @@ export const AddTransactionModal: React.FC<{
       setRecurringDay("5");
       setMemo("");
     }
+
+    setMakeRule(false);
+    setPatternTouched(false);
+    setCategoryTouched(false);
+    setRulePattern(suggestPattern(editing ? editing.merchant : ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editing]);
 
+  /*
+    A description already covered by a rule fills the category in on its own,
+    which is what "같은 가맹점이면 같은 카테고리"로 보인다는 뜻 — until the user
+    overrides it on this form, which then wins.
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+    const hit = merchant.trim()
+      ? categoryForMerchant(merchant, selectedAccountId)
+      : null;
+    setRuleHint(hit);
+    if (hit && !editing && !categoryTouched) setCategory(hit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, merchant, selectedAccountId, editing, categoryTouched]);
+
+  // Follow the description until the user writes a pattern of their own
+  useEffect(() => {
+    if (!isOpen || patternTouched) return;
+    setRulePattern(suggestPattern(merchant));
+  }, [isOpen, merchant, patternTouched]);
+
+  // Moving an entry to another category is the moment the rule is worth making
+  useEffect(() => {
+    if (!isOpen || !editing) return;
+    setMakeRule(editing.category !== category);
+  }, [isOpen, editing, category]);
+
   if (!isOpen) return null;
+
+  const categoryChanged = Boolean(editing) && editing!.category !== category;
+  const canOfferRule = merchant.trim() !== "" && Boolean(selectedAccountId);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,6 +163,16 @@ export const AddTransactionModal: React.FC<{
       isFixedRecurring: formType === "FIXED",
       recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
     };
+
+    // Saved first so the entry itself is never overwritten by its own rule
+    if (makeRule && canOfferRule && rulePattern.trim()) {
+      saveCategoryRule({
+        accountId: selectedAccountId,
+        pattern: rulePattern.trim(),
+        category,
+        source: "USER",
+      });
+    }
 
     if (editing) {
       updateTransaction({ ...payload, id: editing.id });
@@ -256,17 +319,71 @@ export const AddTransactionModal: React.FC<{
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               카테고리
             </label>
-            <select
+            <CategorySelect
               value={category}
-              onChange={(e) => setCategory(e.target.value as CategoryType)}
-              className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden bg-white"
-            >
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+              onChange={(next) => {
+                setCategoryTouched(true);
+                setCategory(next);
+              }}
+            />
+
+            {ruleHint && ruleHint !== category && (
+              <p className="text-[10px] text-slate-400 mt-1">
+                등록된 규칙은 이 내역명을 <strong>{ruleHint}</strong>로 봅니다.
+              </p>
+            )}
+
+            {/* Keep this choice for every later entry with the same name */}
+            {canOfferRule && (
+              <div
+                className={`mt-2 rounded-xl border p-2.5 space-y-2 transition ${
+                  makeRule
+                    ? "border-emerald-300 bg-emerald-50/60"
+                    : "border-slate-200 bg-slate-50"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setMakeRule((prev) => !prev)}
+                  className="flex items-start gap-1.5 text-left w-full cursor-pointer"
+                >
+                  {makeRule ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0 mt-px" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-400 shrink-0 mt-px" />
+                  )}
+                  <span className="text-[11px] font-bold text-slate-700 min-w-0">
+                    같은 가맹점 / 내역명은 앞으로도 <strong>{category}</strong>로 분류
+                    {categoryChanged && (
+                      <span className="text-emerald-700"> (카테고리를 변경했습니다)</span>
+                    )}
+                  </span>
+                </button>
+
+                {makeRule && (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <input
+                        type="text"
+                        value={rulePattern}
+                        onChange={(e) => {
+                          setPatternTouched(true);
+                          setRulePattern(e.target.value);
+                        }}
+                        placeholder="예: 코웨이렌탈*"
+                        className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-900 bg-white focus:border-emerald-500 focus:outline-hidden"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">
+                      이 값을 <strong>포함</strong>하면 같은 항목으로 봅니다. <code>*</code>는
+                      임의의 글자를 뜻합니다. 등록 구분은 <strong>사용자</strong>가 되어 AI 자동
+                      분류보다 우선 적용되고, [카테고리 관리]에서 수정·삭제할 수 있습니다.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Account / Card Select */}

@@ -1,4 +1,6 @@
 import type { CategoryType, ExpenseType, Transaction, TransactionType } from "../types/finance";
+import { isCardPayment } from "./categoryRules";
+import { CARD_PAYMENT_CATEGORY } from "../constants/categories";
 
 /**
  * Reading a bank or card statement exported as CSV.
@@ -370,6 +372,10 @@ const CATEGORY_KEYWORDS: { category: CategoryType; words: string[] }[] = [
 ];
 
 export function guessCategory(merchant: string, isIncome: boolean): CategoryType {
+  // A card bill reads like a bank withdrawal and matches nothing else well,
+  // so it is settled before any keyword gets a look in.
+  if (!isIncome && isCardPayment(merchant)) return CARD_PAYMENT_CATEGORY;
+
   const text = merchant.toLowerCase();
   for (const { category, words } of CATEGORY_KEYWORDS) {
     if (words.some((word) => text.includes(word.toLowerCase()))) {

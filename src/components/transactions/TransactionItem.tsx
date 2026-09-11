@@ -12,6 +12,7 @@ import {
   HeartPulse,
   ShieldCheck,
   Coins,
+  CreditCard,
   Receipt,
   Trash2,
   Pin,
@@ -38,6 +39,8 @@ const getCategoryIcon = (category: CategoryType) => {
       return <HeartPulse className="w-4 h-4 text-red-500" />;
     case "금융/보험":
       return <ShieldCheck className="w-4 h-4 text-teal-600" />;
+    case "카드대금":
+      return <CreditCard className="w-4 h-4 text-indigo-600" />;
     case "급여":
     case "기타수입":
       return <Coins className="w-4 h-4 text-emerald-600" />;
@@ -66,6 +69,8 @@ const getCategoryBg = (category: CategoryType) => {
       return "bg-red-50";
     case "금융/보험":
       return "bg-teal-50";
+    case "카드대금":
+      return "bg-indigo-50";
     case "급여":
     case "기타수입":
       return "bg-emerald-50";

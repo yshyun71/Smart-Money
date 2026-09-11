@@ -15,7 +15,7 @@ import type { Database } from "sql.js";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 export interface Migration {
   version: number;
@@ -58,7 +58,64 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "budgets", column: "user_id", type: "TEXT" },
   { table: "budget_configs", column: "user_id", type: "TEXT" },
   { table: "ai_analyses", column: "user_id", type: "TEXT" },
+  { table: "accounts", column: "balance_as_of", type: "TEXT" },
+  { table: "accounts", column: "balance_source", type: "TEXT" },
 ];
+
+/**
+ * Tables a later migration introduced, recreated the same way.
+ *
+ * `CREATE TABLE IF NOT EXISTS` costs nothing when the table is already there,
+ * and covers a device whose version was saved without the table landing.
+ */
+const EXPECTED_TABLES: { table: string; ddl: string }[] = [
+  {
+    table: "custom_categories",
+    ddl: `CREATE TABLE IF NOT EXISTS custom_categories (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'VARIABLE',
+        created_at TEXT NOT NULL,
+        UNIQUE(user_id, name)
+      );`,
+  },
+  {
+    table: "category_rules",
+    ddl: `CREATE TABLE IF NOT EXISTS category_rules (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        category TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'USER',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_category_rules_scope
+        ON category_rules(user_id, account_id);`,
+  },
+];
+
+/** Returns the tables it had to recreate, for logging. */
+export function repairMissingTables(db: Database): string[] {
+  const repaired: string[] = [];
+  for (const { table, ddl } of EXPECTED_TABLES) {
+    try {
+      const stmt = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?");
+      stmt.bind([table]);
+      const exists = stmt.step();
+      stmt.free();
+      if (!exists) {
+        db.run(ddl);
+        repaired.push(table);
+      }
+    } catch (error) {
+      console.error(`[DB] ${table} 복구에 실패했습니다:`, error);
+    }
+  }
+  return repaired;
+}
 
 /** Returns the columns it had to add, for logging. */
 export function repairMissingColumns(db: Database): string[] {
@@ -254,6 +311,61 @@ export const MIGRATIONS: Migration[] = [
       );
     },
   },
+  {
+    version: 4,
+    description: "잔액 기준일시·출처, 가맹점 카테고리 규칙",
+    up: (db) => {
+      addColumn(db, "accounts", "balance_as_of", "TEXT");
+      addColumn(db, "accounts", "balance_source", "TEXT");
+      // Balances entered so far were typed in by hand, as of when the account
+      // was registered — the closest honest reading of an untagged figure.
+      db.run(
+        `UPDATE accounts
+           SET balance_as_of = COALESCE(balance_as_of, created_at),
+               balance_source = COALESCE(balance_source, 'USER')`
+      );
+
+      db.run(`
+        CREATE TABLE IF NOT EXISTS category_rules (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          pattern TEXT NOT NULL,
+          category TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'USER',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_category_rules_scope
+          ON category_rules(user_id, account_id);
+      `);
+    },
+  },
+
+  {
+    version: 5,
+    description: "카드대금 기본 분류, 사용자가 직접 만든 카테고리",
+    up: (db) => {
+      db.run(`
+        CREATE TABLE IF NOT EXISTS custom_categories (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'VARIABLE',
+          created_at TEXT NOT NULL,
+          UNIQUE(user_id, name)
+        );
+      `);
+
+      // The shipped list gained one; a device that already seeded the others
+      // would otherwise never see it.
+      db.run(
+        `INSERT OR IGNORE INTO categories (id, name, type, color, is_default)
+         VALUES ('cat_card_payment', '카드대금', 'VARIABLE', '#6366F1', 1)`
+      );
+    },
+  },
 ];
 
 /**
@@ -313,6 +425,7 @@ export const DEFAULT_CATEGORIES = [
   { name: "문화/여가", type: "VARIABLE", color: "#10B981" },
   { name: "생활/의료", type: "VARIABLE", color: "#14B8A6" },
   { name: "금융/보험", type: "FIXED", color: "#4F46E5" },
+  { name: "카드대금", type: "VARIABLE", color: "#6366F1" },
   { name: "급여", type: "INCOME", color: "#059669" },
   { name: "기타수입", type: "INCOME", color: "#10B981" },
   { name: "기타지출", type: "VARIABLE", color: "#64748B" },

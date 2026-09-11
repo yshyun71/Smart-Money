@@ -4,6 +4,8 @@ import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { CsvImportModal } from "../modals/CsvImportModal";
+import { BalanceEditModal } from "../modals/BalanceEditModal";
+import { asOfFromParts, asOfLabel, asOfParts, formatAmountInput, parseAmountInput } from "../../utils/format";
 import {
   CreditCard,
   Building,
@@ -25,6 +27,9 @@ import {
   HardDrive,
   FileSpreadsheet,
   ChevronRight,
+  Pencil,
+  Calculator,
+  UserCheck,
 } from "lucide-react";
 
 const PRESET_BANKS = [
@@ -78,11 +83,15 @@ export const ConnectedAssetsView: React.FC<{
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [initialAmount, setInitialAmount] = useState("");
+  // A balance is only meaningful together with the moment it is true as of
+  const [balanceDate, setBalanceDate] = useState(() => asOfParts(new Date().toISOString()).date);
+  const [balanceHour, setBalanceHour] = useState(() => asOfParts(new Date().toISOString()).hour);
   const [syncMode, setSyncMode] = useState<"SMS" | "OPEN_BANKING">("OPEN_BANKING");
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   // Per-account ledger, CSV import and manual entry
   const [ledgerAccountId, setLedgerAccountId] = useState<string | null>(null);
+  const [balanceAccountId, setBalanceAccountId] = useState<string | null>(null);
   const [csvAccountId, setCsvAccountId] = useState<string | null>(null);
   const [txModal, setTxModal] = useState<{
     open: boolean;
@@ -116,6 +125,9 @@ export const ConnectedAssetsView: React.FC<{
       setInitialAmount("1500000");
     }
     setCustomInstName("");
+    const now = asOfParts(new Date().toISOString());
+    setBalanceDate(now.date);
+    setBalanceHour(now.hour);
     setShowAddModal(true);
   };
 
@@ -146,7 +158,9 @@ export const ConnectedAssetsView: React.FC<{
       type: accType,
       institution: inst,
       identifier: identifier.trim() || (accType === "BANK" ? "xxxx-xx-xxxx" : "xxxx-xxxx"),
-      balanceOrBilled: Math.max(0, parseInt(initialAmount.replace(/[^0-9]/g, ""), 10) || 0),
+      balanceOrBilled: Math.max(0, parseAmountInput(initialAmount)),
+      balanceAsOf: asOfFromParts(balanceDate, balanceHour),
+      balanceSource: "USER" as const,
       color,
       isAutoSyncEnabled: true,
     });
@@ -352,14 +366,43 @@ export const ConnectedAssetsView: React.FC<{
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <div className="text-right min-w-0">
                     <div className="text-sm font-black text-slate-900">
                       {acc.balanceOrBilled.toLocaleString()}원
                     </div>
-                    <div className="text-[10px] text-slate-400">계좌 잔액</div>
+                    <div className="text-[10px] text-slate-400 flex items-center justify-end gap-1">
+                      <span>계좌 잔액</span>
+                      <span
+                        className={`font-bold px-1 rounded-full flex items-center gap-0.5 ${
+                          acc.balanceSource === "AUTO"
+                            ? "bg-indigo-100 text-indigo-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {acc.balanceSource === "AUTO" ? (
+                          <Calculator className="w-2.5 h-2.5" />
+                        ) : (
+                          <UserCheck className="w-2.5 h-2.5" />
+                        )}
+                        {acc.balanceSource === "AUTO" ? "자동" : "사용자"}
+                      </span>
+                    </div>
+                    <div className="text-[9px] text-slate-300">
+                      {asOfLabel(acc.balanceAsOf)} 기준
+                    </div>
                   </div>
 
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBalanceAccountId(acc.id);
+                    }}
+                    title="계좌 잔액 수정"
+                    className="p-1.5 text-slate-300 hover:text-emerald-600 rounded-lg transition"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -427,14 +470,43 @@ export const ConnectedAssetsView: React.FC<{
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <div className="text-right min-w-0">
                     <div className="text-sm font-black text-slate-900">
                       {acc.balanceOrBilled.toLocaleString()}원
                     </div>
-                    <div className="text-[10px] text-slate-400">이번 달 청구예정</div>
+                    <div className="text-[10px] text-slate-400 flex items-center justify-end gap-1">
+                      <span>이번 달 청구예정</span>
+                      <span
+                        className={`font-bold px-1 rounded-full flex items-center gap-0.5 ${
+                          acc.balanceSource === "AUTO"
+                            ? "bg-indigo-100 text-indigo-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {acc.balanceSource === "AUTO" ? (
+                          <Calculator className="w-2.5 h-2.5" />
+                        ) : (
+                          <UserCheck className="w-2.5 h-2.5" />
+                        )}
+                        {acc.balanceSource === "AUTO" ? "자동" : "사용자"}
+                      </span>
+                    </div>
+                    <div className="text-[9px] text-slate-300">
+                      {asOfLabel(acc.balanceAsOf)} 기준
+                    </div>
                   </div>
 
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBalanceAccountId(acc.id);
+                    }}
+                    title="청구 예정액 수정"
+                    className="p-1.5 text-slate-300 hover:text-emerald-600 rounded-lg transition"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -741,12 +813,39 @@ export const ConnectedAssetsView: React.FC<{
                   type="text"
                   placeholder="0"
                   value={initialAmount}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/[^0-9]/g, "");
-                    setInitialAmount(val ? Number(val).toLocaleString() : "");
-                  }}
+                  onChange={(e) => setInitialAmount(formatAmountInput(e.target.value))}
                   className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 focus:outline-emerald-600 font-bold"
                 />
+
+                {/* As of when that figure is true */}
+                <div className="grid grid-cols-[1fr_auto] gap-2 mt-2">
+                  <input
+                    type="date"
+                    value={balanceDate}
+                    onChange={(e) => setBalanceDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-emerald-600 bg-white"
+                  />
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={balanceHour}
+                      onChange={(e) => setBalanceHour(e.target.value)}
+                      className="px-2.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-emerald-600 bg-white"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map(
+                        (h) => (
+                          <option key={h} value={h}>
+                            {h}
+                          </option>
+                        )
+                      )}
+                    </select>
+                    <span className="text-xs font-semibold text-slate-500">시</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  입력한 금액의 기준 일시입니다. 등록 구분은 <strong>사용자 입력</strong>으로
+                  기록됩니다.
+                </p>
               </div>
 
               {/* Sync Mode */}
@@ -780,6 +879,13 @@ export const ConnectedAssetsView: React.FC<{
           </div>
         </div>
       )}
+
+      {/* Balance, and the moment it is true as of */}
+      <BalanceEditModal
+        isOpen={Boolean(balanceAccountId)}
+        accountId={balanceAccountId || ""}
+        onClose={() => setBalanceAccountId(null)}
+      />
 
       {/* Per-account ledger */}
       <AccountLedgerModal

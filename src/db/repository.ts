@@ -1,11 +1,17 @@
 import type {
   AISpendingAnalysis,
+  CategoryRule,
+  CategoryType,
   ConnectedAccount,
+  ExpenseType,
   MonthlyBudgetConfig,
+  RuleSource,
   Transaction,
+  ValueSource,
 } from "../types/finance";
 import type { StoredPin } from "../services/pinCrypto";
 import { persist, queryAll, queryOne, run, runBatch } from "./database";
+import { movesBalance } from "../services/balance";
 import {
   SAMPLE_ACCOUNTS,
   SAMPLE_BUDGET_CONFIG,
@@ -124,6 +130,8 @@ export function deleteUser(id: string): void {
     { sql: "DELETE FROM budgets WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM budget_configs WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM ai_analyses WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM category_rules WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM custom_categories WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM users WHERE id = ?", params: [id] },
   ]);
 }
@@ -179,8 +187,9 @@ export function listAccounts(): ConnectedAccount[] {
   const rows = queryAll<any>(
     `SELECT id, name, type, institution, identifier,
             balance_or_billed as balanceOrBilled, color,
+            balance_as_of as balanceAsOf, balance_source as balanceSource,
             is_auto_sync_enabled as isAutoSyncEnabled,
-            last_synced_at as lastSyncedAt
+            last_synced_at as lastSyncedAt, created_at as createdAt
      FROM accounts
      WHERE user_id = ?
      ORDER BY created_at DESC`,
@@ -190,13 +199,17 @@ export function listAccounts(): ConnectedAccount[] {
     ...row,
     isAutoSyncEnabled: Boolean(row.isAutoSyncEnabled),
     lastSyncedAt: row.lastSyncedAt || "",
+    // An untagged balance predates the change that started recording this
+    balanceAsOf: row.balanceAsOf || row.createdAt || new Date().toISOString(),
+    balanceSource: (row.balanceSource as ValueSource) || "USER",
   }));
 }
 
 export function insertAccount(account: ConnectedAccount): void {
   run(
-    `INSERT INTO accounts (id, user_id, name, type, institution, identifier, balance_or_billed, color, is_auto_sync_enabled, last_synced_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO accounts (id, user_id, name, type, institution, identifier, balance_or_billed,
+       balance_as_of, balance_source, color, is_auto_sync_enabled, last_synced_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       account.id,
       requireUser(),
@@ -205,11 +218,27 @@ export function insertAccount(account: ConnectedAccount): void {
       account.institution,
       account.identifier,
       Number(account.balanceOrBilled || 0),
+      account.balanceAsOf || new Date().toISOString(),
+      account.balanceSource || "USER",
       account.color || "#334155",
       account.isAutoSyncEnabled ? 1 : 0,
       account.lastSyncedAt || "",
       new Date().toISOString(),
     ]
+  );
+}
+
+/** Records a balance the user typed in, with the moment it is true as of. */
+export function updateAccountBalance(
+  id: string,
+  balance: number,
+  asOf: string,
+  source: ValueSource = "USER"
+): void {
+  run(
+    `UPDATE accounts SET balance_or_billed = ?, balance_as_of = ?, balance_source = ?
+     WHERE id = ? AND user_id = ?`,
+    [Number(balance || 0), asOf, source, id, requireUser()]
   );
 }
 
@@ -276,30 +305,53 @@ function insertStatement(tx: Transaction, userId: string) {
 }
 
 /**
+ * Whether an entry should move the balance at all.
+ *
+ * A balance is recorded as of a moment. Anything that happened before that
+ * moment is already inside the figure, so replaying it would count it twice —
+ * only what happened afterwards moves it.
+ */
+function postDatesBalance(tx: Transaction, userId: string): boolean {
+  const row = queryOne<{ balanceAsOf: string | null }>(
+    "SELECT balance_as_of as balanceAsOf FROM accounts WHERE id = ? AND user_id = ?",
+    [tx.accountId, userId]
+  );
+  if (!row || !row.balanceAsOf) return true;
+  return movesBalance(tx, row.balanceAsOf);
+}
+
+/**
  * Spending on a card raises its billed amount; spending from a bank account
  * lowers its balance, and income raises it.
  */
 function balanceStatements(tx: Transaction, userId: string) {
   if (!tx.accountId) return [];
+  if (!postDatesBalance(tx, userId)) return [];
   const amount = Number(tx.amount || 0);
 
   if (tx.type === "EXPENSE") {
     return [
       {
-        sql: "UPDATE accounts SET balance_or_billed = balance_or_billed + ? WHERE id = ? AND user_id = ? AND type IN ('CREDIT_CARD', 'CHECK_CARD')",
-        params: [amount, tx.accountId, userId],
+        sql: `UPDATE accounts SET balance_or_billed = balance_or_billed + ?,
+                balance_as_of = ?, balance_source = 'AUTO'
+              WHERE id = ? AND user_id = ? AND type IN ('CREDIT_CARD', 'CHECK_CARD')`,
+        params: [amount, new Date().toISOString(), tx.accountId, userId],
       },
       {
-        sql: "UPDATE accounts SET balance_or_billed = balance_or_billed - ? WHERE id = ? AND user_id = ? AND type = 'BANK'",
-        params: [amount, tx.accountId, userId],
+        sql: `UPDATE accounts SET balance_or_billed = balance_or_billed - ?,
+                balance_as_of = ?, balance_source = 'AUTO'
+              WHERE id = ? AND user_id = ? AND type = 'BANK'`,
+        params: [amount, new Date().toISOString(), tx.accountId, userId],
       },
     ];
   }
 
   return [
     {
-      sql: "UPDATE accounts SET balance_or_billed = balance_or_billed + ? WHERE id = ? AND user_id = ? AND type = 'BANK'",
-      params: [amount, tx.accountId, userId],
+      sql: `UPDATE accounts SET balance_or_billed = balance_or_billed + ?,
+              balance_as_of = ?, balance_source = 'AUTO'
+            WHERE id = ? AND user_id = ? AND type = 'BANK'`,
+      params: [amount, new Date().toISOString(), tx.accountId, userId],
     },
   ];
 }
@@ -399,6 +451,139 @@ export function toggleTransactionFixed(id: string): "FIXED" | "VARIABLE" | null 
     [next, next === "FIXED" ? 1 : 0, id, userId]
   );
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Category rules
+// ---------------------------------------------------------------------------
+
+export function listCategoryRules(accountId?: string): CategoryRule[] {
+  const params: any[] = [requireUser()];
+  let sql = `
+    SELECT id, account_id as accountId, pattern, category, source,
+           updated_at as updatedAt
+    FROM category_rules
+    WHERE user_id = ?
+  `;
+  if (accountId) {
+    sql += " AND account_id = ?";
+    params.push(accountId);
+  }
+  sql += " ORDER BY source, LENGTH(pattern) DESC, updated_at DESC";
+
+  return queryAll<CategoryRule>(sql, params);
+}
+
+/**
+ * Writes a rule, replacing any existing one with the same pattern on the same
+ * account. A rule the user confirms takes over one the classifier wrote; the
+ * classifier never overwrites the user.
+ */
+export function saveCategoryRule(rule: {
+  id?: string;
+  accountId: string;
+  pattern: string;
+  category: CategoryType;
+  source: RuleSource;
+}): void {
+  const userId = requireUser();
+  const now = new Date().toISOString();
+  const pattern = rule.pattern.trim();
+  if (!pattern) return;
+
+  const existing = queryOne<{ id: string; source: RuleSource }>(
+    `SELECT id, source FROM category_rules
+     WHERE user_id = ? AND account_id = ? AND TRIM(LOWER(pattern)) = TRIM(LOWER(?))`,
+    [userId, rule.accountId, pattern]
+  );
+
+  const targetId = rule.id || existing?.id;
+
+  if (targetId) {
+    // Never let an AI-written rule downgrade one the user confirmed
+    if (!rule.id && existing?.source === "USER" && rule.source === "AI") return;
+    run(
+      `UPDATE category_rules SET pattern = ?, category = ?, source = ?, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+      [pattern, rule.category, rule.source, now, targetId, userId]
+    );
+    return;
+  }
+
+  run(
+    `INSERT INTO category_rules (id, user_id, account_id, pattern, category, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `rule-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      userId,
+      rule.accountId,
+      pattern,
+      rule.category,
+      rule.source,
+      now,
+      now,
+    ]
+  );
+}
+
+/** Records what the classifier decided, so the user can confirm it later. */
+export function saveCategoryRules(
+  rules: { accountId: string; pattern: string; category: CategoryType; source: RuleSource }[]
+): void {
+  for (const rule of rules) saveCategoryRule(rule);
+}
+
+export function deleteCategoryRule(id: string): void {
+  run("DELETE FROM category_rules WHERE id = ? AND user_id = ?", [id, requireUser()]);
+}
+
+/** Promotes a classifier's rule to one the user stands behind, or back again. */
+export function setCategoryRuleSource(id: string, source: RuleSource): void {
+  run(
+    "UPDATE category_rules SET source = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+    [source, new Date().toISOString(), id, requireUser()]
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Categories the user added themselves
+// ---------------------------------------------------------------------------
+
+/**
+ * Names this user typed in, on top of the ones the app ships with. They are
+ * kept per user for the same reason ledgers are: one person's categories are
+ * no business of another's.
+ */
+export function listCustomCategories(): string[] {
+  return queryAll<{ name: string }>(
+    "SELECT name FROM custom_categories WHERE user_id = ? ORDER BY created_at",
+    [requireUser()]
+  ).map((row) => row.name);
+}
+
+/** Adding a name that is already there is a no-op, not an error. */
+export function addCustomCategory(name: string, type: ExpenseType = "VARIABLE"): void {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return;
+
+  run(
+    `INSERT OR IGNORE INTO custom_categories (id, user_id, name, type, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      `cc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      requireUser(),
+      trimmed,
+      type,
+      new Date().toISOString(),
+    ]
+  );
+}
+
+export function deleteCustomCategory(name: string): void {
+  run("DELETE FROM custom_categories WHERE user_id = ? AND name = ?", [
+    requireUser(),
+    (name || "").trim(),
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +703,8 @@ export async function clearUserData(): Promise<void> {
     { sql: "DELETE FROM budgets WHERE user_id = ?", params: [userId] },
     { sql: "DELETE FROM budget_configs WHERE user_id = ?", params: [userId] },
     { sql: "DELETE FROM ai_analyses WHERE user_id = ?", params: [userId] },
+    { sql: "DELETE FROM category_rules WHERE user_id = ?", params: [userId] },
+    { sql: "DELETE FROM custom_categories WHERE user_id = ?", params: [userId] },
   ]);
   await persist();
 }

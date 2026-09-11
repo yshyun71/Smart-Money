@@ -14,6 +14,8 @@ import {
   type DraftRow,
   type ParsedTable,
 } from "../../services/csvImport";
+import { asOfLabel } from "../../utils/format";
+import { planBalanceAdjustment } from "../../services/balance";
 import {
   X,
   Upload,
@@ -27,6 +29,8 @@ import {
   CopyCheck,
   SkipForward,
   Replace,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 
 type Step = "PICK" | "MAP" | "REVIEW" | "DONE";
@@ -46,7 +50,13 @@ export const CsvImportModal: React.FC<{
   /** Pre-selects the account whose ledger the import was started from. */
   defaultAccountId?: string;
 }> = ({ isOpen, onClose, defaultAccountId }) => {
-  const { accounts, allTransactions, importTransactions } = useFinance();
+  const {
+    accounts,
+    allTransactions,
+    importTransactions,
+    categoryForMerchant,
+    setAccountBalance,
+  } = useFinance();
 
   const [step, setStep] = useState<Step>("PICK");
   const [accountId, setAccountId] = useState(defaultAccountId || accounts[0]?.id || "");
@@ -61,9 +71,14 @@ export const CsvImportModal: React.FC<{
   const [duplicates, setDuplicates] = useState<DuplicateItem[]>([]);
   const [fresh, setFresh] = useState<DraftRow[]>([]);
   const [skippedRows, setSkippedRows] = useState<{ lineNumber: number; reason: string }[]>([]);
-  const [result, setResult] = useState<{ added: number; replaced: number; skipped: number } | null>(
-    null
-  );
+  const [result, setResult] = useState<{
+    added: number;
+    replaced: number;
+    skipped: number;
+    balance?: { counted: number; next: number; asOf: string };
+  } | null>(null);
+  /** Whether this import should also move the account's recorded balance. */
+  const [adjustBalance, setAdjustBalance] = useState(false);
 
   const account = accounts.find((a) => a.id === accountId);
 
@@ -81,6 +96,7 @@ export const CsvImportModal: React.FC<{
     setFresh([]);
     setSkippedRows([]);
     setResult(null);
+    setAdjustBalance(false);
   };
 
   const handleClose = () => {
@@ -90,8 +106,18 @@ export const CsvImportModal: React.FC<{
 
   const preview = useMemo(() => {
     if (!table) return { drafts: [] as DraftRow[], skipped: [] as { lineNumber: number; reason: string }[] };
-    return buildDrafts(table, mapping);
-  }, [table, mapping]);
+    const built = buildDrafts(table, mapping);
+    // A standing rule decides the category here too, so the preview shows
+    // exactly what will be saved rather than the guess it started from.
+    return {
+      ...built,
+      drafts: built.drafts.map((draft) => {
+        const ruled = accountId ? categoryForMerchant(draft.merchant, accountId) : null;
+        return ruled ? { ...draft, category: ruled } : draft;
+      }),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table, mapping, accountId, categoryForMerchant]);
 
   const mappingReady =
     mapping.date >= 0 &&
@@ -180,6 +206,24 @@ export const CsvImportModal: React.FC<{
     );
   };
 
+  /**
+   * What this import would do to the recorded balance, given the choices made
+   * on this screen. Only entries after the balance's own 기준일시 count.
+   */
+  const balancePlan = useMemo(() => {
+    if (!account) return null;
+
+    const paymentMethod = account.name || "가져온 내역";
+    const saving = [
+      ...fresh.map((draft) => draftToTransaction(draft, accountId, paymentMethod)),
+      ...duplicates
+        .filter((item) => item.decision === "OVERWRITE")
+        .map((item) => draftToTransaction(item.draft, accountId, paymentMethod)),
+    ];
+
+    return planBalanceAdjustment(saving, account);
+  }, [account, accountId, fresh, duplicates]);
+
   const handleApply = () => {
     const paymentMethod = account?.name || "가져온 내역";
 
@@ -196,10 +240,21 @@ export const CsvImportModal: React.FC<{
 
     try {
       importTransactions(inserts, overwrites);
+
+      // Worked out from the entries, so the figure is tagged as such
+      const moved =
+        adjustBalance && balancePlan && balancePlan.counted > 0 ? balancePlan : null;
+      if (moved) {
+        setAccountBalance(accountId, moved.next, moved.asOf, "AUTO");
+      }
+
       setResult({
         added: inserts.length,
         replaced: overwrites.length,
         skipped: duplicates.length - overwrites.length,
+        balance: moved
+          ? { counted: moved.counted, next: moved.next, asOf: moved.asOf }
+          : undefined,
       });
       setStep("DONE");
     } catch {
@@ -590,6 +645,79 @@ export const CsvImportModal: React.FC<{
               </div>
             )}
 
+            {/* Move the recorded balance along with the entries */}
+            {account && balancePlan && (
+              <div
+                className={`rounded-2xl border p-3 space-y-2 transition ${
+                  adjustBalance && balancePlan.counted > 0
+                    ? "border-emerald-300 bg-emerald-50/60"
+                    : "border-slate-200 bg-slate-50"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setAdjustBalance((prev) => !prev)}
+                  disabled={balancePlan.counted === 0}
+                  className="flex items-start gap-1.5 text-left w-full disabled:opacity-60 cursor-pointer"
+                >
+                  {adjustBalance && balancePlan.counted > 0 ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0 mt-px" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-400 shrink-0 mt-px" />
+                  )}
+                  <span className="text-[11px] font-bold text-slate-700 min-w-0">
+                    현재 {account.type === "BANK" ? "잔액" : "청구액"} 수정
+                  </span>
+                </button>
+
+                <div className="text-[10px] text-slate-500 leading-relaxed">
+                  등록된 기준일시 <strong>{asOfLabel(account.balanceAsOf)}</strong> 이후의
+                  내역만 반영합니다.
+                </div>
+
+                {balancePlan.counted === 0 ? (
+                  <div className="text-[10px] font-bold text-slate-400">
+                    기준일시 이후에 해당하는 내역이 없어 조정할 금액이 없습니다.
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-white border border-slate-200 p-2.5 space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                      <span>반영 대상</span>
+                      <span className="font-bold text-slate-700">
+                        {balancePlan.counted}건
+                        {balancePlan.ignored > 0 && (
+                          <span className="font-normal text-slate-400">
+                            {" "}
+                            (기준일시 이전 {balancePlan.ignored}건 제외)
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-slate-400 line-through shrink-0">
+                        {won(balancePlan.current)}
+                      </span>
+                      <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
+                      <span className="font-black text-slate-900 truncate">
+                        {won(balancePlan.next)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold shrink-0 ${
+                          balancePlan.delta >= 0 ? "text-emerald-600" : "text-rose-600"
+                        }`}
+                      >
+                        {balancePlan.delta >= 0 ? "+" : "-"}
+                        {won(Math.abs(balancePlan.delta))}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      기준 {asOfLabel(balancePlan.asOf)} · 자동 산출로 기록됩니다
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 type="button"
@@ -639,6 +767,19 @@ export const CsvImportModal: React.FC<{
                 <div className="text-sm font-black text-slate-700">{result.skipped}</div>
               </div>
             </div>
+
+            {result.balance && (
+              <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/70 text-[11px] text-emerald-900 space-y-0.5">
+                <div className="font-bold">
+                  {account?.type === "BANK" ? "잔액" : "청구액"}을{" "}
+                  {won(result.balance.next)}으로 수정했습니다
+                </div>
+                <div className="text-[10px] text-emerald-700">
+                  {result.balance.counted}건 반영 · 기준 {asOfLabel(result.balance.asOf)} ·
+                  자동 산출
+                </div>
+              </div>
+            )}
 
             <button
               type="button"

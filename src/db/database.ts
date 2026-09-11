@@ -5,6 +5,7 @@ import {
   MIGRATIONS,
   SCHEMA_VERSION,
   repairMissingColumns,
+  repairMissingTables,
 } from "./schema";
 
 /**
@@ -165,6 +166,11 @@ async function initDatabase(): Promise<Database> {
     console.warn(`[DB] 누락된 컬럼을 복구했습니다: ${repaired.join(", ")}`);
   }
 
+  const rebuilt = repairMissingTables(db);
+  if (rebuilt.length > 0) {
+    console.warn(`[DB] 누락된 테이블을 복구했습니다: ${rebuilt.join(", ")}`);
+  }
+
   seedEssentials(db);
 
   if (stored && from !== to) {
@@ -283,6 +289,8 @@ const TABLE_NAMES = [
   "budgets",
   "budget_configs",
   "ai_analyses",
+  "category_rules",
+  "custom_categories",
 ];
 
 export function getDbStats(): DBStats {

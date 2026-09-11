@@ -11,6 +11,7 @@ import {
   CalendarClock,
   Minus,
   Sparkles,
+  UserCheck,
 } from "lucide-react";
 
 export interface ClassifyChange {
@@ -30,6 +31,10 @@ export interface ClassifySummary {
   categoryCorrected: number;
   paymentDaySet: number;
   unchanged: number;
+  /** Entries a rule the user confirmed decided, overriding the classifier. */
+  ruleApplied: number;
+  /** Rules newly recorded from what the classifier decided. */
+  rulesLearned: number;
   failed: number;
   error?: string;
   provider: string | null;
@@ -186,6 +191,24 @@ export const ClassifyResultModal: React.FC<{
             value={summary.unchanged}
             hint="기존 분류가 이미 정확함"
           />
+          {summary.ruleApplied > 0 && (
+            <Row
+              icon={<UserCheck className="w-3.5 h-3.5" />}
+              tone="bg-emerald-50 text-emerald-700"
+              label="사용자 규칙 우선 적용"
+              value={summary.ruleApplied}
+              hint="카테고리 관리에 등록한 규칙"
+            />
+          )}
+          {summary.rulesLearned > 0 && (
+            <Row
+              icon={<Sparkles className="w-3.5 h-3.5" />}
+              tone="bg-indigo-50 text-indigo-600"
+              label="AI 분류 규칙 등록"
+              value={summary.rulesLearned}
+              hint="카테고리 관리에서 확인·확정할 수 있습니다"
+            />
+          )}
         </div>
 
         {/* Partial failure */}

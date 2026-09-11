@@ -2,7 +2,8 @@ export type TransactionType = "EXPENSE" | "INCOME";
 
 export type ExpenseType = "FIXED" | "VARIABLE" | "INCOME";
 
-export type CategoryType =
+/** The categories the app ships with. */
+export type BuiltInCategory =
   | "주거/통신"
   | "구독/미디어"
   | "식비"
@@ -12,9 +13,22 @@ export type CategoryType =
   | "문화/여가"
   | "생활/의료"
   | "금융/보험"
+  | "카드대금"
   | "급여"
   | "기타수입"
   | "기타지출";
+
+/**
+ * A built-in category, or one the user typed in themselves.
+ *
+ * `string & {}` keeps the built-in names as suggestions while letting any
+ * other name through — a user-defined category is stored and treated exactly
+ * like a shipped one.
+ */
+export type CategoryType = BuiltInCategory | (string & {});
+
+/** Whether a figure was entered by the user or worked out by the app. */
+export type ValueSource = "USER" | "AUTO";
 
 export interface ConnectedAccount {
   id: string;
@@ -23,9 +37,32 @@ export interface ConnectedAccount {
   institution: string; // e.g. "카카오뱅크", "KB국민", "신한", "현대"
   identifier: string; // e.g. "3333-**-****" or "****-1234"
   balanceOrBilled: number; // For bank: current balance; for card: current billing amount
+  /** ISO timestamp the balance is true as of — a balance means little without one. */
+  balanceAsOf: string;
+  balanceSource: ValueSource;
   color: string;
   isAutoSyncEnabled: boolean;
   lastSyncedAt: string;
+}
+
+/** Who decided a category rule: the user, or the classifier. */
+export type RuleSource = "USER" | "AI";
+
+/**
+ * A standing instruction: anything from this account whose description matches
+ * the pattern belongs in this category.
+ *
+ * The pattern is matched loosely — `*` stands for any run of characters, and a
+ * pattern with no wildcard matches anywhere in the description. "코웨이렌탈*"
+ * therefore covers "코웨이렌탈09" and "코웨이렌탈08" alike.
+ */
+export interface CategoryRule {
+  id: string;
+  accountId: string;
+  pattern: string;
+  category: CategoryType;
+  source: RuleSource;
+  updatedAt: string;
 }
 
 export interface Transaction {
