@@ -196,6 +196,9 @@ export const AddTransactionModal: React.FC<{
       recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
       linkedAccountId:
         category === CARD_PAYMENT_CATEGORY && linkedAccountId ? linkedAccountId : undefined,
+      // Not shown on this form, and not this form's to discard: it says which
+      // statement an entry belongs to.
+      billingMonth: editing?.billingMonth,
     };
 
     // Saved first so the entry itself is never overwritten by its own rule

@@ -98,10 +98,13 @@ export interface Transaction {
    */
   linkedAccountId?: string;
   /**
-   * For a card purchase: the month it is billed in, as YYYY-MM.
+   * The billing month this entry belongs to, as YYYY-MM.
    *
-   * It is not the month it was used in — an instalment is used once and billed
-   * for months afterwards — so a card's ledger can be read either way round.
+   * On a card purchase it is the month the purchase is billed in, which is not
+   * the month it was used in — an instalment is used once and billed for
+   * months afterwards. On the withdrawal that settles a bill it is the
+   * statement being settled, so the two can be read together without working
+   * the match out again every time.
    */
   billingMonth?: string;
 }

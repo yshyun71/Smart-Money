@@ -653,6 +653,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       category: CategoryType;
       type: TransactionType;
       linkedAccountId?: string;
+      billingMonth?: string;
     }
   >(
     tx: T
@@ -675,7 +676,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         accounts,
         transactions
       );
-      if (bill) return { ...next, linkedAccountId: bill.accountId };
+      if (bill) {
+        return {
+          ...next,
+          linkedAccountId: bill.accountId,
+          billingMonth: bill.billingMonth || next.billingMonth,
+        };
+      }
     }
 
     return next;
@@ -735,8 +742,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
         if (month) {
           claimed.add(month);
-          if (payment.linkedAccountId !== card.id) {
-            updates.push({ ...payment, linkedAccountId: card.id });
+          // Which statement, not just which card: the answer is kept rather
+          // than worked out again wherever it is shown.
+          if (payment.linkedAccountId !== card.id || payment.billingMonth !== month) {
+            updates.push({ ...payment, linkedAccountId: card.id, billingMonth: month });
           }
           continue;
         }
@@ -747,7 +756,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
           released, and only because its own entries are what just changed.
         */
         if (payment.linkedAccountId === card.id) {
-          updates.push({ ...payment, linkedAccountId: undefined });
+          updates.push({
+            ...payment,
+            linkedAccountId: undefined,
+            billingMonth: undefined,
+          });
         }
       }
     }

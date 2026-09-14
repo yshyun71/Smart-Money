@@ -580,6 +580,7 @@ export const AccountLedgerModal: React.FC<{
         if (dayChanged && recurringDay) paymentDaySet++;
 
         let linkedAccountId = tx.linkedAccountId;
+        let settles = tx.billingMonth;
         if (category === CARD_PAYMENT_CATEGORY && !linkedAccountId) {
           const bill = matchCardForBill(
             tx.merchant,
@@ -592,6 +593,7 @@ export const AccountLedgerModal: React.FC<{
           if (bill) {
             linkedAccountId = bill.accountId;
             if (bill.billingMonth) {
+              settles = bill.billingMonth;
               claimedBills.add(`${bill.accountId}|${bill.billingMonth}`);
             }
           }
@@ -604,6 +606,7 @@ export const AccountLedgerModal: React.FC<{
           isFixedRecurring: isFixed,
           recurringDay,
           linkedAccountId,
+          billingMonth: settles,
         };
 
         if (typeChanged || categoryChanged || dayChanged) {
@@ -1188,7 +1191,8 @@ export const AccountLedgerModal: React.FC<{
                           (a: { id: string }) => a.id === tx.linkedAccountId
                         )
                       : null;
-                    const billedMonth = billingLinks.get(tx.id) || null;
+                    const billedMonth =
+                      tx.billingMonth || billingLinks.get(tx.id) || null;
                     return (
                       <div
                         key={tx.id}
