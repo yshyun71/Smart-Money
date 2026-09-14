@@ -214,6 +214,38 @@ function findHeaderRow(rows: string[][]): number {
   return bestScore > 0 ? bestIndex : 0;
 }
 
+/**
+ * True when a row continues the header rather than starting the data.
+ *
+ * Card statements group their money columns under a merged title and put the
+ * real names on a second line: "이번달 결제금액" over "회차 · 원금 · 수수료".
+ * Read as data that row is skipped, and read as the only header the names sit
+ * over the wrong columns — 회차 becomes the amount, which is filled in only on
+ * the instalment lines.
+ */
+function looksLikeSubHeader(row: string[] | undefined): boolean {
+  if (!row) return false;
+  const cells = row.map((cell) => cell.trim()).filter(Boolean);
+  if (cells.length < 2) return false;
+  if (cells.some((cell) => normaliseDate(cell))) return false;
+  return cells.every((cell) => normaliseAmount(cell).value === 0);
+}
+
+/** Carries a merged title across the blanks beneath it, as a reader would. */
+function mergeHeaderRows(top: string[], sub: string[]): string[] {
+  let carried = "";
+  const width = Math.max(top.length, sub.length);
+
+  return Array.from({ length: width }, (_, index) => {
+    const above = (top[index] || "").trim();
+    if (above) carried = above;
+
+    const below = (sub[index] || "").trim();
+    if (!below) return carried;
+    return carried && carried !== below ? `${carried} ${below}` : below;
+  });
+}
+
 export function parseDelimited(text: string): ParsedTable {
   const delimiter = detectDelimiter(text);
   const all = splitRows(text, delimiter).filter((row) =>
@@ -225,10 +257,17 @@ export function parseDelimited(text: string): ParsedTable {
   }
 
   const headerRowIndex = findHeaderRow(all);
-  const headers = all[headerRowIndex].map((cell) => cell.trim());
+  const top = all[headerRowIndex].map((cell) => cell.trim());
+
+  const hasSubHeader = looksLikeSubHeader(all[headerRowIndex + 1]);
+  const headers = hasSubHeader
+    ? mergeHeaderRows(top, all[headerRowIndex + 1].map((cell) => cell.trim()))
+    : top;
+
+  const firstDataRow = headerRowIndex + (hasSubHeader ? 2 : 1);
   const width = headers.length;
   const rows = all
-    .slice(headerRowIndex + 1)
+    .slice(firstDataRow)
     .map((row) => {
       const padded = [...row];
       while (padded.length < width) padded.push("");
@@ -291,7 +330,8 @@ const DESCRIPTION_KEYWORDS = ["적요", "거래내용", "내용", "기재내용"
 
 /** Columns that hold a number but never the amount of a transaction. */
 const NOT_AMOUNT = [
-  "잔액", "한도", "누계", "포인트", "마일리지", "번호", "개월", "할부", "회차", "수수료율", "이율",
+  "잔액", "한도", "누계", "포인트", "마일리지", "번호", "개월", "할부", "회차", "건수",
+  "수수료율", "이율",
 ];
 
 /** How many rows a mapping actually reads a date and an amount out of. */
@@ -380,8 +420,14 @@ function detectFromRows(
  * `rows` is optional so the mapping can still be guessed from a header alone.
  */
 export function autoDetectMapping(headers: string[], rows: string[][] = []): ColumnMapping {
-  const withdrawal = findColumn(headers, ["출금", "지출", "차감", "결제금액"], ["잔액"]);
-  const deposit = findColumn(headers, ["입금", "수입", "적립"], ["잔액"]);
+  /*
+    A statement counts things as well as money: instalment numbers, months,
+    points. They read as perfectly good numbers and belong to no transaction.
+  */
+  const notMoney = ["잔액", "회차", "개월", "건수", "포인트", "마일리지", "번호"];
+
+  const withdrawal = findColumn(headers, ["출금", "지출", "차감", "결제금액"], notMoney);
+  const deposit = findColumn(headers, ["입금", "수입", "적립"], notMoney);
 
   const counterparty = findColumn(headers, COUNTERPARTY_KEYWORDS);
   const description = findColumn(headers, DESCRIPTION_KEYWORDS);
@@ -390,9 +436,11 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
   const memo =
     counterparty >= 0 && description >= 0
       ? description
-      : findColumn(headers, [
-          "할부", "구분", "결제구분", "거래구분", "메모", "비고", "업종", "적요2",
-        ]);
+      : findColumn(
+          headers,
+          ["구분", "결제구분", "거래구분", "할부", "메모", "비고", "업종", "적요2"],
+          ["개월", "회차"]
+        );
 
   const billing = findColumn(headers, [
     "결제년월", "청구년월", "청구월", "결제월", "결제일자", "결제예정일", "결제일",
@@ -407,13 +455,27 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
     amount:
       withdrawal >= 0 || deposit >= 0
         ? -1
-        : findColumn(headers, ["이용금액", "승인금액", "거래금액", "금액"], ["잔액", "누계", "한도"]),
+        : findColumn(headers, ["이용금액", "승인금액", "거래금액", "금액"], [
+            ...notMoney,
+            "누계",
+            "한도",
+          ]),
     withdrawal,
     deposit,
     memo,
   };
 
-  if (rows.length === 0 || usableRows(rows, guess) > 0) return guess;
+  if (rows.length === 0) return guess;
+
+  /*
+    Reading a handful of rows is not the same as reading the file. A mapping
+    that lands on 회차 finds a number on the instalment lines and nothing on
+    the rest, which looked like success and dropped four rows in five.
+  */
+  const dated = rows.filter((row) => normaliseDate(row[guess.date] || "")).length;
+  const usable = usableRows(rows, guess);
+  if (usable > 0 && usable >= Math.max(1, Math.round(dated * 0.6))) return guess;
+
   return detectFromRows(headers, rows, guess);
 }
 
