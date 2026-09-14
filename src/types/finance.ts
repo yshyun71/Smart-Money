@@ -4,14 +4,16 @@ export type ExpenseType = "FIXED" | "VARIABLE" | "INCOME";
 
 /** The categories the app ships with. */
 export type BuiltInCategory =
-  | "주거/통신"
+  | "주거"
+  | "통신"
   | "구독/미디어"
   | "식비"
   | "카페/간식"
   | "교통"
   | "쇼핑"
   | "문화/여가"
-  | "생활/의료"
+  | "생활"
+  | "의료"
   | "보험"
   | "대출"
   | "기타 금융"

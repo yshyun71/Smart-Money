@@ -225,7 +225,7 @@ export const AddTransactionModal: React.FC<{
                 type="button"
                 onClick={() => {
                   setFormType("VARIABLE");
-                  if (category === "급여" || category === "주거/통신")
+                  if (category === "급여" || category === "주거")
                     setCategory("식비");
                 }}
                 className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
@@ -242,7 +242,7 @@ export const AddTransactionModal: React.FC<{
                 type="button"
                 onClick={() => {
                   setFormType("FIXED");
-                  setCategory("주거/통신");
+                  setCategory("주거");
                 }}
                 className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
                   formType === "FIXED"

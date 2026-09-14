@@ -585,7 +585,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       "쇼핑": 0.18,
       "교통": 0.12,
       "문화/여가": 0.1,
-      "생활/의료": 0.07,
+      "생활": 0.04,
+      "의료": 0.03,
       "기타지출": 0.05,
     };
 

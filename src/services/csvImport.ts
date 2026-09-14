@@ -1,5 +1,6 @@
 import type { CategoryType, ExpenseType, Transaction, TransactionType } from "../types/finance";
 import { builtInCategoryFor } from "./categoryRules";
+import { HOUSING_KEYWORDS, LIVING_KEYWORDS } from "../constants/categories";
 
 /**
  * Reading a bank or card statement exported as CSV.
@@ -358,14 +359,15 @@ export function normaliseAmount(raw: string): { value: number; negative: boolean
 // ---------------------------------------------------------------------------
 
 const CATEGORY_KEYWORDS: { category: CategoryType; words: string[] }[] = [
+  // 통신 before 주거, 의료 before 생활 — the more specific word decides
+  ...HOUSING_KEYWORDS,
+  ...LIVING_KEYWORDS,
   { category: "카페/간식", words: ["스타벅스", "커피", "카페", "이디야", "메가", "투썸", "빽다방", "공차", "베이커리", "파리바게","뚜레쥬르"] },
   { category: "식비", words: ["배달", "요기요", "배민", "쿠팡이츠", "food", "식당", "김밥", "치킨", "피자", "마트", "이마트", "홈플러스", "롯데마트", "GS25", "CU", "세븐일레븐", "편의점", "냉면", "국밥", "분식"] },
   { category: "교통", words: ["티머니", "카카오T", "택시", "지하철", "버스", "코레일", "SRT", "주유", "충전", "하이패스", "톨게이트", "주차"] },
   { category: "구독/미디어", words: ["넷플릭스", "netflix", "유튜브", "youtube", "왓챠", "웨이브", "티빙", "디즈니", "스포티파이", "멜론", "지니뮤직", "쿠팡와우", "구독"] },
-  { category: "주거/통신", words: ["월세", "관리비", "전기", "가스", "수도", "SKT", "KT", "LG U+", "LGU", "통신", "인터넷", "임대료"] },
   { category: "쇼핑", words: ["쿠팡", "11번가", "지마켓", "옥션", "무신사", "올리브영", "다이소", "네이버페이", "SSG", "백화점"] },
   { category: "문화/여가", words: ["CGV", "메가박스", "롯데시네마", "영화", "서점", "교보", "yes24", "알라딘", "헬스", "피트니스", "PC방", "노래"] },
-  { category: "생활/의료", words: ["약국", "병원", "의원", "치과", "한의원", "미용실", "세탁"] },
   { category: "급여", words: ["급여", "월급", "상여", "성과급"] },
 ];
 

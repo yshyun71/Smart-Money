@@ -32,12 +32,14 @@ import {
 
 const CATEGORY_COLORS: Record<string, string> = {
   "식비": "#F59E0B", // amber
-  "주거/통신": "#6366F1", // indigo
+  "주거": "#6366F1", // indigo
+  "통신": "#06B6D4", // cyan
   "쇼핑": "#EC4899", // pink
   "교통": "#0EA5E9", // sky
   "카페/간식": "#F97316", // orange
   "문화/여가": "#8B5CF6", // purple
-  "생활/의료": "#10B981", // emerald
+  "생활": "#84CC16", // lime
+  "의료": "#EF4444", // red
   "구독/미디어": "#3B82F6", // blue
   "보험": "#0D9488", // teal
   "대출": "#7C3AED", // violet

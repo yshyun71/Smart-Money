@@ -1,5 +1,6 @@
 import type { Database } from "sql.js";
-import { FINANCE_KEYWORDS } from "../constants/categories";
+import type { CategorySplit } from "../constants/categories";
+import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
 
 /**
  * Schema version of the on-device database.
@@ -16,7 +17,7 @@ import { FINANCE_KEYWORDS } from "../constants/categories";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export interface Migration {
   version: number;
@@ -417,7 +418,59 @@ export const MIGRATIONS: Migration[] = [
       db.run("DELETE FROM categories WHERE name = '금융/보험'");
     },
   },
+
+  {
+    version: 7,
+    description: "주거/통신과 생활/의료를 각각 분리",
+    up: (db) => {
+      db.run(
+        `INSERT OR IGNORE INTO categories (id, name, type, color, is_default) VALUES
+           ('cat_housing', '주거', 'FIXED', '#2563EB', 1),
+           ('cat_telecom', '통신', 'FIXED', '#06B6D4', 1),
+           ('cat_living', '생활', 'VARIABLE', '#84CC16', 1),
+           ('cat_medical', '의료', 'VARIABLE', '#EF4444', 1)`
+      );
+
+      for (const split of CATEGORY_SPLITS) {
+        applySplit(db, split);
+      }
+
+      db.run("DELETE FROM categories WHERE name IN ('주거/통신', '생활/의료')");
+    },
+  },
 ];
+
+/**
+ * Moves everything recorded under a category that has been split, using the
+ * same keyword tables the app now files new entries with — so a row lands
+ * where a fresh import of it would.
+ *
+ * A budget line cannot be split; one figure covered the lot, so it carries
+ * over to the fallback and the amounts can be moved from the budget screen.
+ */
+function applySplit(db: Database, split: CategorySplit): void {
+  const move = (table: string, column: string) => {
+    for (const { category, words } of split.rules) {
+      const clauses = words.map(() => `${column} LIKE ?`).join(" OR ");
+      db.run(
+        `UPDATE ${table} SET category = ?
+          WHERE category = ? AND (${clauses})`,
+        [category, split.from, ...words.map((word) => `%${word}%`)]
+      );
+    }
+    db.run(`UPDATE ${table} SET category = ? WHERE category = ?`, [
+      split.fallback,
+      split.from,
+    ]);
+  };
+
+  move("transactions", "merchant");
+  move("category_rules", "pattern");
+  db.run("UPDATE budgets SET category = ? WHERE category = ?", [
+    split.fallback,
+    split.from,
+  ]);
+}
 
 /**
  * Who existing rows belong to. Earlier builds seeded a nameless placeholder
@@ -469,12 +522,14 @@ function rebuild(
 export const DEFAULT_CATEGORIES = [
   { name: "식비", type: "VARIABLE", color: "#F97316" },
   { name: "카페/간식", type: "VARIABLE", color: "#D97706" },
-  { name: "주거/통신", type: "FIXED", color: "#2563EB" },
+  { name: "주거", type: "FIXED", color: "#2563EB" },
+  { name: "통신", type: "FIXED", color: "#06B6D4" },
   { name: "구독/미디어", type: "FIXED", color: "#8B5CF6" },
   { name: "교통", type: "VARIABLE", color: "#06B6D4" },
   { name: "쇼핑", type: "VARIABLE", color: "#EC4899" },
   { name: "문화/여가", type: "VARIABLE", color: "#10B981" },
-  { name: "생활/의료", type: "VARIABLE", color: "#14B8A6" },
+  { name: "생활", type: "VARIABLE", color: "#84CC16" },
+  { name: "의료", type: "VARIABLE", color: "#EF4444" },
   { name: "보험", type: "FIXED", color: "#0D9488" },
   { name: "대출", type: "FIXED", color: "#7C3AED" },
   { name: "기타 금융", type: "FIXED", color: "#4F46E5" },
@@ -531,8 +586,8 @@ export const SAMPLE_ACCOUNTS = [
 
 export const SAMPLE_TRANSACTIONS = [
   { id: "tx-1", date: "2026-09-01", time: "09:30", type: "INCOME", expenseType: "INCOME", category: "급여", merchant: "(주)테크솔루션 급여", amount: 4500000, paymentMethod: "계좌입금", accountId: "acc-2", memo: "9월 정기 급여" },
-  { id: "tx-2", date: "2026-09-01", time: "10:00", type: "EXPENSE", expenseType: "FIXED", category: "주거/통신", merchant: "행복주택 월세", amount: 650000, paymentMethod: "계좌이체", accountId: "acc-1", memo: "9월분 월세", isFixedRecurring: true, recurringDay: 1 },
-  { id: "tx-3", date: "2026-09-01", time: "10:30", type: "EXPENSE", expenseType: "FIXED", category: "주거/통신", merchant: "아파트 관리비", amount: 210000, paymentMethod: "자동이체", accountId: "acc-1", memo: "8월 사용분 관리비", isFixedRecurring: true, recurringDay: 1 },
+  { id: "tx-2", date: "2026-09-01", time: "10:00", type: "EXPENSE", expenseType: "FIXED", category: "주거", merchant: "행복주택 월세", amount: 650000, paymentMethod: "계좌이체", accountId: "acc-1", memo: "9월분 월세", isFixedRecurring: true, recurringDay: 1 },
+  { id: "tx-3", date: "2026-09-01", time: "10:30", type: "EXPENSE", expenseType: "FIXED", category: "주거", merchant: "아파트 관리비", amount: 210000, paymentMethod: "자동이체", accountId: "acc-1", memo: "8월 사용분 관리비", isFixedRecurring: true, recurringDay: 1 },
   { id: "tx-4", date: "2026-09-02", time: "12:15", type: "EXPENSE", expenseType: "VARIABLE", category: "식비", merchant: "본가한식당", amount: 12000, paymentMethod: "신한카드 Mr.Life", accountId: "acc-4", memo: "점심 식사" },
   { id: "tx-5", date: "2026-09-02", time: "12:45", type: "EXPENSE", expenseType: "VARIABLE", category: "카페/간식", merchant: "스타벅스 강남점", amount: 5500, paymentMethod: "현대카드 M", accountId: "acc-3", memo: "아이스 아메리카노" },
   { id: "tx-6", date: "2026-09-03", time: "19:40", type: "EXPENSE", expenseType: "VARIABLE", category: "식비", merchant: "배달의민족 (교촌치킨)", amount: 28000, paymentMethod: "현대카드 M", accountId: "acc-3", memo: "야식 주문" },
@@ -561,7 +616,8 @@ export const SAMPLE_BUDGET_CONFIG = {
     "교통": 150000,
     "쇼핑": 250000,
     "문화/여가": 150000,
-    "생활/의료": 150000,
+    "생활": 100000,
+    "의료": 50000,
     "기타지출": 100000,
   } as Record<string, number>,
 };

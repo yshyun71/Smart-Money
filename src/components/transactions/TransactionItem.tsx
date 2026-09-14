@@ -13,6 +13,8 @@ import {
   ShieldCheck,
   Coins,
   CreditCard,
+  Smartphone,
+  Shirt,
   Landmark,
   PiggyBank,
   Receipt,
@@ -23,8 +25,10 @@ import {
 
 const getCategoryIcon = (category: CategoryType) => {
   switch (category) {
-    case "주거/통신":
+    case "주거":
       return <Home className="w-4 h-4 text-blue-600" />;
+    case "통신":
+      return <Smartphone className="w-4 h-4 text-cyan-600" />;
     case "구독/미디어":
       return <Tv className="w-4 h-4 text-purple-600" />;
     case "식비":
@@ -37,7 +41,9 @@ const getCategoryIcon = (category: CategoryType) => {
       return <ShoppingBag className="w-4 h-4 text-pink-600" />;
     case "문화/여가":
       return <Sparkles className="w-4 h-4 text-indigo-600" />;
-    case "생활/의료":
+    case "생활":
+      return <Shirt className="w-4 h-4 text-lime-600" />;
+    case "의료":
       return <HeartPulse className="w-4 h-4 text-red-500" />;
     case "보험":
       return <ShieldCheck className="w-4 h-4 text-teal-600" />;
@@ -57,8 +63,10 @@ const getCategoryIcon = (category: CategoryType) => {
 
 const getCategoryBg = (category: CategoryType) => {
   switch (category) {
-    case "주거/통신":
+    case "주거":
       return "bg-blue-50";
+    case "통신":
+      return "bg-cyan-50";
     case "구독/미디어":
       return "bg-purple-50";
     case "식비":
@@ -71,7 +79,9 @@ const getCategoryBg = (category: CategoryType) => {
       return "bg-pink-50";
     case "문화/여가":
       return "bg-indigo-50";
-    case "생활/의료":
+    case "생활":
+      return "bg-lime-50";
+    case "의료":
       return "bg-red-50";
     case "보험":
       return "bg-teal-50";

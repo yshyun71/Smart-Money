@@ -117,17 +117,18 @@ function migrate(target: Database): { from: number; to: number } {
  * to the first-run setup screen.
  */
 function seedEssentials(target: Database): void {
-  const categoryCount = queryOneOn<{ count: number }>(
-    target,
-    "SELECT COUNT(*) as count FROM categories"
-  );
-  if (!categoryCount || categoryCount.count === 0) {
-    for (const category of DEFAULT_CATEGORIES) {
-      target.run(
-        "INSERT INTO categories (id, name, type, color, is_default) VALUES (?, ?, ?, ?, 1)",
-        [`cat_${encodeURIComponent(category.name)}`, category.name, category.type, category.color]
-      );
-    }
+  /*
+    Row by row rather than "is the table empty": a migration that introduces a
+    category writes its own row, and a first launch runs those migrations
+    before reaching here — so an emptiness check would see that one row and
+    skip every other default. The name is unique, so re-seeding costs nothing.
+  */
+  for (const category of DEFAULT_CATEGORIES) {
+    target.run(
+      `INSERT OR IGNORE INTO categories (id, name, type, color, is_default)
+       VALUES (?, ?, ?, ?, 1)`,
+      [`cat_${encodeURIComponent(category.name)}`, category.name, category.type, category.color]
+    );
   }
 }
 
