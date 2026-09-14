@@ -51,6 +51,8 @@ export const AddTransactionModal: React.FC<{
   const [memo, setMemo] = useState("");
   /** For a card bill: which registered card it settles. */
   const [linkedAccountId, setLinkedAccountId] = useState("");
+  /** Once the user has answered, including with "연결 안 함", nothing overrides it. */
+  const [linkTouched, setLinkTouched] = useState(false);
 
   /*
     Changing a category here is a decision about this description, not only
@@ -85,6 +87,7 @@ export const AddTransactionModal: React.FC<{
       setRecurringDay(String(editing.recurringDay ?? 5));
       setMemo(editing.memo || "");
       setLinkedAccountId(editing.linkedAccountId || "");
+      setLinkTouched(false);
     } else {
       setFormType("VARIABLE");
       setAmount("");
@@ -95,6 +98,7 @@ export const AddTransactionModal: React.FC<{
       setRecurringDay("5");
       setMemo("");
       setLinkedAccountId("");
+      setLinkTouched(false);
     }
 
     setMakeRule(false);
@@ -130,11 +134,15 @@ export const AddTransactionModal: React.FC<{
     out — but only where one registered card fits. The user can always say.
   */
   useEffect(() => {
-    if (!isOpen || category !== CARD_PAYMENT_CATEGORY || linkedAccountId) return;
+    // Clearing the field is an answer too: refilling it from the description
+    // is what made "연결 안 함" impossible to save.
+    if (!isOpen || linkTouched) return;
+    if (category !== CARD_PAYMENT_CATEGORY || linkedAccountId) return;
+
     const match = matchCardAccount(merchant, accounts);
     if (match) setLinkedAccountId(match);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, category, merchant, accounts, linkedAccountId]);
+  }, [isOpen, category, merchant, accounts, linkedAccountId, linkTouched]);
 
   // Moving an entry to another category is the moment the rule is worth making
   useEffect(() => {
@@ -431,7 +439,10 @@ export const AddTransactionModal: React.FC<{
               </label>
               <select
                 value={linkedAccountId}
-                onChange={(e) => setLinkedAccountId(e.target.value)}
+                onChange={(e) => {
+                  setLinkTouched(true);
+                  setLinkedAccountId(e.target.value);
+                }}
                 className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden bg-white"
               >
                 <option value="">연결 안 함</option>
