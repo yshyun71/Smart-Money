@@ -162,3 +162,95 @@ export function matchCardForBill(
 
   return named.length === 1 ? { accountId: named[0].id, billingMonth: null } : null;
 }
+
+/** The month an entry is billed in, falling back to the one it was used in. */
+function billedMonthOf(tx: Transaction): string {
+  return tx.billingMonth || tx.date.slice(0, 7);
+}
+
+export interface PendingBill {
+  /** Entries making up the bill that has not been paid yet. */
+  count: number;
+  amount: number;
+  /**
+   * How the period was arrived at:
+   * - AFTER_PAYMENT: everything since the last statement the bank settled
+   * - LATEST_STATEMENT: the newest statement on file, when payments are behind
+   * - THIS_MONTH: usage since the first of this month, with nothing else to go on
+   */
+  basis: "AFTER_PAYMENT" | "LATEST_STATEMENT" | "THIS_MONTH";
+  /** The month or day the period starts at, for saying so on screen. */
+  from: string;
+}
+
+/**
+ * What a card will bill next, read from what has already been settled.
+ *
+ * The bank statement is the evidence: a withdrawal that matches a month's
+ * total says that month is paid, so what is still owed is everything after
+ * it. Where the payments have fallen a month or more behind, the last
+ * statement on file stands in; where there are no statements either, the
+ * month to date is all that can honestly be counted.
+ */
+export function pendingBill(cardId: string, transactions: Transaction[]): PendingBill {
+  const entries = transactions.filter((tx) => tx.accountId === cardId);
+
+  const sum = (rows: Transaction[]) => ({
+    count: rows.length,
+    amount: rows.reduce(
+      (total, tx) => total + (tx.type === "INCOME" ? -tx.amount : tx.amount),
+      0
+    ),
+  });
+
+  // Which statements the bank has paid off
+  const totals = billingTotalsFor(transactions, cardId);
+  const settled = new Set<string>();
+  const payments = transactions
+    .filter((tx) => tx.category === "카드대금" && tx.linkedAccountId === cardId)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  for (const payment of payments) {
+    const month = matchBillingMonth(
+      totals,
+      payment.amount,
+      payment.date.slice(0, 7),
+      settled
+    );
+    if (month) settled.add(month);
+  }
+
+  const lastSettled = Array.from(settled).sort().pop();
+
+  if (lastSettled) {
+    const since = entries.filter((tx) => billedMonthOf(tx) > lastSettled);
+    const months = new Set(since.map(billedMonthOf));
+
+    // More than one unpaid statement means the payments are behind, and
+    // adding them together would not be "이번 달" anything
+    if (months.size <= 1) {
+      return { ...sum(since), basis: "AFTER_PAYMENT", from: lastSettled };
+    }
+  }
+
+  // (1) The newest statement on file, which says what it bills
+  const billed = entries.filter((tx) => tx.billingMonth);
+  if (billed.length > 0) {
+    const latest = billed.map((tx) => tx.billingMonth as string).sort().pop() as string;
+    return {
+      ...sum(entries.filter((tx) => tx.billingMonth === latest)),
+      basis: "LATEST_STATEMENT",
+      from: latest,
+    };
+  }
+
+  // (2) Nothing to go on but the calendar
+  const now = new Date();
+  const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  return {
+    ...sum(entries.filter((tx) => tx.date >= start)),
+    basis: "THIS_MONTH",
+    from: start,
+  };
+}

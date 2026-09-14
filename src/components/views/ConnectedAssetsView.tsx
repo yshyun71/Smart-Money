@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
@@ -6,6 +6,7 @@ import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { CsvImportModal } from "../modals/CsvImportModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
 import { accountTone } from "../../utils/accountTone";
+import { pendingBill, type PendingBill } from "../../services/cardLink";
 import { asOfFromParts, asOfLabel, asOfParts, formatAmountInput, parseAmountInput } from "../../utils/format";
 import {
   CreditCard,
@@ -107,8 +108,37 @@ export const ConnectedAssetsView: React.FC<{
     (sum, a) => sum + a.balanceOrBilled,
     0
   );
+  /*
+    What a card will bill next is worked out from the statements it has and the
+    payments the bank has made against them — never from a figure typed in, so
+    there is nothing here for the user to correct.
+  */
+  const pendingBills = useMemo(() => {
+    const bills = new Map<string, PendingBill>();
+    for (const account of accounts) {
+      if (account.type === "BANK") continue;
+      bills.set(account.id, pendingBill(account.id, allTransactions));
+    }
+    return bills;
+  }, [accounts, allTransactions]);
+
+  const billOf = (id: string): PendingBill =>
+    pendingBills.get(id) ?? { count: 0, amount: 0, basis: "THIS_MONTH", from: "" };
+
+  /** Says which period the figure covers, since the three differ. */
+  const billPeriodLabel = (bill: PendingBill): string => {
+    const month = (key: string) => `${Number(key.slice(5, 7))}월`;
+    if (bill.basis === "AFTER_PAYMENT") {
+      return `${month(bill.from)} 결제 이후 이용분`;
+    }
+    if (bill.basis === "LATEST_STATEMENT") {
+      return `${month(bill.from)} 명세서 기준`;
+    }
+    return `${month(bill.from)} 1일부터 이용분`;
+  };
+
   const totalCardBilled = cardAccounts.reduce(
-    (sum, a) => sum + a.balanceOrBilled,
+    (sum, a) => sum + billOf(a.id).amount,
     0
   );
 
@@ -464,7 +494,7 @@ export const ConnectedAssetsView: React.FC<{
                         {acc.name}
                       </span>
                       <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md font-semibold">
-                        {allTransactions.filter((t) => t.accountId === acc.id).length}건
+                        {billOf(acc.id).count}건
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-400 mt-0.5">
@@ -476,40 +506,14 @@ export const ConnectedAssetsView: React.FC<{
                 <div className="flex items-center gap-2">
                   <div className="text-right min-w-0">
                     <div className="text-sm font-black text-slate-900">
-                      {acc.balanceOrBilled.toLocaleString()}원
+                      {billOf(acc.id).amount.toLocaleString()}원
                     </div>
-                    <div className="text-[10px] text-slate-400 flex items-center justify-end gap-1">
-                      <span>이번 달 청구예정</span>
-                      <span
-                        className={`font-bold px-1 rounded-full flex items-center gap-0.5 ${
-                          acc.balanceSource === "AUTO"
-                            ? "bg-indigo-100 text-indigo-700"
-                            : "bg-emerald-100 text-emerald-700"
-                        }`}
-                      >
-                        {acc.balanceSource === "AUTO" ? (
-                          <Calculator className="w-2.5 h-2.5" />
-                        ) : (
-                          <UserCheck className="w-2.5 h-2.5" />
-                        )}
-                        {acc.balanceSource === "AUTO" ? "자동" : "사용자"}
-                      </span>
-                    </div>
+                    <div className="text-[10px] text-slate-400">이번 달 청구예정</div>
                     <div className="text-[9px] text-slate-300">
-                      {asOfLabel(acc.balanceAsOf)} 기준
+                      {billPeriodLabel(billOf(acc.id))}
                     </div>
                   </div>
 
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setBalanceAccountId(acc.id);
-                    }}
-                    title="청구 예정액 수정"
-                    className="p-1.5 text-slate-300 hover:text-emerald-600 rounded-lg transition"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
