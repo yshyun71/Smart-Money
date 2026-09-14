@@ -242,6 +242,30 @@ export function updateAccountBalance(
   );
 }
 
+/** The details the user typed in when registering, corrected after the fact. */
+export function updateAccountDetails(
+  id: string,
+  details: {
+    name: string;
+    institution: string;
+    identifier: string;
+    type: ConnectedAccount["type"];
+  }
+): void {
+  run(
+    `UPDATE accounts SET name = ?, institution = ?, identifier = ?, type = ?
+     WHERE id = ? AND user_id = ?`,
+    [
+      details.name.trim(),
+      details.institution.trim(),
+      details.identifier.trim(),
+      details.type,
+      id,
+      requireUser(),
+    ]
+  );
+}
+
 export function deleteAccount(id: string): void {
   run("DELETE FROM accounts WHERE id = ? AND user_id = ?", [id, requireUser()]);
 }

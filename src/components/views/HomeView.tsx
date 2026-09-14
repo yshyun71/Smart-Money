@@ -19,6 +19,7 @@ import {
   AlertCircle,
   PiggyBank,
 } from "lucide-react";
+import { accountTone } from "../../utils/accountTone";
 
 interface HomeViewProps {
   onNavigateTab: (tab: NavTab) => void;
@@ -296,7 +297,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </span>
                 <span
                   className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: acc.color }}
+                  style={{ backgroundColor: accountTone(acc.type).hex }}
                 />
               </div>
               <div className="text-xs font-bold text-slate-800 truncate mt-1">

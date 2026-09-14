@@ -104,6 +104,16 @@ interface FinanceContextType {
   importTransactions: (inserts: Omit<Transaction, "id">[], updates: Transaction[]) => void;
   addAccount: (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => void;
   deleteAccount: (id: string) => void;
+  /** Corrects the name, institution, number or kind of an account. */
+  updateAccountDetails: (
+    id: string,
+    details: {
+      name: string;
+      institution: string;
+      identifier: string;
+      type: ConnectedAccount["type"];
+    }
+  ) => void;
   /** Records a balance together with the moment it is true as of. */
   setAccountBalance: (
     id: string,
@@ -793,6 +803,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const updateAccountDetails = (
+    id: string,
+    details: {
+      name: string;
+      institution: string;
+      identifier: string;
+      type: ConnectedAccount["type"];
+    }
+  ) => {
+    try {
+      repo.updateAccountDetails(id, details);
+      setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...details } : a)));
+    } catch (error) {
+      console.error("계좌 정보를 수정하지 못했습니다:", error);
+      throw error;
+    }
+  };
+
   const setAccountBalance = (
     id: string,
     balance: number,
@@ -1090,6 +1118,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         addAccount,
         deleteAccount,
         setAccountBalance,
+        updateAccountDetails,
         categories,
         addCategory,
         deleteCategory,

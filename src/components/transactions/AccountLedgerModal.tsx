@@ -20,6 +20,7 @@ import {
 } from "./ClassifyResultModal";
 import { CategoryRulesModal } from "./CategoryRulesModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
+import { AccountEditModal } from "../modals/AccountEditModal";
 import { MonthPickerModal } from "./MonthPickerModal";
 import { CardUsageModal } from "./CardUsageModal";
 import { matchCardAccount } from "../../services/cardLink";
@@ -36,6 +37,7 @@ import {
   recurrenceFor,
 } from "../../services/recurrence";
 import { asOfLabel, won } from "../../utils/format";
+import { accountTone } from "../../utils/accountTone";
 import { isInstalment } from "../../services/csvImport";
 import {
   X,
@@ -183,6 +185,7 @@ export const AccountLedgerModal: React.FC<{
   const [showRules, setShowRules] = useState(false);
   const [showBalance, setShowBalance] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   /** The card bill whose month of usage is being read, if any. */
   const [usage, setUsage] = useState<{
     accountId: string;
@@ -216,6 +219,7 @@ export const AccountLedgerModal: React.FC<{
     setShowRules(false);
     setShowBalance(false);
     setShowMonthPicker(false);
+    setShowDetails(false);
     setUsage(null);
     setShowHelp(false);
     setPeriodMode("MONTH");
@@ -263,6 +267,7 @@ export const AccountLedgerModal: React.FC<{
         !showRules &&
         !showBalance &&
         !showMonthPicker &&
+        !showDetails &&
         !usage
       ) {
         onClose();
@@ -277,7 +282,7 @@ export const AccountLedgerModal: React.FC<{
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, summary, showRules, showBalance, showMonthPicker, usage]);
+  }, [isOpen, onClose, summary, showRules, showBalance, showMonthPicker, showDetails, usage]);
 
   /** True when an entry falls inside the chosen month or span. */
   const inPeriod = useMemo(() => {
@@ -623,17 +628,28 @@ export const AccountLedgerModal: React.FC<{
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2 min-w-0">
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0"
-              style={{ backgroundColor: account.color || "#334155" }}
+              className={`w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 ${
+                accountTone(account.type).bg
+              }`}
+
             >
               {isBank ? <Building className="w-4 h-4" /> : <CreditCard className="w-4 h-4" />}
             </div>
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-900 truncate">{account.name}</h3>
               <p className="text-[10px] text-slate-400 font-mono truncate">
-                {account.identifier}
+                {account.institution} · {account.identifier}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowDetails(true)}
+              aria-label={isBank ? "계좌 정보 수정" : "카드 정보 수정"}
+              title={isBank ? "계좌 정보 수정" : "카드 정보 수정"}
+              className="w-8 h-8 shrink-0 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
           </div>
           <button
             type="button"
@@ -1225,6 +1241,11 @@ export const AccountLedgerModal: React.FC<{
         isOpen={showBalance}
         accountId={accountId}
         onClose={() => setShowBalance(false)}
+      />
+      <AccountEditModal
+        isOpen={showDetails}
+        accountId={accountId}
+        onClose={() => setShowDetails(false)}
       />
       <CardUsageModal
         isOpen={Boolean(usage)}

@@ -10,6 +10,7 @@ import {
   Coins,
   ReceiptText,
 } from "lucide-react";
+import { accountTone } from "../../utils/accountTone";
 
 export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
   onOpenAddModal,
@@ -178,7 +179,7 @@ export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
           >
             <span
               className="w-1.5 h-1.5 rounded-full"
-              style={{ backgroundColor: acc.color }}
+              style={{ backgroundColor: accountTone(acc.type).hex }}
             />
             <span>{acc.name}</span>
           </button>

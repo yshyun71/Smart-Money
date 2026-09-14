@@ -5,6 +5,7 @@ import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { CsvImportModal } from "../modals/CsvImportModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
+import { accountTone } from "../../utils/accountTone";
 import { asOfFromParts, asOfLabel, asOfParts, formatAmountInput, parseAmountInput } from "../../utils/format";
 import {
   CreditCard,
@@ -346,8 +347,9 @@ export const ConnectedAssetsView: React.FC<{
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className="w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-2xs"
-                    style={{ backgroundColor: acc.color }}
+                    className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-2xs ${
+                      accountTone(acc.type).bg
+                    }`}
                   >
                     {acc.institution.substring(0, 2)}
                   </div>
@@ -450,8 +452,9 @@ export const ConnectedAssetsView: React.FC<{
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className="w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-2xs"
-                    style={{ backgroundColor: acc.color }}
+                    className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-2xs ${
+                      accountTone(acc.type).bg
+                    }`}
                   >
                     {acc.institution.substring(0, 2)}
                   </div>

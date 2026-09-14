@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import type { Transaction } from "../../types/finance";
 import { won } from "../../utils/format";
+import { accountTone } from "../../utils/accountTone";
 import {
   X,
   CreditCard,
@@ -109,8 +110,10 @@ export const CardUsageModal: React.FC<{
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2 min-w-0">
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0"
-              style={{ backgroundColor: account.color || "#334155" }}
+              className={`w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 ${
+                accountTone(account.type).bg
+              }`}
+
             >
               <CreditCard className="w-4 h-4" />
             </div>
