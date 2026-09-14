@@ -45,12 +45,18 @@ export const CardUsageModal: React.FC<{
   isOpen: boolean;
   /** The card whose usage is being read. */
   accountId: string;
-  /** The month the bill was paid, which the view opens on. */
+  /** The month the bill was paid out of the account. */
   paidMonth: string;
+  /**
+   * The statement this payment settles, where one adds up to exactly the
+   * amount withdrawn. The view opens on it; without one it opens on the month
+   * the payment was made.
+   */
+  billingMonth?: string | null;
   /** The amount of that bill, shown for comparison. */
   billedAmount: number;
   onClose: () => void;
-}> = ({ isOpen, accountId, paidMonth, billedAmount, onClose }) => {
+}> = ({ isOpen, accountId, paidMonth, billingMonth, billedAmount, onClose }) => {
   const { accounts, allTransactions } = useFinance();
 
   const [month, setMonth] = useState(paidMonth);
@@ -58,10 +64,10 @@ export const CardUsageModal: React.FC<{
 
   useEffect(() => {
     if (!isOpen) return;
-    setMonth(paidMonth);
+    setMonth(billingMonth || paidMonth);
     // The bill is the question being asked, so billing month leads
     setBasis("BILLED");
-  }, [isOpen, paidMonth]);
+  }, [isOpen, paidMonth, billingMonth]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -123,6 +129,7 @@ export const CardUsageModal: React.FC<{
               </h3>
               <p className="text-[10px] text-slate-400 truncate">
                 {monthLabel(paidMonth)} 결제 {won(billedAmount)}
+                {billingMonth ? ` · ${monthLabel(billingMonth)} 명세서` : ""}
               </p>
             </div>
           </div>
@@ -192,17 +199,43 @@ export const CardUsageModal: React.FC<{
             <div className="text-[10px] text-rose-600">이용 합계</div>
             <div className="text-xs font-black text-rose-700">{won(totals.spent)}</div>
           </div>
-          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
-            <div className="text-[10px] text-slate-500">결제액과 차이</div>
-            <div className="text-xs font-black text-slate-800">
+          <div
+            className={`p-2.5 rounded-xl border ${
+              Math.round(totals.net) === Math.round(billedAmount)
+                ? "bg-emerald-50 border-emerald-100"
+                : "bg-slate-50 border-slate-200/80"
+            }`}
+          >
+            <div
+              className={`text-[10px] ${
+                Math.round(totals.net) === Math.round(billedAmount)
+                  ? "text-emerald-600"
+                  : "text-slate-500"
+              }`}
+            >
+              {Math.round(totals.net) === Math.round(billedAmount)
+                ? "결제액과 일치"
+                : "결제액과 차이"}
+            </div>
+            <div
+              className={`text-xs font-black ${
+                Math.round(totals.net) === Math.round(billedAmount)
+                  ? "text-emerald-700"
+                  : "text-slate-800"
+              }`}
+            >
               {won(Math.abs(totals.net - billedAmount))}
             </div>
           </div>
         </div>
 
         <p className="text-[10px] text-slate-400 leading-relaxed">
-          {basis === "BILLED"
-            ? "명세서에 적힌 결제월로 묶어 보여줍니다. 결제월이 기록되지 않은 내역은 이용한 달로 표시되므로, 맞지 않으면 이용일자 기준으로 바꿔보세요."
+          {billingMonth
+            ? `출금액과 합계가 정확히 일치하는 ${monthLabel(
+                billingMonth
+              )} 명세서를 찾아 연결했습니다.`
+            : basis === "BILLED"
+            ? "이 출금액과 합계가 일치하는 명세서를 찾지 못해 결제한 달로 열었습니다. 명세서를 가져올 때 결제월을 지정하면 정확히 연결됩니다."
             : "카드를 실제로 사용한 날짜 기준입니다. 청구액은 보통 전월 이용분이라 결제한 달과 다를 수 있습니다."}
         </p>
 

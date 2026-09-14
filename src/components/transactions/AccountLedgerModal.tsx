@@ -23,7 +23,11 @@ import { BalanceEditModal } from "../modals/BalanceEditModal";
 import { AccountEditModal } from "../modals/AccountEditModal";
 import { MonthPickerModal } from "./MonthPickerModal";
 import { CardUsageModal } from "./CardUsageModal";
-import { matchCardAccount } from "../../services/cardLink";
+import {
+  billingTotalsFor,
+  matchBillingMonth,
+  matchCardAccount,
+} from "../../services/cardLink";
 import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
 import {
   builtInCategoryFor,
@@ -190,6 +194,8 @@ export const AccountLedgerModal: React.FC<{
   const [usage, setUsage] = useState<{
     accountId: string;
     month: string;
+    /** The statement this payment settles, when one adds up to it. */
+    billingMonth: string | null;
     amount: number;
   } | null>(null);
 
@@ -401,6 +407,48 @@ export const AccountLedgerModal: React.FC<{
       return next;
     });
   };
+
+  /**
+   * Each card bill paid out of this account, tied to the one billing month of
+   * its card that adds up to the same figure.
+   *
+   * Payments are settled oldest first and a month claimed by one is not
+   * offered to the next, so two withdrawals can never point at the same
+   * statement. A bill that matches nothing is left alone rather than guessed.
+   */
+  const billingLinks = useMemo(() => {
+    const links = new Map<string, string>();
+    const totalsByCard = new Map<string, Map<string, number>>();
+    const claimed = new Map<string, Set<string>>();
+
+    const payments = accountEntries
+      .filter((tx) => tx.category === CARD_PAYMENT_CATEGORY && tx.linkedAccountId)
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    for (const tx of payments) {
+      const cardId = tx.linkedAccountId as string;
+
+      if (!totalsByCard.has(cardId)) {
+        totalsByCard.set(cardId, billingTotalsFor(allTransactions, cardId));
+        claimed.set(cardId, new Set());
+      }
+
+      const month = matchBillingMonth(
+        totalsByCard.get(cardId)!,
+        tx.amount,
+        tx.date.slice(0, 7),
+        claimed.get(cardId)!
+      );
+
+      if (month) {
+        links.set(tx.id, month);
+        claimed.get(cardId)!.add(month);
+      }
+    }
+
+    return links;
+  }, [accountEntries, allTransactions]);
 
   const rulesHere: CategoryRule[] = useMemo(
     () => categoryRules.filter((rule: CategoryRule) => rule.accountId === accountId),
@@ -1113,6 +1161,7 @@ export const AccountLedgerModal: React.FC<{
                           (a: { id: string }) => a.id === tx.linkedAccountId
                         )
                       : null;
+                    const billedMonth = billingLinks.get(tx.id) || null;
                     return (
                       <div
                         key={tx.id}
@@ -1179,17 +1228,32 @@ export const AccountLedgerModal: React.FC<{
                               setUsage({
                                 accountId: linkedCard.id,
                                 month: tx.date.slice(0, 7),
+                                billingMonth: billedMonth,
                                 amount: tx.amount,
                               })
                             }
-                            title={`${linkedCard.name} 이용 내역 보기`}
-                            className="shrink-0 pr-3 pl-1 py-2.5 flex items-center gap-1 text-xs font-black text-indigo-700 hover:text-indigo-900 transition cursor-pointer"
+                            title={
+                              billedMonth
+                                ? `${linkedCard.name} ${Number(
+                                    billedMonth.slice(5)
+                                  )}월 명세서 보기`
+                                : `${linkedCard.name} 이용 내역 보기`
+                            }
+                            className="shrink-0 pr-3 pl-1 py-2 text-right hover:bg-indigo-50/60 rounded-lg transition cursor-pointer group/bill"
                           >
-                            <span>
+                            <div className="text-xs font-black text-indigo-700">
                               {tx.type === "INCOME" ? "+" : "-"}
                               {won(tx.amount)}
-                            </span>
-                            <CreditCard className="w-3 h-3" />
+                            </div>
+                            <div className="text-[10px] font-bold text-indigo-500 flex items-center justify-end gap-0.5">
+                              <CreditCard className="w-2.5 h-2.5" />
+                              <span>
+                                {billedMonth
+                                  ? `${Number(billedMonth.slice(5))}월 명세서`
+                                  : "이용 내역"}
+                              </span>
+                              <ChevronRight className="w-2.5 h-2.5 group-hover/bill:translate-x-0.5 transition" />
+                            </div>
                           </button>
                         ) : (
                           <span
@@ -1251,6 +1315,7 @@ export const AccountLedgerModal: React.FC<{
         isOpen={Boolean(usage)}
         accountId={usage?.accountId || ""}
         paidMonth={usage?.month || ""}
+        billingMonth={usage?.billingMonth || null}
         billedAmount={usage?.amount || 0}
         onClose={() => setUsage(null)}
       />
