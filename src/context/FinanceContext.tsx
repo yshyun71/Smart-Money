@@ -29,7 +29,7 @@ import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 import { resolveCategory } from "../services/categoryRules";
-import { matchCardAccount } from "../services/cardLink";
+import { matchCardForBill } from "../services/cardLink";
 import {
   BUILT_IN_CATEGORIES,
   CARD_PAYMENT_CATEGORY,
@@ -664,8 +664,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     // A card bill says which issuer it settles; if exactly one registered card
     // matches, the payment points at it from the start.
     if (next.category === CARD_PAYMENT_CATEGORY && !next.linkedAccountId) {
-      const card = matchCardAccount(next.merchant, accounts);
-      if (card) return { ...next, linkedAccountId: card };
+      const bill = matchCardForBill(
+        next.merchant,
+        Number((next as { amount?: number }).amount || 0),
+        (next as { date?: string }).date?.slice(0, 7) || "",
+        accounts,
+        transactions
+      );
+      if (bill) return { ...next, linkedAccountId: bill.accountId };
     }
 
     return next;

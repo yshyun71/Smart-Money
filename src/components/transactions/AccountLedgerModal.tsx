@@ -26,7 +26,7 @@ import { CardUsageModal } from "./CardUsageModal";
 import {
   billingTotalsFor,
   matchBillingMonth,
-  matchCardAccount,
+  matchCardForBill,
 } from "../../services/cardLink";
 import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
 import {
@@ -475,6 +475,20 @@ export const AccountLedgerModal: React.FC<{
       const index = buildRecurrenceIndex(allTransactions);
       const confirmed = userRulesOnly(rulesHere);
 
+      /*
+        Statements already spoken for. A card bill belongs to one month of one
+        card, so a month another payment settles is not on offer to this run.
+      */
+      const inBatch = new Set(targets.map((tx) => tx.id));
+      const claimedBills = new Set<string>();
+      for (const [txId, month] of billingLinks) {
+        if (inBatch.has(txId)) continue;
+        const settled = accountEntries.find((tx) => tx.id === txId);
+        if (settled?.linkedAccountId) {
+          claimedBills.add(`${settled.linkedAccountId}|${month}`);
+        }
+      }
+
       const items: ClassifyItem[] = targets.map((tx, position) => {
         const info = recurrenceFor(tx, index);
         return {
@@ -565,10 +579,23 @@ export const AccountLedgerModal: React.FC<{
         if (categoryChanged) categoryCorrected++;
         if (dayChanged && recurringDay) paymentDaySet++;
 
-        const linkedAccountId =
-          category === CARD_PAYMENT_CATEGORY && !tx.linkedAccountId
-            ? matchCardAccount(tx.merchant, accounts) ?? undefined
-            : tx.linkedAccountId;
+        let linkedAccountId = tx.linkedAccountId;
+        if (category === CARD_PAYMENT_CATEGORY && !linkedAccountId) {
+          const bill = matchCardForBill(
+            tx.merchant,
+            tx.amount,
+            tx.date.slice(0, 7),
+            accounts,
+            allTransactions,
+            claimedBills
+          );
+          if (bill) {
+            linkedAccountId = bill.accountId;
+            if (bill.billingMonth) {
+              claimedBills.add(`${bill.accountId}|${bill.billingMonth}`);
+            }
+          }
+        }
 
         const updated: Transaction = {
           ...tx,

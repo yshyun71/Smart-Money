@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
-import { formatAmountInput } from "../../utils/format";
+import { formatAmountInput, parseAmountInput } from "../../utils/format";
 import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
 import { suggestPattern } from "../../services/categoryRules";
-import { matchCardAccount, isCardAccount } from "../../services/cardLink";
+import { matchCardForBill, isCardAccount } from "../../services/cardLink";
 import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
 import { CategorySelect } from "./CategorySelect";
 import {
@@ -33,6 +33,7 @@ export const AddTransactionModal: React.FC<{
     updateTransaction,
     deleteTransaction,
     accounts,
+    allTransactions,
     saveCategoryRule,
     categoryForMerchant,
   } = useFinance();
@@ -139,10 +140,16 @@ export const AddTransactionModal: React.FC<{
     if (!isOpen || linkTouched) return;
     if (category !== CARD_PAYMENT_CATEGORY || linkedAccountId) return;
 
-    const match = matchCardAccount(merchant, accounts);
-    if (match) setLinkedAccountId(match);
+    const bill = matchCardForBill(
+      merchant,
+      parseAmountInput(amount),
+      date.slice(0, 7),
+      accounts,
+      allTransactions
+    );
+    if (bill) setLinkedAccountId(bill.accountId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, category, merchant, accounts, linkedAccountId, linkTouched]);
+  }, [isOpen, category, merchant, amount, date, accounts, linkedAccountId, linkTouched]);
 
   // Moving an entry to another category is the moment the rule is worth making
   useEffect(() => {

@@ -108,3 +108,57 @@ export function matchBillingMonth(
 
   return candidates[0][0];
 }
+
+/**
+ * Which card a withdrawal settles, decided by what it paid for.
+ *
+ * The issuer written on a bank line narrows the field but does not settle it:
+ * two 삼성카드s are two different bills. What tells them apart is the money —
+ * exactly one of them billed exactly this amount in one of its months. Only
+ * where the amount decides nothing does a lone card of that issuer take it,
+ * which is the case where a statement has yet to be imported.
+ */
+export function matchCardForBill(
+  merchant: string,
+  amount: number,
+  paidMonth: string,
+  accounts: ConnectedAccount[],
+  transactions: Transaction[],
+  claimed: Set<string> = new Set()
+): { accountId: string; billingMonth: string | null } | null {
+  const cards = accounts.filter(isCardAccount);
+  if (cards.length === 0) return null;
+
+  const wanted = issuersIn(merchant);
+  const named = cards.filter((card) =>
+    issuersIn(`${card.institution} ${card.name}`).some((issuer) => wanted.includes(issuer))
+  );
+
+  // A line naming an issuer means one of those cards; otherwise any of them
+  const candidates = named.length > 0 ? named : cards;
+
+  const hits = candidates.flatMap((card) => {
+    const month = matchBillingMonth(
+      billingTotalsFor(transactions, card.id),
+      amount,
+      paidMonth,
+      new Set(
+        Array.from(claimed)
+          .filter((key) => key.startsWith(`${card.id}|`))
+          .map((key) => key.slice(card.id.length + 1))
+      )
+    );
+    return month ? [{ accountId: card.id, billingMonth: month }] : [];
+  });
+
+  if (hits.length === 1) return hits[0];
+
+  /*
+    Several cards billing the same amount cannot be told apart by it, and
+    picking one would file a bill against a card that did not send it. The
+    user says which, on the entry itself.
+  */
+  if (hits.length > 1) return null;
+
+  return named.length === 1 ? { accountId: named[0].id, billingMonth: null } : null;
+}
