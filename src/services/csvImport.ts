@@ -415,6 +415,46 @@ function detectFromRows(
   };
 }
 
+export interface MappingScore {
+  /** Rows whose date column reads as a date. */
+  dated: number;
+  /** Of those, how many also yield an amount. */
+  usable: number;
+  ratio: number;
+  /** Whether the mapping is worth proceeding with unaided. */
+  ok: boolean;
+}
+
+/**
+ * How much of a file a mapping actually accounts for.
+ *
+ * Reading a handful of rows is not the same as reading the statement: a column
+ * of instalment numbers looks like money on exactly the lines that have one.
+ * A mapping that leaves most of the file behind is the signal to ask for help.
+ */
+export function scoreMapping(table: ParsedTable, mapping: ColumnMapping): MappingScore {
+  const hasAmount =
+    mapping.amount >= 0 || mapping.withdrawal >= 0 || mapping.deposit >= 0;
+
+  const dated = table.rows.filter((row) =>
+    normaliseDate(row[mapping.date] || "")
+  ).length;
+  const usable = usableRows(table.rows, mapping);
+  const ratio = dated > 0 ? usable / dated : 0;
+
+  return {
+    dated,
+    usable,
+    ratio,
+    ok:
+      mapping.date >= 0 &&
+      hasAmount &&
+      mapping.merchant >= 0 &&
+      usable > 0 &&
+      ratio >= 0.6,
+  };
+}
+
 /**
  * Names first, and the rows themselves when the names come to nothing.
  * `rows` is optional so the mapping can still be guessed from a header alone.

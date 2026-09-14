@@ -443,3 +443,95 @@ ${question}
     throw describeAiFailure(error);
   }
 }
+
+// ---------------------------------------------------------------------------
+// 5. Reading a statement's columns
+// ---------------------------------------------------------------------------
+
+const MAPPING_SCHEMA = object({
+  date: int("거래·이용 일자 열의 0부터 시작하는 번호. 없으면 -1"),
+  merchant: int("가맹점명·적요 등 내용 열 번호. 없으면 -1"),
+  amount: int("출금/입금이 한 열에 합쳐진 경우의 금액 열 번호. 아니면 -1"),
+  withdrawal: int("지출(출금·이번달 청구 원금) 열 번호. 없으면 -1"),
+  deposit: int("수입(입금) 열 번호. 없으면 -1"),
+  memo: int("구분·비고 등 메모 열 번호. 없으면 -1"),
+  billing: int("결제일·청구년월 열 번호. 없으면 -1"),
+  reason: str("어느 열을 왜 골랐는지 한 줄"),
+});
+
+export interface DetectedMapping {
+  date: number;
+  merchant: number;
+  amount: number;
+  withdrawal: number;
+  deposit: number;
+  memo: number;
+  billing: number;
+  reason?: string;
+}
+
+/**
+ * Asks the model which column is which, and nothing else.
+ *
+ * Every issuer lays a statement out differently, and the names alone cannot
+ * always settle it — a column headed 이번달 결제금액 may hold instalment
+ * numbers. Only the header and a few sample lines are sent: the file is read
+ * and understood on the device, and what comes back is a set of column
+ * numbers, which the user sees and can correct before anything is imported.
+ */
+export async function detectStatementColumns(
+  headers: string[],
+  sampleRows: string[][]
+): Promise<DetectedMapping> {
+  const numbered = headers.map((header, index) => `${index}: ${header || "(빈 제목)"}`);
+
+  const prompt = `
+다음은 은행 또는 카드사에서 내려받은 거래내역 파일의 표입니다.
+각 항목이 몇 번 열에 있는지 판별하세요.
+
+[열 목록 — "번호: 제목"]
+${numbered.join("\n")}
+
+[표본 행 ${sampleRows.length}개 — 위 열 순서와 같습니다]
+${sampleRows.map((row) => JSON.stringify(row)).join("\n")}
+
+[판별 규칙]
+1. 열 번호는 0부터 시작합니다. 해당하는 열이 없으면 반드시 -1을 반환하세요.
+2. 금액은 **한 건의 거래 금액**이어야 합니다. 다음은 금액이 아닙니다.
+   - 잔액, 결제 후 잔액, 누계, 한도
+   - 할부 회차, 할부개월, 건수 같이 **개수를 세는 숫자**
+   - 적립 포인트, 마일리지
+3. 출금/입금이 별도 열이면 withdrawal/deposit을 쓰고 amount는 -1로 두세요.
+   한 열에 합쳐져 있으면 amount만 쓰고 나머지는 -1로 두세요.
+4. 카드 명세서에서 이번 달 청구되는 금액(예: "이번달 결제금액 원금")이 있으면
+   그것을 withdrawal로 봅니다. 총 이용금액만 있으면 그 열을 씁니다.
+5. merchant는 사람이 보고 무엇에 썼는지 알 수 있는 열(가맹점명 등)입니다.
+6. memo에는 "할부/일시불" 같은 결제 구분 열을 우선합니다. 할부개월 수가 담긴
+   열은 memo가 아닙니다.
+7. 표본 행에서 그 열의 값이 실제로 규칙에 맞는지 확인한 뒤 답하세요.
+`;
+
+  const parsed = await generateJson<DetectedMapping>({
+    system:
+      "은행·카드사 거래내역 파일의 열 구조를 판별하는 도구입니다. 열 번호만 정확히 반환하고, 확신이 없으면 -1을 쓰세요. JSON만 출력하세요.",
+    prompt,
+    schema: MAPPING_SCHEMA,
+    schemaName: "statement_columns",
+  });
+
+  const column = (value: unknown, limit: number): number => {
+    const index = Number(value);
+    return Number.isInteger(index) && index >= 0 && index < limit ? index : -1;
+  };
+
+  return {
+    date: column(parsed.date, headers.length),
+    merchant: column(parsed.merchant, headers.length),
+    amount: column(parsed.amount, headers.length),
+    withdrawal: column(parsed.withdrawal, headers.length),
+    deposit: column(parsed.deposit, headers.length),
+    memo: column(parsed.memo, headers.length),
+    billing: column(parsed.billing, headers.length),
+    reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+  };
+}

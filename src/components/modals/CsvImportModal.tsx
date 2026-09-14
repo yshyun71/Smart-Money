@@ -12,11 +12,15 @@ import {
   isInstalment,
   loadStatementFile,
   parseDelimited,
+  scoreMapping,
   type ColumnMapping,
   type DraftRow,
   type ParsedTable,
 } from "../../services/csvImport";
 import { asOfLabel } from "../../utils/format";
+import { recallMapping, rememberMapping } from "../../services/statementFormats";
+import { detectStatementColumns } from "../../services/aiClient";
+import { hasApiKey } from "../../services/ai";
 import { planBalanceAdjustment } from "../../services/balance";
 import {
   X,
@@ -33,6 +37,7 @@ import {
   Replace,
   CheckSquare,
   Square,
+  Wand2,
 } from "lucide-react";
 
 type Step = "PICK" | "MAP" | "REVIEW" | "DONE";
@@ -83,6 +88,12 @@ export const CsvImportModal: React.FC<{
   const [adjustBalance, setAdjustBalance] = useState(false);
   /** The month a card statement bills, when its lines do not each say. */
   const [billingMonth, setBillingMonth] = useState("");
+  /** Where the column mapping came from, which the user is told. */
+  const [mappingSource, setMappingSource] = useState<
+    "RULES" | "AI" | "REMEMBERED" | "MANUAL"
+  >("RULES");
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [detectNote, setDetectNote] = useState<string | null>(null);
 
   const account = accounts.find((a) => a.id === accountId);
 
@@ -102,6 +113,9 @@ export const CsvImportModal: React.FC<{
     setResult(null);
     setAdjustBalance(false);
     setBillingMonth("");
+    setMappingSource("RULES");
+    setIsDetecting(false);
+    setDetectNote(null);
   };
 
   const handleClose = () => {
@@ -191,8 +205,57 @@ export const CsvImportModal: React.FC<{
       }
 
       setTable(parsed);
-      setMapping(autoDetectMapping(parsed.headers, parsed.rows));
       setStep("MAP");
+
+      /*
+        A format confirmed once is applied without another thought. Otherwise
+        the rules have a go, and only where they cannot account for most of the
+        file is the model asked — and then only about which column is which.
+      */
+      const remembered = recallMapping(parsed.headers);
+      if (remembered) {
+        setMapping(remembered);
+        setMappingSource("REMEMBERED");
+        return;
+      }
+
+      const guess = autoDetectMapping(parsed.headers, parsed.rows);
+      setMapping(guess);
+      setMappingSource("RULES");
+
+      if (scoreMapping(parsed, guess).ok || !hasApiKey()) return;
+
+      setIsDetecting(true);
+      try {
+        const detected = await detectStatementColumns(
+          parsed.headers,
+          parsed.rows.slice(0, 5)
+        );
+        const asMapping: ColumnMapping = {
+          date: detected.date,
+          merchant: detected.merchant,
+          amount: detected.amount,
+          withdrawal: detected.withdrawal,
+          deposit: detected.deposit,
+          memo: detected.memo,
+          billing: detected.billing,
+        };
+
+        // Only if it actually reads the file better than the rules did
+        const before = scoreMapping(parsed, guess);
+        const after = scoreMapping(parsed, asMapping);
+        if (after.ok || after.usable > before.usable) {
+          setMapping(asMapping);
+          setMappingSource("AI");
+          setDetectNote(detected.reason || null);
+        } else {
+          setMappingSource("RULES");
+        }
+      } catch (error) {
+        console.error("열 구조를 인식하지 못했습니다:", error);
+      } finally {
+        setIsDetecting(false);
+      }
     } catch (error) {
       console.error(error);
       setFileError(
@@ -206,9 +269,42 @@ export const CsvImportModal: React.FC<{
     }
   };
 
+  /** Asks the model again, for when the rules or a remembered format are wrong. */
+  const redetectWithAi = async () => {
+    if (!table || !hasApiKey() || isDetecting) return;
+
+    setIsDetecting(true);
+    setDetectNote(null);
+    try {
+      const detected = await detectStatementColumns(table.headers, table.rows.slice(0, 5));
+      setMapping({
+        date: detected.date,
+        merchant: detected.merchant,
+        amount: detected.amount,
+        withdrawal: detected.withdrawal,
+        deposit: detected.deposit,
+        memo: detected.memo,
+        billing: detected.billing,
+      });
+      setMappingSource("AI");
+      setDetectNote(detected.reason || null);
+    } catch (error) {
+      setFileError(
+        error instanceof Error && error.message
+          ? error.message
+          : "열 구조를 인식하지 못했습니다."
+      );
+    } finally {
+      setIsDetecting(false);
+    }
+  };
+
   /** Splits the parsed rows into new entries and ones already recorded. */
   const goToReview = () => {
     const { drafts, skipped } = preview;
+
+    // The columns have now been seen by a person, so this format is settled
+    if (table) rememberMapping(table.headers, mapping);
 
     /*
       Only this account's own entries count as duplicates. The same shop, the
@@ -331,9 +427,11 @@ export const CsvImportModal: React.FC<{
       </label>
       <select
         value={mapping[field]}
-        onChange={(e) =>
-          setMapping((prev) => ({ ...prev, [field]: Number(e.target.value) }))
-        }
+        onChange={(e) => {
+          setMappingSource("MANUAL");
+          setDetectNote(null);
+          setMapping((prev) => ({ ...prev, [field]: Number(e.target.value) }));
+        }}
         className="w-full px-2.5 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
       >
         <option value={-1}>사용 안 함</option>
@@ -504,6 +602,58 @@ export const CsvImportModal: React.FC<{
 
         {step === "MAP" && table && (
           <>
+            {/* Where the column mapping came from, and what to do about it */}
+            <div
+              className={`p-2.5 rounded-xl border text-[10px] leading-relaxed flex items-start gap-1.5 ${
+                isDetecting
+                  ? "bg-slate-50 border-slate-200 text-slate-500"
+                  : mappingSource === "AI"
+                  ? "bg-emerald-50 border-emerald-200/80 text-emerald-800"
+                  : mappingSource === "REMEMBERED"
+                  ? "bg-indigo-50 border-indigo-200/80 text-indigo-800"
+                  : "bg-slate-50 border-slate-200 text-slate-500"
+              }`}
+            >
+              {isDetecting ? (
+                <Loader2 className="w-3.5 h-3.5 shrink-0 mt-px animate-spin" />
+              ) : (
+                <Wand2 className="w-3.5 h-3.5 shrink-0 mt-px" />
+              )}
+              <div className="min-w-0 flex-1">
+                {isDetecting ? (
+                  <span>AI가 열 구조를 확인하고 있습니다...</span>
+                ) : mappingSource === "REMEMBERED" ? (
+                  <span>
+                    이전에 확인한 형식이라 열을 그대로 적용했습니다. 맞지 않으면 아래에서
+                    바꾸면 됩니다.
+                  </span>
+                ) : mappingSource === "AI" ? (
+                  <span>
+                    AI가 열 구조를 인식했습니다{detectNote ? ` — ${detectNote}` : ""}. 아래
+                    미리보기로 확인해주세요.
+                  </span>
+                ) : (
+                  <span>
+                    파일의 열 제목과 값으로 자동 지정했습니다. 아래 미리보기가 비어 있거나
+                    금액이 이상하면 열을 직접 바꿔주세요.
+                  </span>
+                )}
+
+                {!isDetecting && table && !scoreMapping(table, mapping).ok && (
+                  <button
+                    type="button"
+                    onClick={() => void redetectWithAi()}
+                    disabled={!hasApiKey()}
+                    className="mt-1 font-bold underline underline-offset-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    {hasApiKey()
+                      ? "AI로 다시 인식하기"
+                      : "AI로 인식하려면 설정에서 키를 등록하세요"}
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2.5">
               {columnSelect("날짜", "date", "거래일자", true)}
               {columnSelect("내용", "merchant", "가맹점·적요")}
