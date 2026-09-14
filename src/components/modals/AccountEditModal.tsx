@@ -25,6 +25,9 @@ export const AccountEditModal: React.FC<{
   const [institution, setInstitution] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [kind, setKind] = useState<Kind>("BANK");
+  const [payMode, setPayMode] = useState<"REGISTERED" | "MANUAL">("REGISTERED");
+  const [payAccountId, setPayAccountId] = useState("");
+  const [payLabel, setPayLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const account = accounts.find((a: { id: string }) => a.id === accountId);
@@ -35,6 +38,9 @@ export const AccountEditModal: React.FC<{
     setInstitution(account.institution || "");
     setIdentifier(account.identifier || "");
     setKind(account.type === "BANK" ? "BANK" : "CARD");
+    setPayAccountId(account.paymentAccountId || "");
+    setPayLabel(account.paymentAccountLabel || "");
+    setPayMode(account.paymentAccountLabel && !account.paymentAccountId ? "MANUAL" : "REGISTERED");
     setError(null);
   }, [isOpen, account?.id, account?.name, account?.institution, account?.identifier]);
 
@@ -52,6 +58,11 @@ export const AccountEditModal: React.FC<{
   const isBank = kind === "BANK";
   const kindChanged = (account.type === "BANK") !== isBank;
 
+  /** A card is paid from an account, never from another card. */
+  const bankChoices = accounts.filter(
+    (a: { id: string; type: string }) => a.type === "BANK" && a.id !== account.id
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -66,6 +77,10 @@ export const AccountEditModal: React.FC<{
         institution: institution.trim(),
         identifier: identifier.trim() || (isBank ? "xxxx-xx-xxxx" : "xxxx-xxxx"),
         type: kind,
+        // A bill belongs to a card; an account does not have one
+        paymentAccountId: isBank || payMode === "MANUAL" ? undefined : payAccountId || undefined,
+        paymentAccountLabel:
+          isBank || payMode === "REGISTERED" ? undefined : payLabel.trim() || undefined,
       });
       onClose();
     } catch {
@@ -186,6 +201,69 @@ export const AccountEditModal: React.FC<{
               className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden font-mono"
             />
           </div>
+
+
+          {/* Where the bill is taken from, which is how a withdrawal finds it */}
+          {!isBank && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                결제 계좌
+              </label>
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl mb-2">
+                <button
+                  type="button"
+                  onClick={() => setPayMode("REGISTERED")}
+                  className={`py-2 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                    payMode === "REGISTERED"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  등록된 계좌
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayMode("MANUAL")}
+                  className={`py-2 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                    payMode === "MANUAL"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  직접 입력
+                </button>
+              </div>
+
+              {payMode === "REGISTERED" ? (
+                <select
+                  value={payAccountId}
+                  onChange={(e) => setPayAccountId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden bg-white"
+                >
+                  <option value="">선택 안 함</option>
+                  {bankChoices.map((acc: { id: string; name: string; institution: string }) => (
+                    <option key={acc.id} value={acc.id}>
+                      [{acc.institution}] {acc.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={payLabel}
+                  onChange={(e) => setPayLabel(e.target.value)}
+                  placeholder="예: KB국민은행 357210-13-7155"
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                />
+              )}
+
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                {payMode === "REGISTERED"
+                  ? "등록된 계좌를 지정하면, 명세서를 가져올 때 그 계좌의 카드대금 출금과 결제월이 자동으로 연결됩니다."
+                  : "등록하지 않은 계좌는 이름만 남습니다. 출금 내역과 자동으로 연결되지는 않습니다."}
+              </p>
+            </div>
+          )}
 
           {error && <p className="text-[11px] font-bold text-rose-600">{error}</p>}
 

@@ -188,6 +188,8 @@ export function listAccounts(): ConnectedAccount[] {
     `SELECT id, name, type, institution, identifier,
             balance_or_billed as balanceOrBilled, color,
             balance_as_of as balanceAsOf, balance_source as balanceSource,
+            payment_account_id as paymentAccountId,
+            payment_account_label as paymentAccountLabel,
             is_auto_sync_enabled as isAutoSyncEnabled,
             last_synced_at as lastSyncedAt, created_at as createdAt
      FROM accounts
@@ -202,14 +204,17 @@ export function listAccounts(): ConnectedAccount[] {
     // An untagged balance predates the change that started recording this
     balanceAsOf: row.balanceAsOf || row.createdAt || new Date().toISOString(),
     balanceSource: (row.balanceSource as ValueSource) || "USER",
+    paymentAccountId: row.paymentAccountId || undefined,
+    paymentAccountLabel: row.paymentAccountLabel || undefined,
   }));
 }
 
 export function insertAccount(account: ConnectedAccount): void {
   run(
     `INSERT INTO accounts (id, user_id, name, type, institution, identifier, balance_or_billed,
-       balance_as_of, balance_source, color, is_auto_sync_enabled, last_synced_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       balance_as_of, balance_source, payment_account_id, payment_account_label,
+       color, is_auto_sync_enabled, last_synced_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       account.id,
       requireUser(),
@@ -220,6 +225,8 @@ export function insertAccount(account: ConnectedAccount): void {
       Number(account.balanceOrBilled || 0),
       account.balanceAsOf || new Date().toISOString(),
       account.balanceSource || "USER",
+      account.paymentAccountId || null,
+      account.paymentAccountLabel || null,
       account.color || "#334155",
       account.isAutoSyncEnabled ? 1 : 0,
       account.lastSyncedAt || "",
@@ -250,16 +257,21 @@ export function updateAccountDetails(
     institution: string;
     identifier: string;
     type: ConnectedAccount["type"];
+    paymentAccountId?: string;
+    paymentAccountLabel?: string;
   }
 ): void {
   run(
-    `UPDATE accounts SET name = ?, institution = ?, identifier = ?, type = ?
+    `UPDATE accounts SET name = ?, institution = ?, identifier = ?, type = ?,
+       payment_account_id = ?, payment_account_label = ?
      WHERE id = ? AND user_id = ?`,
     [
       details.name.trim(),
       details.institution.trim(),
       details.identifier.trim(),
       details.type,
+      details.paymentAccountId || null,
+      details.paymentAccountLabel?.trim() || null,
       id,
       requireUser(),
     ]

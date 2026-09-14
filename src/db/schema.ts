@@ -17,7 +17,7 @@ import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export interface Migration {
   version: number;
@@ -64,6 +64,8 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "accounts", column: "balance_source", type: "TEXT" },
   { table: "transactions", column: "linked_account_id", type: "TEXT" },
   { table: "transactions", column: "billing_month", type: "TEXT" },
+  { table: "accounts", column: "payment_account_id", type: "TEXT" },
+  { table: "accounts", column: "payment_account_label", type: "TEXT" },
 ];
 
 /**
@@ -454,6 +456,15 @@ export const MIGRATIONS: Migration[] = [
     description: "카드 이용 내역의 결제(청구) 년월",
     up: (db) => {
       addColumn(db, "transactions", "billing_month", "TEXT");
+    },
+  },
+
+  {
+    version: 10,
+    description: "카드 대금이 빠져나가는 결제 계좌",
+    up: (db) => {
+      addColumn(db, "accounts", "payment_account_id", "TEXT");
+      addColumn(db, "accounts", "payment_account_label", "TEXT");
     },
   },
 ];

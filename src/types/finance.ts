@@ -47,6 +47,15 @@ export interface ConnectedAccount {
   color: string;
   isAutoSyncEnabled: boolean;
   lastSyncedAt: string;
+  /**
+   * For a card: the account its bill is taken from.
+   *
+   * A registered account is referred to by id, so its withdrawals can be found
+   * and tied to the statements they settle. An account the user has not
+   * registered is kept as a name, which is all it can be.
+   */
+  paymentAccountId?: string;
+  paymentAccountLabel?: string;
 }
 
 /** Who decided a category rule: the user, or the classifier. */

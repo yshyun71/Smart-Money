@@ -89,6 +89,10 @@ export const ConnectedAssetsView: React.FC<{
   const [balanceDate, setBalanceDate] = useState(() => asOfParts(new Date().toISOString()).date);
   const [balanceHour, setBalanceHour] = useState(() => asOfParts(new Date().toISOString()).hour);
   const [syncMode, setSyncMode] = useState<"SMS" | "OPEN_BANKING">("OPEN_BANKING");
+  /** For a card: the account its bill is taken from. */
+  const [payMode, setPayMode] = useState<"REGISTERED" | "MANUAL">("REGISTERED");
+  const [payAccountId, setPayAccountId] = useState("");
+  const [payLabel, setPayLabel] = useState("");
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   // Per-account ledger, CSV import and manual entry
@@ -156,6 +160,9 @@ export const ConnectedAssetsView: React.FC<{
       setInitialAmount("1500000");
     }
     setCustomInstName("");
+    setPayMode("REGISTERED");
+    setPayAccountId(bankAccounts[0]?.id || "");
+    setPayLabel("");
     const now = asOfParts(new Date().toISOString());
     setBalanceDate(now.date);
     setBalanceHour(now.hour);
@@ -192,6 +199,10 @@ export const ConnectedAssetsView: React.FC<{
       balanceOrBilled: Math.max(0, parseAmountInput(initialAmount)),
       balanceAsOf: asOfFromParts(balanceDate, balanceHour),
       balanceSource: "USER" as const,
+      paymentAccountId:
+        accType === "CARD" && payMode === "REGISTERED" ? payAccountId || undefined : undefined,
+      paymentAccountLabel:
+        accType === "CARD" && payMode === "MANUAL" ? payLabel.trim() || undefined : undefined,
       color,
       isAutoSyncEnabled: true,
     });
@@ -854,6 +865,67 @@ export const ConnectedAssetsView: React.FC<{
                   기록됩니다.
                 </p>
               </div>
+
+              {/* Where a card's bill is taken from */}
+              {accType === "CARD" && (
+                <div>
+                  <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                    결제 계좌
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl mb-2">
+                    <button
+                      type="button"
+                      onClick={() => setPayMode("REGISTERED")}
+                      className={`py-2 text-[11px] font-bold rounded-lg transition ${
+                        payMode === "REGISTERED"
+                          ? "bg-white text-slate-900 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      등록된 계좌
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayMode("MANUAL")}
+                      className={`py-2 text-[11px] font-bold rounded-lg transition ${
+                        payMode === "MANUAL"
+                          ? "bg-white text-slate-900 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      직접 입력
+                    </button>
+                  </div>
+
+                  {payMode === "REGISTERED" ? (
+                    <select
+                      value={payAccountId}
+                      onChange={(e) => setPayAccountId(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 bg-white focus:outline-emerald-600"
+                    >
+                      <option value="">선택 안 함</option>
+                      {bankAccounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.institution}] {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={payLabel}
+                      onChange={(e) => setPayLabel(e.target.value)}
+                      placeholder="예: KB국민은행 357210-13-7155"
+                      className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 focus:outline-emerald-600"
+                    />
+                  )}
+
+                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                    등록된 계좌를 지정하면, 명세서를 가져올 때 그 계좌의 카드대금 출금과
+                    결제월이 자동으로 연결됩니다.
+                  </p>
+                </div>
+              )}
 
               {/* Sync Mode */}
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">

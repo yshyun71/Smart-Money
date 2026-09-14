@@ -29,7 +29,11 @@ import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 import { resolveCategory } from "../services/categoryRules";
-import { matchCardForBill } from "../services/cardLink";
+import {
+  billingTotalsFor,
+  matchBillingMonth,
+  matchCardForBill,
+} from "../services/cardLink";
 import {
   BUILT_IN_CATEGORIES,
   CARD_PAYMENT_CATEGORY,
@@ -682,6 +686,84 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     user picked the category on the form in front of them, and the form
     already offers the matching rule as a suggestion before saving.
   */
+  /**
+   * Ties a card's statements to the withdrawals that settle them, and lets go
+   * when they no longer do.
+   *
+   * A statement arriving is what makes the link possible: the month's total
+   * now equals a withdrawal sitting in the account the card is paid from. The
+   * same reasoning run backwards is what releases it — delete the month and
+   * the withdrawal matches nothing, so the link it carried is cleared rather
+   * than left pointing at a statement that is no longer there.
+   *
+   * Returns the transaction list with those links applied.
+   */
+  const reconcileCardBills = (
+    next: Transaction[],
+    touchedAccountIds: string[]
+  ): Transaction[] => {
+    const cards = accounts.filter(
+      (account) => account.type !== "BANK" && touchedAccountIds.includes(account.id)
+    );
+    if (cards.length === 0) return next;
+
+    const updates: Transaction[] = [];
+
+    for (const card of cards) {
+      const payerId = card.paymentAccountId;
+      if (!payerId) continue;
+
+      const totals = billingTotalsFor(next, card.id);
+
+      const payments = next
+        .filter(
+          (tx) =>
+            tx.accountId === payerId && tx.category === CARD_PAYMENT_CATEGORY
+        )
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      const claimed = new Set<string>();
+
+      for (const payment of payments) {
+        const month = matchBillingMonth(
+          totals,
+          payment.amount,
+          payment.date.slice(0, 7),
+          claimed
+        );
+
+        if (month) {
+          claimed.add(month);
+          if (payment.linkedAccountId !== card.id) {
+            updates.push({ ...payment, linkedAccountId: card.id });
+          }
+          continue;
+        }
+
+        /*
+          Nothing this card bills comes to this amount any more — the statement
+          that justified the link has been deleted. Only a link to this card is
+          released, and only because its own entries are what just changed.
+        */
+        if (payment.linkedAccountId === card.id) {
+          updates.push({ ...payment, linkedAccountId: undefined });
+        }
+      }
+    }
+
+    if (updates.length === 0) return next;
+
+    try {
+      repo.applyImport([], updates);
+    } catch (error) {
+      console.error("카드 대금 연결을 정리하지 못했습니다:", error);
+      return next;
+    }
+
+    return next.map((tx) => updates.find((update) => update.id === tx.id) ?? tx);
+  };
+
   const addTransaction = (tx: Omit<Transaction, "id">) => {
     const newTx: Transaction = { ...tx, id: newId("tx") };
     try {
@@ -732,9 +814,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const deleteTransaction = (id: string) => {
+    const touched = transactions.find((t) => t.id === id)?.accountId;
     try {
       repo.deleteTransaction(id);
-      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      setTransactions((prev) =>
+        reconcileCardBills(
+          prev.filter((t) => t.id !== id),
+          touched ? [touched] : []
+        )
+      );
       syncStats();
     } catch (error) {
       console.error("거래를 삭제하지 못했습니다:", error);
@@ -744,9 +832,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const deleteTransactions = (ids: string[]) => {
     if (ids.length === 0) return;
     const removing = new Set(ids);
+    const touched: string[] = Array.from(
+      new Set(transactions.filter((t) => removing.has(t.id)).map((t) => t.accountId))
+    );
     try {
       repo.deleteTransactions(ids);
-      setTransactions((prev) => prev.filter((t) => !removing.has(t.id)));
+      setTransactions((prev) =>
+        reconcileCardBills(
+          prev.filter((t) => !removing.has(t.id)),
+          touched
+        )
+      );
       syncStats();
     } catch (error) {
       console.error("거래를 일괄 삭제하지 못했습니다:", error);
@@ -769,8 +865,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         const replaced = prev.map(
           (t) => rewritten.find((u) => u.id === t.id) ?? t
         );
-        return [...withIds, ...replaced].sort((a, b) =>
+        const merged = [...withIds, ...replaced].sort((a, b) =>
           `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)
+        );
+        return reconcileCardBills(
+          merged,
+          Array.from(new Set([...withIds, ...rewritten].map((tx) => tx.accountId)))
         );
       });
       syncStats();
