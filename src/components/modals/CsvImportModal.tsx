@@ -41,6 +41,13 @@ import {
 } from "lucide-react";
 
 type Step = "PICK" | "MAP" | "REVIEW" | "DONE";
+type ReviewFilter = "ALL" | "NEW" | "DUP";
+
+const REVIEW_FILTERS: { value: ReviewFilter; label: string }[] = [
+  { value: "ALL", label: "전체" },
+  { value: "NEW", label: "추가" },
+  { value: "DUP", label: "중복" },
+];
 type Decision = "SKIP" | "OVERWRITE";
 
 interface DuplicateItem {
@@ -94,6 +101,7 @@ export const CsvImportModal: React.FC<{
   >("RULES");
   const [isDetecting, setIsDetecting] = useState(false);
   const [detectNote, setDetectNote] = useState<string | null>(null);
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("ALL");
 
   const account = accounts.find((a) => a.id === accountId);
 
@@ -116,6 +124,7 @@ export const CsvImportModal: React.FC<{
     setMappingSource("RULES");
     setIsDetecting(false);
     setDetectNote(null);
+    setReviewFilter("ALL");
   };
 
   const handleClose = () => {
@@ -172,6 +181,33 @@ export const CsvImportModal: React.FC<{
     if (newest) setBillingMonth(newest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table, account, billingMonth, preview.drafts.length]);
+
+  /**
+   * Every line the file yielded, new and already-registered together.
+   *
+   * Showing only the duplicates left the other half of the summary with
+   * nothing behind it: a count of what would be added, and no way to see what
+   * that was. File order keeps a line findable in the file itself.
+   */
+  const reviewRows = useMemo(() => {
+    const rows = [
+      ...fresh.map((draft) => ({ draft, duplicate: null as DuplicateItem | null })),
+      ...duplicates.map((item) => ({ draft: item.draft, duplicate: item })),
+    ];
+    return rows.sort((a, b) => a.draft.lineNumber - b.draft.lineNumber);
+  }, [fresh, duplicates]);
+
+  const visibleReviewRows = useMemo(
+    () =>
+      reviewRows.filter(({ duplicate }) =>
+        reviewFilter === "ALL"
+          ? true
+          : reviewFilter === "NEW"
+          ? !duplicate
+          : Boolean(duplicate)
+      ),
+    [reviewRows, reviewFilter]
+  );
 
   const mappingReady =
     mapping.date >= 0 &&
@@ -808,61 +844,138 @@ export const CsvImportModal: React.FC<{
                     <span>모두 덮어쓰기</span>
                   </button>
                 </div>
-
-                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
-                  {duplicates.map((item) => (
-                    <div
-                      key={item.draft.lineNumber}
-                      className="p-2.5 rounded-xl border border-slate-200 bg-white"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-[11px] font-bold text-slate-900 truncate">
-                            {item.draft.merchant}
-                          </div>
-                          <div className="text-[10px] text-slate-400">
-                            {item.draft.date} · {won(item.draft.amount)}
-                          </div>
-                        </div>
-                        <div className="flex gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setDecision(item.draft.lineNumber, "SKIP")}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
-                              item.decision === "SKIP"
-                                ? "bg-slate-800 text-white"
-                                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                            }`}
-                          >
-                            건너뛰기
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDecision(item.draft.lineNumber, "OVERWRITE")}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
-                              item.decision === "OVERWRITE"
-                                ? "bg-indigo-600 text-white"
-                                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                            }`}
-                          >
-                            덮어쓰기
-                          </button>
-                        </div>
-                      </div>
-                      {item.decision === "OVERWRITE" &&
-                        item.existing.category !== item.draft.category && (
-                          <div className="mt-1 text-[10px] text-indigo-600">
-                            분류 {item.existing.category} → {item.draft.category} 로 바뀝니다
-                          </div>
-                        )}
-                    </div>
-                  ))}
-                </div>
               </>
             ) : (
               <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/70 text-[11px] text-emerald-800 flex items-center gap-2">
                 <CopyCheck className="w-4 h-4 shrink-0" />
                 <span>중복된 내역이 없습니다. 그대로 추가하면 됩니다.</span>
+              </div>
+            )}
+
+            {/* Every line the file holds, each saying which of the two it is */}
+            {reviewRows.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl">
+                  {REVIEW_FILTERS.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setReviewFilter(value)}
+                      className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                        reviewFilter === value
+                          ? "bg-white text-slate-900 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      {label}{" "}
+                      {value === "ALL"
+                        ? reviewRows.length
+                        : value === "NEW"
+                        ? fresh.length
+                        : duplicates.length}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-1.5 max-h-72 overflow-y-auto pr-0.5">
+                  {visibleReviewRows.map(({ draft, duplicate }) => {
+                    const skipped = duplicate?.decision === "SKIP";
+                    return (
+                      <div
+                        key={draft.lineNumber}
+                        className={`p-2.5 rounded-xl border ${
+                          duplicate
+                            ? skipped
+                              ? "border-slate-200 bg-slate-50"
+                              : "border-indigo-200 bg-indigo-50/50"
+                            : "border-emerald-200 bg-emerald-50/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                                  duplicate
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "bg-emerald-100 text-emerald-700"
+                                }`}
+                              >
+                                {duplicate ? "중복" : "추가"}
+                              </span>
+                              <span
+                                className={`text-[11px] font-bold truncate ${
+                                  skipped ? "text-slate-400" : "text-slate-900"
+                                }`}
+                              >
+                                {draft.merchant}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {draft.date} · {draft.category}
+                              {draft.memo ? ` · ${draft.memo}` : ""}
+                            </div>
+                          </div>
+
+                          <span
+                            className={`text-xs font-black shrink-0 ${
+                              skipped
+                                ? "text-slate-300 line-through"
+                                : draft.type === "INCOME"
+                                ? "text-emerald-600"
+                                : "text-slate-800"
+                            }`}
+                          >
+                            {draft.type === "INCOME" ? "+" : "-"}
+                            {won(draft.amount)}
+                          </span>
+                        </div>
+
+                        {duplicate && (
+                          <>
+                            <div className="flex gap-1 mt-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setDecision(draft.lineNumber, "SKIP")}
+                                className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                  duplicate.decision === "SKIP"
+                                    ? "bg-slate-800 text-white"
+                                    : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-100"
+                                }`}
+                              >
+                                건너뛰기
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDecision(draft.lineNumber, "OVERWRITE")}
+                                className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                  duplicate.decision === "OVERWRITE"
+                                    ? "bg-indigo-600 text-white"
+                                    : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-100"
+                                }`}
+                              >
+                                덮어쓰기
+                              </button>
+                            </div>
+                            {duplicate.decision === "OVERWRITE" &&
+                              duplicate.existing.category !== draft.category && (
+                                <div className="mt-1 text-[10px] text-indigo-600">
+                                  분류 {duplicate.existing.category} → {draft.category} 로
+                                  바뀝니다
+                                </div>
+                              )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {visibleReviewRows.length === 0 && (
+                    <div className="p-4 text-center text-[11px] text-slate-400">
+                      해당하는 내역이 없습니다.
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
