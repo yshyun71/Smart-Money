@@ -58,6 +58,7 @@ import {
   Tag,
   Calculator,
   UserCheck,
+  Trash2,
 } from "lucide-react";
 
 type PeriodMode = "MONTH" | "RANGE";
@@ -112,6 +113,7 @@ export const AccountLedgerModal: React.FC<{
     accounts,
     allTransactions,
     updateTransactions,
+    deleteTransactions,
     categories,
     categoryRules,
     saveCategoryRules,
@@ -314,6 +316,28 @@ export const AccountLedgerModal: React.FC<{
   const toggleAll = () => {
     setNotice(null);
     setSelected(allSelected ? new Set() : new Set(entries.map((tx) => tx.id)));
+  };
+
+  /** Removes what is ticked, for a statement that came in wrong. */
+  const handleDeleteSelected = () => {
+    const targets = entries.filter((tx) => selected.has(tx.id));
+    if (targets.length === 0) return;
+
+    if (
+      !confirm(
+        `선택한 ${targets.length}건을 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      deleteTransactions(targets.map((tx) => tx.id));
+      setSelected(new Set());
+      setNotice({ ok: true, text: `${targets.length}건을 삭제했습니다.` });
+    } catch {
+      setNotice({ ok: false, text: "삭제하지 못했습니다. 잠시 후 다시 시도해주세요." });
+    }
   };
 
   const toggleOne = (id: string) => {
@@ -888,7 +912,19 @@ export const AccountLedgerModal: React.FC<{
               <span>전체 선택</span>
             </button>
 
-            <span className="text-[10px] text-slate-400">조회 {entries.length}건</span>
+            <div className="flex items-center gap-2 shrink-0">
+              {selectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleDeleteSelected}
+                  className="flex items-center gap-1 text-[10px] font-bold text-rose-600 hover:text-rose-700 transition cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>선택 삭제</span>
+                </button>
+              )}
+              <span className="text-[10px] text-slate-400">조회 {entries.length}건</span>
+            </div>
           </div>
 
           {/* What the ticked entries come to */}

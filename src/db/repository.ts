@@ -375,6 +375,18 @@ export function deleteTransaction(id: string): void {
   run("DELETE FROM transactions WHERE id = ? AND user_id = ?", [id, requireUser()]);
 }
 
+/** Removes a whole selection under one save. */
+export function deleteTransactions(ids: string[]): void {
+  if (ids.length === 0) return;
+  const userId = requireUser();
+  runBatch(
+    ids.map((id) => ({
+      sql: "DELETE FROM transactions WHERE id = ? AND user_id = ?",
+      params: [id, userId],
+    }))
+  );
+}
+
 /** Rewrites an entry in place, keeping its id. */
 export function updateTransaction(tx: Transaction): void {
   run(

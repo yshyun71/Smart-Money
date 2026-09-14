@@ -414,21 +414,59 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
 // ---------------------------------------------------------------------------
 
 /** Accepts 2026-09-05, 2026.09.05, 20260905, 2026/9/5, with or without a time. */
+/** Refuses a combination that is not a real date, so a bad read can be caught. */
+function asDate(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
 export function normaliseDate(raw: string): string | null {
-  const value = raw.trim();
+  const value = (raw || "").trim();
   if (!value) return null;
 
-  const compact = value.match(/(\d{4})[.\-/]?\s?(\d{1,2})[.\-/]?\s?(\d{1,2})/);
-  if (compact) {
-    const [, year, month, day] = compact;
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  // 2026-09-05, 2026.9.5, 20260905, optionally with a time after it
+  const full = value.match(/(\d{4})[.\-/]?\s?(\d{1,2})[.\-/]?\s?(\d{1,2})/);
+  if (full) {
+    const settled = asDate(Number(full[1]), Number(full[2]), Number(full[3]));
+    if (settled) return settled;
   }
 
-  // A date without a year: assume the current one
-  const short = value.match(/^(\d{1,2})[.\-/](\d{1,2})/);
-  if (short) {
-    const [, month, day] = short;
-    return `${new Date().getFullYear()}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  /*
+    26.08.03 — a two-digit year, which card statements use throughout. Read as
+    a year-less date it became month 26 of this year, which is how a whole
+    statement ended up filed under "2026년 26월".
+  */
+  const shortYear = value.match(/^(\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})/);
+  if (shortYear) {
+    const settled = asDate(
+      2000 + Number(shortYear[1]),
+      Number(shortYear[2]),
+      Number(shortYear[3])
+    );
+    if (settled) return settled;
+  }
+
+  // 260803, the same thing without separators
+  const compact = value.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (compact) {
+    const settled = asDate(
+      2000 + Number(compact[1]),
+      Number(compact[2]),
+      Number(compact[3])
+    );
+    if (settled) return settled;
+  }
+
+  // 09-05, with no year at all: assume the current one. Anchored at both ends
+  // so a date that carries a year never falls through to here.
+  const monthDay = value.match(/^(\d{1,2})[.\-/](\d{1,2})(?![.\-/]?\d)/);
+  if (monthDay) {
+    return asDate(
+      new Date().getFullYear(),
+      Number(monthDay[1]),
+      Number(monthDay[2])
+    );
   }
 
   return null;
