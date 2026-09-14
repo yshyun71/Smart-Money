@@ -252,6 +252,8 @@ export interface ColumnMapping {
   withdrawal: number;
   deposit: number;
   memo: number;
+  /** 결제일·청구년월, when the statement carries one per line. */
+  billing: number;
 }
 
 export const EMPTY_MAPPING: ColumnMapping = {
@@ -261,6 +263,7 @@ export const EMPTY_MAPPING: ColumnMapping = {
   withdrawal: -1,
   deposit: -1,
   memo: -1,
+  billing: -1,
 };
 
 function findColumn(headers: string[], keywords: string[], exclude: string[] = []): number {
@@ -391,7 +394,12 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
           "할부", "구분", "결제구분", "거래구분", "메모", "비고", "업종", "적요2",
         ]);
 
+  const billing = findColumn(headers, [
+    "결제년월", "청구년월", "청구월", "결제월", "결제일자", "결제예정일", "결제일",
+  ]);
+
   const guess: ColumnMapping = {
+    billing,
     date: findColumn(headers, [
       "거래일시", "거래일자", "거래일", "이용일자", "이용일", "승인일자", "승인일", "날짜", "일자",
     ]),
@@ -549,6 +557,8 @@ export interface DraftRow {
   expenseType: ExpenseType;
   category: CategoryType;
   memo: string;
+  /** The month this line is billed in, when the statement says. */
+  billingMonth?: string;
 }
 
 export interface BuildResult {
@@ -564,6 +574,13 @@ export function buildDrafts(table: ParsedTable, mapping: ColumnMapping): BuildRe
   table.rows.forEach((row, index) => {
     const lineNumber = table.headerRowIndex + 2 + index;
     const cell = (column: number) => (column >= 0 ? row[column] || "" : "");
+
+    /*
+      The date the line is billed on is not the date it was used: an instalment
+      is used once and billed for months afterwards. Only the month matters.
+    */
+    const billed = normaliseDate(cell(mapping.billing));
+    const billingMonth = billed ? billed.slice(0, 7) : undefined;
 
     const date = normaliseDate(cell(mapping.date));
     if (!date) {
@@ -612,6 +629,7 @@ export function buildDrafts(table: ParsedTable, mapping: ColumnMapping): BuildRe
       // 적요 often carries the useful word ("급여") when the counterparty is a company name
       category: guessCategory(`${merchant} ${memo}`, type === "INCOME"),
       memo,
+      billingMonth,
     });
   });
 
@@ -677,5 +695,6 @@ export function draftToTransaction(
     accountId,
     memo: draft.memo || undefined,
     isFixedRecurring: draft.expenseType === "FIXED",
+    billingMonth: draft.billingMonth,
   };
 }

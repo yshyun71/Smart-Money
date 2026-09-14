@@ -20,6 +20,14 @@ function monthLabel(key: string): string {
   return `${year}년 ${month}월`;
 }
 
+type MonthBasis = "USED" | "BILLED";
+
+/** An instalment is used once and billed for months, so a month means two things. */
+function monthOf(tx: Transaction, basis: MonthBasis): string {
+  if (basis === "BILLED") return tx.billingMonth || tx.date.slice(0, 7);
+  return tx.date.slice(0, 7);
+}
+
 function shiftMonth(key: string, delta: number): string {
   const [year, month] = key.split("-").map(Number);
   const moved = new Date(year, month - 1 + delta, 1);
@@ -45,10 +53,13 @@ export const CardUsageModal: React.FC<{
   const { accounts, allTransactions } = useFinance();
 
   const [month, setMonth] = useState(paidMonth);
+  const [basis, setBasis] = useState<MonthBasis>("BILLED");
 
   useEffect(() => {
     if (!isOpen) return;
     setMonth(paidMonth);
+    // The bill is the question being asked, so billing month leads
+    setBasis("BILLED");
   }, [isOpen, paidMonth]);
 
   useEffect(() => {
@@ -65,9 +76,9 @@ export const CardUsageModal: React.FC<{
   const entries: Transaction[] = useMemo(
     () =>
       allTransactions.filter(
-        (tx: Transaction) => tx.accountId === accountId && tx.date.slice(0, 7) === month
+        (tx: Transaction) => tx.accountId === accountId && monthOf(tx, basis) === month
       ),
-    [allTransactions, accountId, month]
+    [allTransactions, accountId, month, basis]
   );
 
   const totals = useMemo(() => {
@@ -122,6 +133,32 @@ export const CardUsageModal: React.FC<{
           </button>
         </div>
 
+        {/* Which month: the one it was billed in, or the one it was used in */}
+        <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setBasis("BILLED")}
+            className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+              basis === "BILLED"
+                ? "bg-white text-slate-900 shadow-xs"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            결제월 기준
+          </button>
+          <button
+            type="button"
+            onClick={() => setBasis("USED")}
+            className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+              basis === "USED"
+                ? "bg-white text-slate-900 shadow-xs"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            이용일자 기준
+          </button>
+        </div>
+
         {/* Month */}
         <div className="flex items-center justify-between gap-2 p-2 rounded-2xl bg-slate-50 border border-slate-200/80">
           <button
@@ -161,8 +198,9 @@ export const CardUsageModal: React.FC<{
         </div>
 
         <p className="text-[10px] text-slate-400 leading-relaxed">
-          카드 청구액은 보통 <strong>전월 이용분</strong>이므로, 결제한 달과 이용한 달이
-          다를 수 있습니다. 화살표로 달을 옮겨 확인해보세요.
+          {basis === "BILLED"
+            ? "명세서에 적힌 결제월로 묶어 보여줍니다. 결제월이 기록되지 않은 내역은 이용한 달로 표시되므로, 맞지 않으면 이용일자 기준으로 바꿔보세요."
+            : "카드를 실제로 사용한 날짜 기준입니다. 청구액은 보통 전월 이용분이라 결제한 달과 다를 수 있습니다."}
         </p>
 
         {/* Entries */}

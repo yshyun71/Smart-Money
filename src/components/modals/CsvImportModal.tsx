@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import type { Transaction } from "../../types/finance";
@@ -81,6 +81,8 @@ export const CsvImportModal: React.FC<{
   } | null>(null);
   /** Whether this import should also move the account's recorded balance. */
   const [adjustBalance, setAdjustBalance] = useState(false);
+  /** The month a card statement bills, when its lines do not each say. */
+  const [billingMonth, setBillingMonth] = useState("");
 
   const account = accounts.find((a) => a.id === accountId);
 
@@ -99,6 +101,7 @@ export const CsvImportModal: React.FC<{
     setSkippedRows([]);
     setResult(null);
     setAdjustBalance(false);
+    setBillingMonth("");
   };
 
   const handleClose = () => {
@@ -117,11 +120,13 @@ export const CsvImportModal: React.FC<{
         const ruled = accountId
           ? categoryForMerchant(draft.merchant, accountId, draft.type === "INCOME")
           : null;
-        return ruled ? { ...draft, category: ruled } : draft;
+        // One statement, one billing month — unless its lines each carry one
+        const billed = draft.billingMonth || billingMonth || undefined;
+        return { ...draft, category: ruled || draft.category, billingMonth: billed };
       }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, mapping, accountId, categoryForMerchant]);
+  }, [table, mapping, accountId, categoryForMerchant, billingMonth]);
 
   /**
    * What this import would do to the recorded balance, given the choices made
@@ -140,6 +145,19 @@ export const CsvImportModal: React.FC<{
 
     return planBalanceAdjustment(saving, account);
   }, [account, accountId, fresh, duplicates]);
+
+  /*
+    A statement that does not date its billing still belongs to one month, and
+    the newest line it carries is the closest thing the file says about which.
+    The user corrects it on the mapping step.
+  */
+  useEffect(() => {
+    if (!table || !account || account.type === "BANK" || billingMonth) return;
+    const months = preview.drafts.map((draft) => draft.date.slice(0, 7)).sort();
+    const newest = months[months.length - 1];
+    if (newest) setBillingMonth(newest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table, account, billingMonth, preview.drafts.length]);
 
   const mappingReady =
     mapping.date >= 0 &&
@@ -493,7 +511,28 @@ export const CsvImportModal: React.FC<{
               {columnSelect("입금", "deposit", "수입액")}
               {columnSelect("금액", "amount", "출금·입금이 한 열일 때")}
               {columnSelect("메모", "memo", "비고·업종")}
+              {account && account.type !== "BANK" &&
+                columnSelect("결제월", "billing", "청구년월·결제일")}
             </div>
+
+            {/* One statement bills one month, which its lines may not each say */}
+            {account && account.type !== "BANK" && mapping.billing < 0 && (
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-700 block">
+                  이 명세서의 결제(청구) 년월
+                </label>
+                <input
+                  type="month"
+                  value={billingMonth}
+                  onChange={(e) => setBillingMonth(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
+                />
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  명세서에 적힌 결제월을 넣어두면 카드 내역을 <strong>결제월</strong> 기준으로도
+                  조회할 수 있습니다. 할부처럼 이용한 달과 청구되는 달이 다른 항목에 필요합니다.
+                </p>
+              </div>
+            )}
 
             {!mappingReady && (
               <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold">

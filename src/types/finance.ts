@@ -88,6 +88,13 @@ export interface Transaction {
    * month's usage can be read from the payment.
    */
   linkedAccountId?: string;
+  /**
+   * For a card purchase: the month it is billed in, as YYYY-MM.
+   *
+   * It is not the month it was used in — an instalment is used once and billed
+   * for months afterwards — so a card's ledger can be read either way round.
+   */
+  billingMonth?: string;
 }
 
 export interface SavingsRecommendation {

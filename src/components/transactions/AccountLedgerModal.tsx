@@ -75,6 +75,21 @@ const KIND_LABELS: { value: KindFilter; label: string }[] = [
 
 const ALL_CATEGORIES = "__ALL__";
 
+/** Which month an entry is counted under. */
+type MonthBasis = "USED" | "BILLED";
+
+/**
+ * The month a card entry falls in, by the chosen reading.
+ *
+ * An instalment is used once and billed for months afterwards, so the two
+ * answers differ. An entry imported before billing months were recorded has
+ * only the one it was used in, which is what it was always shown under.
+ */
+function monthOf(tx: Transaction, basis: MonthBasis): string {
+  if (basis === "BILLED") return tx.billingMonth || tx.date.slice(0, 7);
+  return tx.date.slice(0, 7);
+}
+
 const pad = (value: number) => String(value).padStart(2, "0");
 
 /** "2026-09" → "2026년 09월" */
@@ -130,6 +145,7 @@ export const AccountLedgerModal: React.FC<{
 
   // Which slice of the ledger is on screen
   const [periodMode, setPeriodMode] = useState<PeriodMode>("MONTH");
+  const [basis, setBasis] = useState<MonthBasis>("USED");
   const [month, setMonth] = useState<string>(thisMonthKey);
   const [rangeFrom, setRangeFrom] = useState<string>("");
   const [rangeTo, setRangeTo] = useState<string>("");
@@ -175,6 +191,7 @@ export const AccountLedgerModal: React.FC<{
     setUsage(null);
     setShowHelp(false);
     setPeriodMode("MONTH");
+    setBasis("USED");
     setKindFilter("ALL");
     setCategoryFilter(ALL_CATEGORIES);
   }, [isOpen]);
@@ -193,7 +210,7 @@ export const AccountLedgerModal: React.FC<{
   */
   useEffect(() => {
     if (!isOpen) return;
-    const months = accountEntries.map((tx) => tx.date.slice(0, 7)).sort();
+    const months = accountEntries.map((tx) => monthOf(tx, basis)).sort();
     const newest = months[months.length - 1] || thisMonthKey();
     const oldest = months[0] || thisMonthKey();
 
@@ -202,7 +219,7 @@ export const AccountLedgerModal: React.FC<{
       setRangeFrom(oldest);
       setRangeTo(newest);
     }
-  }, [isOpen, accountId, accountEntries, rangeTouched]);
+  }, [isOpen, accountId, accountEntries, rangeTouched, basis]);
 
   // Escape to close, and no scrolling behind the sheet
   useEffect(() => {
@@ -236,7 +253,7 @@ export const AccountLedgerModal: React.FC<{
   /** True when an entry falls inside the chosen month or span. */
   const inPeriod = useMemo(() => {
     if (periodMode === "MONTH") {
-      return (tx: Transaction) => tx.date.slice(0, 7) === month;
+      return (tx: Transaction) => monthOf(tx, basis) === month;
     }
     // An open end stays open: a span with only one side filled in still reads
     // naturally as "from here on" or "up to here".
@@ -244,10 +261,10 @@ export const AccountLedgerModal: React.FC<{
     const to = rangeTo || "9999-99";
     const [low, high] = from <= to ? [from, to] : [to, from];
     return (tx: Transaction) => {
-      const key = tx.date.slice(0, 7);
+      const key = monthOf(tx, basis);
       return key >= low && key <= high;
     };
-  }, [periodMode, month, rangeFrom, rangeTo]);
+  }, [periodMode, month, rangeFrom, rangeTo, basis]);
 
   const entries = useMemo(
     () =>
@@ -283,12 +300,12 @@ export const AccountLedgerModal: React.FC<{
   const grouped = useMemo(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of entries) {
-      const key = tx.date.slice(0, 7);
+      const key = monthOf(tx, basis);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tx);
     }
     return Array.from(map.entries()).sort(([a], [b]) => b.localeCompare(a));
-  }, [entries]);
+  }, [entries, basis]);
 
   const totals = useMemo(() => {
     const income = entries
@@ -304,11 +321,11 @@ export const AccountLedgerModal: React.FC<{
   const monthCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const tx of accountEntries) {
-      const key = tx.date.slice(0, 7);
+      const key = monthOf(tx, basis);
       map.set(key, (map.get(key) || 0) + 1);
     }
     return map;
-  }, [accountEntries]);
+  }, [accountEntries, basis]);
 
   const allSelected = entries.length > 0 && entries.every((tx) => selected.has(tx.id));
   const selectedCount = entries.filter((tx) => selected.has(tx.id)).length;
@@ -764,6 +781,41 @@ export const AccountLedgerModal: React.FC<{
 
         {/* The conditions the list below obeys: which period, and what is picked */}
         <div className="p-2.5 rounded-2xl bg-white border border-slate-200 space-y-2.5">
+          {/* A card is billed in one month for what was used in another */}
+          {!isBank && (
+            <div>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setBasis("BILLED")}
+                  className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                    basis === "BILLED"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  결제월 기준
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBasis("USED")}
+                  className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                    basis === "USED"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  이용일자 기준
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed px-1">
+                {basis === "BILLED"
+                  ? "명세서에 적힌 결제월로 묶어 보여줍니다. 결제월이 기록되지 않은 내역은 이용한 달로 표시됩니다."
+                  : "카드를 실제로 사용한 날짜를 기준으로 보여줍니다."}
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
             <button
               type="button"
