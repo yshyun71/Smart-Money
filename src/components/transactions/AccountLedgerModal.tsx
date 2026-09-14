@@ -574,53 +574,66 @@ export const AccountLedgerModal: React.FC<{
           </button>
         </div>
 
-        {/* Totals — the balance tile opens for edit, which was otherwise nowhere */}
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <button
-            type="button"
-            onClick={() => setShowBalance(true)}
-            className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-emerald-400 hover:bg-emerald-50/40 transition text-center cursor-pointer"
-          >
-            <div className="text-[10px] text-slate-400 flex items-center justify-center gap-0.5">
-              <span>{isBank ? "잔액" : "청구액"}</span>
-              <Pencil className="w-2.5 h-2.5" />
+        {/*
+          A balance belongs to an account. A card carries what it will bill,
+          which is managed where the card is registered — so its ledger shows
+          only what the period actually came to.
+        */}
+        {isBank ? (
+          <>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <button
+                type="button"
+                onClick={() => setShowBalance(true)}
+                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-emerald-400 hover:bg-emerald-50/40 transition text-center cursor-pointer"
+              >
+                <div className="text-[10px] text-slate-400 flex items-center justify-center gap-0.5">
+                  <span>잔액</span>
+                  <Pencil className="w-2.5 h-2.5" />
+                </div>
+                <div className="text-xs font-black text-slate-900">
+                  {won(account.balanceOrBilled)}
+                </div>
+              </button>
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100">
+                <div className="text-[10px] text-rose-600">지출 합계</div>
+                <div className="text-xs font-black text-rose-700">{won(totals.expense)}</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100">
+                <div className="text-[10px] text-emerald-600">수입 합계</div>
+                <div className="text-xs font-black text-emerald-700">{won(totals.income)}</div>
+              </div>
             </div>
-            <div className="text-xs font-black text-slate-900">
-              {won(account.balanceOrBilled)}
-            </div>
-          </button>
-          <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100">
-            <div className="text-[10px] text-rose-600">지출 합계</div>
-            <div className="text-xs font-black text-rose-700">{won(totals.expense)}</div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100">
-            <div className="text-[10px] text-emerald-600">수입 합계</div>
-            <div className="text-xs font-black text-emerald-700">{won(totals.income)}</div>
-          </div>
-        </div>
 
-        {/* Where the balance came from, and as of when */}
-        <button
-          type="button"
-          onClick={() => setShowBalance(true)}
-          className="w-full -mt-1.5 flex items-center justify-between gap-2 px-1 text-[10px] text-slate-400 hover:text-slate-600 transition cursor-pointer"
-        >
-          <span className="truncate">기준 {asOfLabel(account.balanceAsOf)}</span>
-          <span
-            className={`font-bold px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5 ${
-              account.balanceSource === "AUTO"
-                ? "bg-indigo-100 text-indigo-700"
-                : "bg-emerald-100 text-emerald-700"
-            }`}
-          >
-            {account.balanceSource === "AUTO" ? (
-              <Calculator className="w-2.5 h-2.5" />
-            ) : (
-              <UserCheck className="w-2.5 h-2.5" />
-            )}
-            {account.balanceSource === "AUTO" ? "자동 산출" : "사용자 입력"}
-          </span>
-        </button>
+            {/* Where the balance came from, and as of when */}
+            <button
+              type="button"
+              onClick={() => setShowBalance(true)}
+              className="w-full -mt-1.5 flex items-center justify-between gap-2 px-1 text-[10px] text-slate-400 hover:text-slate-600 transition cursor-pointer"
+            >
+              <span className="truncate">기준 {asOfLabel(account.balanceAsOf)}</span>
+              <span
+                className={`font-bold px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5 ${
+                  account.balanceSource === "AUTO"
+                    ? "bg-indigo-100 text-indigo-700"
+                    : "bg-emerald-100 text-emerald-700"
+                }`}
+              >
+                {account.balanceSource === "AUTO" ? (
+                  <Calculator className="w-2.5 h-2.5" />
+                ) : (
+                  <UserCheck className="w-2.5 h-2.5" />
+                )}
+                {account.balanceSource === "AUTO" ? "자동 산출" : "사용자 입력"}
+              </span>
+            </button>
+          </>
+        ) : (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-rose-600">이용 합계</span>
+            <span className="text-sm font-black text-rose-700">{won(totals.expense)}</span>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="grid grid-cols-3 gap-2">

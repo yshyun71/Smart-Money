@@ -8,6 +8,8 @@ import {
   draftToTransaction,
   duplicateKey,
   EMPTY_MAPPING,
+  instalmentMarker,
+  isInstalment,
   loadStatementFile,
   parseDelimited,
   type ColumnMapping,
@@ -206,7 +208,17 @@ export const CsvImportModal: React.FC<{
     const fresh: DraftRow[] = [];
 
     for (const draft of drafts) {
-      const match = existingByKey.get(duplicateKey(draft));
+      /*
+        An instalment is billed again every month, repeating the purchase date,
+        the shop and the amount. Where the statement numbers them ("8/10") the
+        number is part of the key and the months tell themselves apart; where
+        it only says 할부 there is nothing to tell which month this is, so it
+        is never counted as already registered.
+      */
+      const unnumbered =
+        isInstalment(draft.memo) && instalmentMarker(draft.memo) === "";
+      const match = unnumbered ? undefined : existingByKey.get(duplicateKey(draft));
+
       if (match) {
         dup.push({ draft, existing: match, decision: "SKIP" });
       } else {

@@ -387,7 +387,9 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
   const memo =
     counterparty >= 0 && description >= 0
       ? description
-      : findColumn(headers, ["메모", "비고", "구분", "업종", "적요2"]);
+      : findColumn(headers, [
+          "할부", "구분", "결제구분", "거래구분", "메모", "비고", "업종", "적요2",
+        ]);
 
   const guess: ColumnMapping = {
     date: findColumn(headers, [
@@ -583,12 +585,41 @@ export function buildDrafts(table: ParsedTable, mapping: ColumnMapping): BuildRe
  * Statements repeat genuinely different purchases at the same shop on the same
  * day, which is why the user is asked rather than told.
  */
+/**
+ * Which instalment of a purchase a line is, as the statement numbers them.
+ *
+ * KB writes "8/10" — the eighth of ten — in the 할부 column, which is what
+ * tells one month's billing of a purchase from the next.
+ */
+export function instalmentMarker(text: string): string {
+  const value = (text || "").replace(/\s+/g, "");
+  const match = value.match(/(\d{1,2})\/(\d{1,2})/);
+  return match ? `${Number(match[1])}/${Number(match[2])}` : "";
+}
+
+/** True when a line is billed over several months rather than at once. */
+export function isInstalment(text: string): boolean {
+  const value = (text || "").replace(/\s+/g, "");
+  if (!value || value.includes("일시불")) return false;
+  return value.includes("할부") || /\d{1,2}\/\d{1,2}/.test(value);
+}
+
+/**
+ * What makes two entries the same charge.
+ *
+ * An instalment repeats the purchase date, the shop and the amount in every
+ * month it is billed, so the instalment number has to be part of the identity
+ * — without it, the second month's billing looks like the first one again.
+ */
 export function duplicateKey(tx: {
   date: string;
   merchant: string;
   amount: number;
+  memo?: string;
 }): string {
-  return `${tx.date}|${tx.merchant.replace(/\s/g, "")}|${Math.round(tx.amount)}`;
+  const marker = instalmentMarker(tx.memo || "");
+  const base = `${tx.date}|${tx.merchant.replace(/\s/g, "")}|${Math.round(tx.amount)}`;
+  return marker ? `${base}|${marker}` : base;
 }
 
 export function draftToTransaction(
