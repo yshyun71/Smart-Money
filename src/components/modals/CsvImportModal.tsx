@@ -121,6 +121,24 @@ export const CsvImportModal: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table, mapping, accountId, categoryForMerchant]);
 
+  /**
+   * What this import would do to the recorded balance, given the choices made
+   * on this screen. Only entries after the balance's own 기준일시 count.
+   */
+  const balancePlan = useMemo(() => {
+    if (!account) return null;
+
+    const paymentMethod = account.name || "가져온 내역";
+    const saving = [
+      ...fresh.map((draft) => draftToTransaction(draft, accountId, paymentMethod)),
+      ...duplicates
+        .filter((item) => item.decision === "OVERWRITE")
+        .map((item) => draftToTransaction(item.draft, accountId, paymentMethod)),
+    ];
+
+    return planBalanceAdjustment(saving, account);
+  }, [account, accountId, fresh, duplicates]);
+
   const mappingReady =
     mapping.date >= 0 &&
     (mapping.amount >= 0 || mapping.withdrawal >= 0 || mapping.deposit >= 0);
@@ -207,24 +225,6 @@ export const CsvImportModal: React.FC<{
       )
     );
   };
-
-  /**
-   * What this import would do to the recorded balance, given the choices made
-   * on this screen. Only entries after the balance's own 기준일시 count.
-   */
-  const balancePlan = useMemo(() => {
-    if (!account) return null;
-
-    const paymentMethod = account.name || "가져온 내역";
-    const saving = [
-      ...fresh.map((draft) => draftToTransaction(draft, accountId, paymentMethod)),
-      ...duplicates
-        .filter((item) => item.decision === "OVERWRITE")
-        .map((item) => draftToTransaction(item.draft, accountId, paymentMethod)),
-    ];
-
-    return planBalanceAdjustment(saving, account);
-  }, [account, accountId, fresh, duplicates]);
 
   const handleApply = () => {
     const paymentMethod = account?.name || "가져온 내역";
