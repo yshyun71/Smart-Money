@@ -36,6 +36,7 @@ import {
   recurrenceFor,
 } from "../../services/recurrence";
 import { asOfLabel, won } from "../../utils/format";
+import { isInstalment } from "../../services/csvImport";
 import {
   X,
   Search,
@@ -66,12 +67,38 @@ type PeriodMode = "MONTH" | "RANGE";
 /** 고정비 / 변동비 / 수입, or everything. */
 type KindFilter = "ALL" | "FIXED" | "VARIABLE" | "INCOME";
 
-const KIND_LABELS: { value: KindFilter; label: string }[] = [
+/** A card is only ever spent on, so it is not offered a 수입 filter. */
+function kindOptions(isBank: boolean): { value: KindFilter; label: string }[] {
+  const options: { value: KindFilter; label: string }[] = [
+    { value: "ALL", label: "전체" },
+    { value: "FIXED", label: "고정비" },
+    { value: "VARIABLE", label: "변동비" },
+  ];
+  return isBank ? [...options, { value: "INCOME", label: "수입" }] : options;
+}
+
+/** How a card charge is settled. */
+type PayFilter = "ALL" | "CARD_LOAN" | "ONCE" | "INSTALMENT";
+
+const PAY_LABELS: { value: PayFilter; label: string }[] = [
   { value: "ALL", label: "전체" },
-  { value: "FIXED", label: "고정비" },
-  { value: "VARIABLE", label: "변동비" },
-  { value: "INCOME", label: "수입" },
+  { value: "CARD_LOAN", label: "카드대출" },
+  { value: "ONCE", label: "일시불" },
+  { value: "INSTALMENT", label: "할부" },
 ];
+
+/**
+ * Which of the three a card line is.
+ *
+ * A cash advance or card loan is filed under 대출 by the classifier, and an
+ * instalment says so in the 할부 column the statement carries into the memo.
+ * Everything else was paid at once.
+ */
+function payKindOf(tx: Transaction): Exclude<PayFilter, "ALL"> {
+  if (tx.category === "대출") return "CARD_LOAN";
+  if (isInstalment(tx.memo || "")) return "INSTALMENT";
+  return "ONCE";
+}
 
 const ALL_CATEGORIES = "__ALL__";
 
@@ -135,6 +162,7 @@ export const AccountLedgerModal: React.FC<{
   } = useFinance();
 
   const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
+  const [payFilter, setPayFilter] = useState<PayFilter>("ALL");
   const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORIES);
   const [showHelp, setShowHelp] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -193,6 +221,7 @@ export const AccountLedgerModal: React.FC<{
     setPeriodMode("MONTH");
     setBasis("USED");
     setKindFilter("ALL");
+    setPayFilter("ALL");
     setCategoryFilter(ALL_CATEGORIES);
   }, [isOpen]);
 
@@ -271,10 +300,11 @@ export const AccountLedgerModal: React.FC<{
       accountEntries
         .filter(inPeriod)
         .filter((tx) => kindFilter === "ALL" || tx.expenseType === kindFilter)
+        .filter((tx) => payFilter === "ALL" || payKindOf(tx) === payFilter)
         .filter(
           (tx) => categoryFilter === ALL_CATEGORIES || tx.category === categoryFilter
         ),
-    [accountEntries, inPeriod, kindFilter, categoryFilter]
+    [accountEntries, inPeriod, kindFilter, payFilter, categoryFilter]
   );
 
   /** Only the categories this account actually uses are worth offering. */
@@ -918,8 +948,12 @@ export const AccountLedgerModal: React.FC<{
           )}
 
           {/* 고정비·변동비 */}
-          <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-xl">
-            {KIND_LABELS.map(({ value, label }) => (
+          <div
+            className={`grid gap-1 p-1 bg-slate-100 rounded-xl ${
+              isBank ? "grid-cols-4" : "grid-cols-3"
+            }`}
+          >
+            {kindOptions(isBank).map(({ value, label }) => (
               <button
                 key={value}
                 type="button"
@@ -934,6 +968,26 @@ export const AccountLedgerModal: React.FC<{
               </button>
             ))}
           </div>
+
+          {/* 일시불·할부·카드대출 */}
+          {!isBank && (
+            <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-xl">
+              {PAY_LABELS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setPayFilter(value)}
+                  className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                    payFilter === value
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 카테고리 */}
           <select
