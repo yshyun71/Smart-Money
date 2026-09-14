@@ -29,8 +29,10 @@ import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 import { resolveCategory } from "../services/categoryRules";
+import { matchCardAccount } from "../services/cardLink";
 import {
   BUILT_IN_CATEGORIES,
+  CARD_PAYMENT_CATEGORY,
   FIXED_BUDGET_CATEGORIES,
 } from "../constants/categories";
 
@@ -634,6 +636,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       accountId: string;
       category: CategoryType;
       type: TransactionType;
+      linkedAccountId?: string;
     }
   >(
     tx: T
@@ -644,7 +647,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       tx.accountId,
       tx.type === "INCOME"
     );
-    return decided ? { ...tx, category: decided } : tx;
+    const next = decided ? { ...tx, category: decided } : tx;
+
+    // A card bill says which issuer it settles; if exactly one registered card
+    // matches, the payment points at it from the start.
+    if (next.category === CARD_PAYMENT_CATEGORY && !next.linkedAccountId) {
+      const card = matchCardAccount(next.merchant, accounts);
+      if (card) return { ...next, linkedAccountId: card };
+    }
+
+    return next;
   };
 
   /*

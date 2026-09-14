@@ -171,7 +171,7 @@ export const CsvImportModal: React.FC<{
       }
 
       setTable(parsed);
-      setMapping(autoDetectMapping(parsed.headers));
+      setMapping(autoDetectMapping(parsed.headers, parsed.rows));
       setStep("MAP");
     } catch (error) {
       console.error(error);
@@ -190,8 +190,14 @@ export const CsvImportModal: React.FC<{
   const goToReview = () => {
     const { drafts, skipped } = preview;
 
+    /*
+      Only this account's own entries count as duplicates. The same shop, the
+      same day and the same amount on a different card is a different payment,
+      and treating it as already registered silently dropped whole statements.
+    */
     const existingByKey = new Map<string, Transaction>();
     for (const tx of allTransactions) {
+      if (tx.accountId !== accountId) continue;
       const key = duplicateKey(tx);
       if (!existingByKey.has(key)) existingByKey.set(key, tx);
     }
@@ -245,7 +251,12 @@ export const CsvImportModal: React.FC<{
 
       // Worked out from the entries, so the figure is tagged as such
       const moved =
-        adjustBalance && balancePlan && balancePlan.counted > 0 ? balancePlan : null;
+        adjustBalance &&
+        account?.type === "BANK" &&
+        balancePlan &&
+        balancePlan.counted > 0
+          ? balancePlan
+          : null;
       if (moved) {
         setAccountBalance(accountId, moved.next, moved.asOf, "AUTO");
       }
@@ -561,6 +572,13 @@ export const CsvImportModal: React.FC<{
               </div>
             )}
 
+            {fresh.length === 0 && duplicates.length > 0 && (
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[10px] text-slate-500 leading-relaxed">
+                새로 추가할 내역이 없습니다. 이 계좌에 이미 같은 날짜·내용·금액으로 등록된
+                내역들입니다. 다시 등록하려면 아래에서 <strong>덮어쓰기</strong>를 선택하세요.
+              </div>
+            )}
+
             {duplicates.length > 0 ? (
               <>
                 <div className="flex items-start gap-2 p-3 rounded-2xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-900">
@@ -648,7 +666,7 @@ export const CsvImportModal: React.FC<{
             )}
 
             {/* Move the recorded balance along with the entries */}
-            {account && balancePlan && (
+            {account && account.type === "BANK" && balancePlan && (
               <div
                 className={`rounded-2xl border p-3 space-y-2 transition ${
                   adjustBalance && balancePlan.counted > 0
@@ -668,7 +686,7 @@ export const CsvImportModal: React.FC<{
                     <Square className="w-4 h-4 text-slate-400 shrink-0 mt-px" />
                   )}
                   <span className="text-[11px] font-bold text-slate-700 min-w-0">
-                    현재 {account.type === "BANK" ? "잔액" : "청구액"} 수정
+                    현재 잔액 수정
                   </span>
                 </button>
 
@@ -773,8 +791,7 @@ export const CsvImportModal: React.FC<{
             {result.balance && (
               <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/70 text-[11px] text-emerald-900 space-y-0.5">
                 <div className="font-bold">
-                  {account?.type === "BANK" ? "잔액" : "청구액"}을{" "}
-                  {won(result.balance.next)}으로 수정했습니다
+                  잔액을 {won(result.balance.next)}으로 수정했습니다
                 </div>
                 <div className="text-[10px] text-emerald-700">
                   {result.balance.counted}건 반영 · 기준 {asOfLabel(result.balance.asOf)} ·

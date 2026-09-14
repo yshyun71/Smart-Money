@@ -83,6 +83,11 @@ export interface Transaction {
   memo?: string;
   isFixedRecurring?: boolean;
   recurringDay?: number; // e.g. 매월 25일
+  /**
+   * For a card bill paid out of a bank account: the card it settles, so the
+   * month's usage can be read from the payment.
+   */
+  linkedAccountId?: string;
 }
 
 export interface SavingsRecommendation {

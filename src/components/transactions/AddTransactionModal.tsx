@@ -4,6 +4,8 @@ import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput } from "../../utils/format";
 import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
 import { suggestPattern } from "../../services/categoryRules";
+import { matchCardAccount, isCardAccount } from "../../services/cardLink";
+import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
 import { CategorySelect } from "./CategorySelect";
 import {
   X,
@@ -47,6 +49,8 @@ export const AddTransactionModal: React.FC<{
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [recurringDay, setRecurringDay] = useState("5");
   const [memo, setMemo] = useState("");
+  /** For a card bill: which registered card it settles. */
+  const [linkedAccountId, setLinkedAccountId] = useState("");
 
   /*
     Changing a category here is a decision about this description, not only
@@ -80,6 +84,7 @@ export const AddTransactionModal: React.FC<{
       setDate(editing.date);
       setRecurringDay(String(editing.recurringDay ?? 5));
       setMemo(editing.memo || "");
+      setLinkedAccountId(editing.linkedAccountId || "");
     } else {
       setFormType("VARIABLE");
       setAmount("");
@@ -89,6 +94,7 @@ export const AddTransactionModal: React.FC<{
       setDate(new Date().toISOString().split("T")[0]);
       setRecurringDay("5");
       setMemo("");
+      setLinkedAccountId("");
     }
 
     setMakeRule(false);
@@ -118,6 +124,17 @@ export const AddTransactionModal: React.FC<{
     if (!isOpen || patternTouched) return;
     setRulePattern(suggestPattern(merchant));
   }, [isOpen, merchant, patternTouched]);
+
+  /*
+    A card bill names its issuer, so the card it settles can usually be worked
+    out — but only where one registered card fits. The user can always say.
+  */
+  useEffect(() => {
+    if (!isOpen || category !== CARD_PAYMENT_CATEGORY || linkedAccountId) return;
+    const match = matchCardAccount(merchant, accounts);
+    if (match) setLinkedAccountId(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, category, merchant, accounts, linkedAccountId]);
 
   // Moving an entry to another category is the moment the rule is worth making
   useEffect(() => {
@@ -162,6 +179,8 @@ export const AddTransactionModal: React.FC<{
       memo: memo.trim() || undefined,
       isFixedRecurring: formType === "FIXED",
       recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
+      linkedAccountId:
+        category === CARD_PAYMENT_CATEGORY && linkedAccountId ? linkedAccountId : undefined,
     };
 
     // Saved first so the entry itself is never overwritten by its own rule
@@ -403,6 +422,31 @@ export const AddTransactionModal: React.FC<{
               ))}
             </select>
           </div>
+
+          {/* Which card this bill settles, so its usage can be read from here */}
+          {category === CARD_PAYMENT_CATEGORY && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                결제한 카드 (선택)
+              </label>
+              <select
+                value={linkedAccountId}
+                onChange={(e) => setLinkedAccountId(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden bg-white"
+              >
+                <option value="">연결 안 함</option>
+                {accounts.filter(isCardAccount).map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    [{acc.institution}] {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                연결하면 입출금 목록에서 이 금액을 눌러 해당 카드의 월별 이용 내역을 볼 수
+                있습니다.
+              </p>
+            </div>
+          )}
 
           {/* Date & (Optional Recurring day for fixed) */}
           <div className="grid grid-cols-2 gap-2">

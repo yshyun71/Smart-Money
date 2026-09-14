@@ -89,7 +89,7 @@ export function suggestPattern(merchant: string): string {
  * "삼성카드출금", "삼성카드결재", "삼성카드1234", "1234 삼성카드". Requiring the
  * issuer keeps ordinary debit-card purchase lines ("체크카드출금") out of it.
  */
-const CARD_ISSUERS = [
+export const CARD_ISSUERS = [
   "KB",
   "국민",
   "신한",

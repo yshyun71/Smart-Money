@@ -21,6 +21,9 @@ import {
 import { CategoryRulesModal } from "./CategoryRulesModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
 import { MonthPickerModal } from "./MonthPickerModal";
+import { CardUsageModal } from "./CardUsageModal";
+import { matchCardAccount } from "../../services/cardLink";
+import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
 import {
   builtInCategoryFor,
   pickRule,
@@ -134,6 +137,12 @@ export const AccountLedgerModal: React.FC<{
   const [showRules, setShowRules] = useState(false);
   const [showBalance, setShowBalance] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  /** The card bill whose month of usage is being read, if any. */
+  const [usage, setUsage] = useState<{
+    accountId: string;
+    month: string;
+    amount: number;
+  } | null>(null);
 
   const account = accounts.find((a: { id: string }) => a.id === accountId);
 
@@ -161,6 +170,7 @@ export const AccountLedgerModal: React.FC<{
     setShowRules(false);
     setShowBalance(false);
     setShowMonthPicker(false);
+    setUsage(null);
     setShowHelp(false);
     setPeriodMode("MONTH");
     setKindFilter("ALL");
@@ -199,7 +209,14 @@ export const AccountLedgerModal: React.FC<{
     const handleKeyDown = (e: KeyboardEvent) => {
       // While a sheet of our own is on top, Escape belongs to it alone —
       // otherwise one press would dismiss this sheet out from under it.
-      if (e.key === "Escape" && !summary && !showRules && !showBalance && !showMonthPicker) {
+      if (
+        e.key === "Escape" &&
+        !summary &&
+        !showRules &&
+        !showBalance &&
+        !showMonthPicker &&
+        !usage
+      ) {
         onClose();
       }
     };
@@ -212,7 +229,7 @@ export const AccountLedgerModal: React.FC<{
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, summary, showRules, showBalance, showMonthPicker]);
+  }, [isOpen, onClose, summary, showRules, showBalance, showMonthPicker, usage]);
 
   /** True when an entry falls inside the chosen month or span. */
   const inPeriod = useMemo(() => {
@@ -424,12 +441,18 @@ export const AccountLedgerModal: React.FC<{
         if (categoryChanged) categoryCorrected++;
         if (dayChanged && recurringDay) paymentDaySet++;
 
+        const linkedAccountId =
+          category === CARD_PAYMENT_CATEGORY && !tx.linkedAccountId
+            ? matchCardAccount(tx.merchant, accounts) ?? undefined
+            : tx.linkedAccountId;
+
         const updated: Transaction = {
           ...tx,
           expenseType,
           category,
           isFixedRecurring: isFixed,
           recurringDay,
+          linkedAccountId,
         };
 
         if (typeChanged || categoryChanged || dayChanged) {
@@ -914,6 +937,11 @@ export const AccountLedgerModal: React.FC<{
                 <div className="rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
                   {list.map((tx) => {
                     const isChecked = selected.has(tx.id);
+                    const linkedCard = tx.linkedAccountId
+                      ? accounts.find(
+                          (a: { id: string }) => a.id === tx.linkedAccountId
+                        )
+                      : null;
                     return (
                       <div
                         key={tx.id}
@@ -937,7 +965,7 @@ export const AccountLedgerModal: React.FC<{
                         <button
                           type="button"
                           onClick={() => onEdit(tx)}
-                          className="flex-1 min-w-0 pr-3 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 active:bg-slate-100 transition cursor-pointer group"
+                          className="flex-1 min-w-0 py-2.5 flex items-center gap-2 text-left hover:bg-slate-50 active:bg-slate-100 transition cursor-pointer group"
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <div
@@ -965,22 +993,43 @@ export const AccountLedgerModal: React.FC<{
                                   ` · 고정비${
                                     tx.recurringDay ? ` 매월 ${tx.recurringDay}일` : ""
                                   }`}
+                                {linkedCard && ` · ${linkedCard.name}`}
                               </div>
                             </div>
+                            <Pencil className="w-3 h-3 shrink-0 text-slate-300 group-hover:text-slate-500 transition" />
                           </div>
+                        </button>
 
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span
-                              className={`text-xs font-black ${
-                                tx.type === "INCOME" ? "text-emerald-600" : "text-slate-800"
-                              }`}
-                            >
+                        {/* A settled card bill opens that month's usage */}
+                        {linkedCard ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setUsage({
+                                accountId: linkedCard.id,
+                                month: tx.date.slice(0, 7),
+                                amount: tx.amount,
+                              })
+                            }
+                            title={`${linkedCard.name} 이용 내역 보기`}
+                            className="shrink-0 pr-3 pl-1 py-2.5 flex items-center gap-1 text-xs font-black text-indigo-700 hover:text-indigo-900 transition cursor-pointer"
+                          >
+                            <span>
                               {tx.type === "INCOME" ? "+" : "-"}
                               {won(tx.amount)}
                             </span>
-                            <Pencil className="w-3 h-3 text-slate-300 group-hover:text-slate-500 transition" />
-                          </div>
-                        </button>
+                            <CreditCard className="w-3 h-3" />
+                          </button>
+                        ) : (
+                          <span
+                            className={`shrink-0 pr-3 pl-1 py-2.5 text-xs font-black ${
+                              tx.type === "INCOME" ? "text-emerald-600" : "text-slate-800"
+                            }`}
+                          >
+                            {tx.type === "INCOME" ? "+" : "-"}
+                            {won(tx.amount)}
+                          </span>
+                        )}
                       </div>
                     );
                   })}
@@ -1021,6 +1070,13 @@ export const AccountLedgerModal: React.FC<{
         isOpen={showBalance}
         accountId={accountId}
         onClose={() => setShowBalance(false)}
+      />
+      <CardUsageModal
+        isOpen={Boolean(usage)}
+        accountId={usage?.accountId || ""}
+        paidMonth={usage?.month || ""}
+        billedAmount={usage?.amount || 0}
+        onClose={() => setUsage(null)}
       />
       <MonthPickerModal
         isOpen={showMonthPicker}

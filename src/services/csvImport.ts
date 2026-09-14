@@ -286,7 +286,97 @@ const COUNTERPARTY_KEYWORDS = [
 ];
 const DESCRIPTION_KEYWORDS = ["적요", "거래내용", "내용", "기재내용"];
 
-export function autoDetectMapping(headers: string[]): ColumnMapping {
+/** Columns that hold a number but never the amount of a transaction. */
+const NOT_AMOUNT = [
+  "잔액", "한도", "누계", "포인트", "마일리지", "번호", "개월", "할부", "회차", "수수료율", "이율",
+];
+
+/** How many rows a mapping actually reads a date and an amount out of. */
+function usableRows(rows: string[][], mapping: ColumnMapping): number {
+  let count = 0;
+  for (const row of rows) {
+    const cell = (column: number) => (column >= 0 ? row[column] || "" : "");
+    if (!normaliseDate(cell(mapping.date))) continue;
+
+    const amount =
+      mapping.withdrawal >= 0 || mapping.deposit >= 0
+        ? Math.max(
+            normaliseAmount(cell(mapping.withdrawal)).value,
+            normaliseAmount(cell(mapping.deposit)).value
+          )
+        : normaliseAmount(cell(mapping.amount)).value;
+
+    if (amount > 0) count++;
+  }
+  return count;
+}
+
+function countIn(rows: string[][], column: number, reads: (value: string) => boolean): number {
+  let count = 0;
+  for (const row of rows) {
+    if (reads(row[column] || "")) count++;
+  }
+  return count;
+}
+
+/**
+ * Reads the columns back out of the rows when the header names did not settle
+ * it.
+ *
+ * Card statements are the awkward case: several carry a 결제금액 column that
+ * matches on name but is blank on every line, with the real figure under
+ * 이용금액. Trusting the header alone reads nothing and drops every row.
+ */
+function detectFromRows(
+  headers: string[],
+  rows: string[][],
+  guess: ColumnMapping
+): ColumnMapping {
+  const enough = Math.max(1, Math.floor(rows.length * 0.5));
+
+  const dateColumn =
+    countIn(rows, guess.date, (value) => Boolean(normaliseDate(value))) >= enough
+      ? guess.date
+      : headers.findIndex((_, index) =>
+          countIn(rows, index, (value) => Boolean(normaliseDate(value))) >= enough
+        );
+
+  if (dateColumn < 0) return guess;
+
+  // Money columns, best name first, then whichever sits furthest left
+  const preferred = ["이용금액", "승인금액", "거래금액", "출금", "입금", "결제금액", "금액"];
+  const candidates = headers
+    .map((header, index) => ({ header, index }))
+    .filter(
+      ({ header, index }) =>
+        index !== dateColumn &&
+        !NOT_AMOUNT.some((word) => header.includes(word)) &&
+        countIn(rows, index, (value) => normaliseAmount(value).value > 0) >= enough
+    )
+    .sort((a, b) => {
+      const rank = (header: string) => {
+        const hit = preferred.findIndex((word) => header.includes(word));
+        return hit < 0 ? preferred.length : hit;
+      };
+      return rank(a.header) - rank(b.header) || a.index - b.index;
+    });
+
+  if (candidates.length === 0) return { ...guess, date: dateColumn };
+
+  return {
+    ...guess,
+    date: dateColumn,
+    amount: candidates[0].index,
+    withdrawal: -1,
+    deposit: -1,
+  };
+}
+
+/**
+ * Names first, and the rows themselves when the names come to nothing.
+ * `rows` is optional so the mapping can still be guessed from a header alone.
+ */
+export function autoDetectMapping(headers: string[], rows: string[][] = []): ColumnMapping {
   const withdrawal = findColumn(headers, ["출금", "지출", "차감", "결제금액"], ["잔액"]);
   const deposit = findColumn(headers, ["입금", "수입", "적립"], ["잔액"]);
 
@@ -299,7 +389,7 @@ export function autoDetectMapping(headers: string[]): ColumnMapping {
       ? description
       : findColumn(headers, ["메모", "비고", "구분", "업종", "적요2"]);
 
-  return {
+  const guess: ColumnMapping = {
     date: findColumn(headers, [
       "거래일시", "거래일자", "거래일", "이용일자", "이용일", "승인일자", "승인일", "날짜", "일자",
     ]),
@@ -312,6 +402,9 @@ export function autoDetectMapping(headers: string[]): ColumnMapping {
     deposit,
     memo,
   };
+
+  if (rows.length === 0 || usableRows(rows, guess) > 0) return guess;
+  return detectFromRows(headers, rows, guess);
 }
 
 // ---------------------------------------------------------------------------

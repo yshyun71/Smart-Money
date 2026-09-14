@@ -17,7 +17,7 @@ import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export interface Migration {
   version: number;
@@ -62,6 +62,7 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "ai_analyses", column: "user_id", type: "TEXT" },
   { table: "accounts", column: "balance_as_of", type: "TEXT" },
   { table: "accounts", column: "balance_source", type: "TEXT" },
+  { table: "transactions", column: "linked_account_id", type: "TEXT" },
 ];
 
 /**
@@ -436,6 +437,14 @@ export const MIGRATIONS: Migration[] = [
       }
 
       db.run("DELETE FROM categories WHERE name IN ('주거/통신', '생활/의료')");
+    },
+  },
+
+  {
+    version: 8,
+    description: "카드대금 내역에서 결제한 카드 연결",
+    up: (db) => {
+      addColumn(db, "transactions", "linked_account_id", "TEXT");
     },
   },
 ];
