@@ -57,6 +57,18 @@ import {
 
 type PeriodMode = "MONTH" | "RANGE";
 
+/** 고정비 / 변동비 / 수입, or everything. */
+type KindFilter = "ALL" | "FIXED" | "VARIABLE" | "INCOME";
+
+const KIND_LABELS: { value: KindFilter; label: string }[] = [
+  { value: "ALL", label: "전체" },
+  { value: "FIXED", label: "고정비" },
+  { value: "VARIABLE", label: "변동비" },
+  { value: "INCOME", label: "수입" },
+];
+
+const ALL_CATEGORIES = "__ALL__";
+
 const pad = (value: number) => String(value).padStart(2, "0");
 
 /** "2026-09" → "2026년 09월" */
@@ -100,7 +112,9 @@ export const AccountLedgerModal: React.FC<{
     saveCategoryRules,
   } = useFinance();
 
-  const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
+  const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORIES);
+  const [showHelp, setShowHelp] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isClassifying, setIsClassifying] = useState(false);
   const [progress, setProgress] = useState<ClassifyProgress | null>(null);
@@ -137,14 +151,16 @@ export const AccountLedgerModal: React.FC<{
   */
   useEffect(() => {
     if (!isOpen) return;
-    setQuery("");
     setSelected(new Set());
     setNotice(null);
     setProgress(null);
     setSummary(null);
     setShowRules(false);
     setShowBalance(false);
+    setShowHelp(false);
     setPeriodMode("MONTH");
+    setKindFilter("ALL");
+    setCategoryFilter(ALL_CATEGORIES);
   }, [isOpen]);
 
   // A span the user has not chosen belongs to whichever account is open
@@ -208,16 +224,35 @@ export const AccountLedgerModal: React.FC<{
     };
   }, [periodMode, month, rangeFrom, rangeTo]);
 
-  const entries = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    return accountEntries.filter(inPeriod).filter(
-      (tx) =>
-        !term ||
-        tx.merchant.toLowerCase().includes(term) ||
-        tx.category.toLowerCase().includes(term) ||
-        (tx.memo || "").toLowerCase().includes(term)
-    );
-  }, [accountEntries, inPeriod, query]);
+  const entries = useMemo(
+    () =>
+      accountEntries
+        .filter(inPeriod)
+        .filter((tx) => kindFilter === "ALL" || tx.expenseType === kindFilter)
+        .filter(
+          (tx) => categoryFilter === ALL_CATEGORIES || tx.category === categoryFilter
+        ),
+    [accountEntries, inPeriod, kindFilter, categoryFilter]
+  );
+
+  /** Only the categories this account actually uses are worth offering. */
+  const categoryOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const tx of accountEntries) names.add(tx.category);
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "ko"));
+  }, [accountEntries]);
+
+  /** What the ticked entries come to, which is why they were ticked. */
+  const selectedTotals = useMemo(() => {
+    let expense = 0;
+    let income = 0;
+    for (const tx of entries) {
+      if (!selected.has(tx.id)) continue;
+      if (tx.type === "INCOME") income += tx.amount;
+      else expense += tx.amount;
+    }
+    return { expense, income, total: expense + income };
+  }, [entries, selected]);
 
   /** Newest month first, entries already sorted by the context. */
   const grouped = useMemo(() => {
@@ -586,26 +621,15 @@ export const AccountLedgerModal: React.FC<{
           </button>
         </div>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="가맹점·분류·메모 검색"
-            className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
-          />
-        </div>
-
         {/* Bulk classification */}
         {accountEntries.length > 0 && (
           <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+            <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleClassify}
               disabled={isClassifying}
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white font-bold text-[11px] transition flex items-center justify-center gap-1.5 disabled:opacity-60 cursor-pointer"
+              className="flex-1 min-w-0 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white font-bold text-[11px] transition flex items-center justify-center gap-1.5 disabled:opacity-60 cursor-pointer"
             >
               {isClassifying ? (
                 <>
@@ -626,6 +650,22 @@ export const AccountLedgerModal: React.FC<{
               )}
             </button>
 
+            <button
+              type="button"
+              onClick={() => setShowHelp((prev) => !prev)}
+              aria-label="AI 자동 분류 설명"
+              aria-expanded={showHelp}
+              title="AI 자동 분류 설명"
+              className={`w-8 h-8 shrink-0 rounded-xl border flex items-center justify-center transition cursor-pointer ${
+                showHelp
+                  ? "bg-emerald-600 border-emerald-600 text-white"
+                  : "bg-white border-slate-200 text-slate-400 hover:text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
+            </div>
+
             {notice && (
               <div
                 className={`p-2 rounded-xl text-[10px] font-bold flex items-start gap-1.5 ${
@@ -643,14 +683,16 @@ export const AccountLedgerModal: React.FC<{
               </div>
             )}
 
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              아래에서 선택한 내역의 고정비/변동비와 카테고리를 AI가 분류합니다. 구분이
-              모호하면
-              <strong> 서로 다른 3개월 이상 같은 날짜대에 같은 가맹점으로 반복</strong>되는지
-              보고 판단하며(공휴일·월말 차이 보정), 고정비로 분류되면 매월 결제일을 자동으로
-              채웁니다. <strong>카테고리 관리</strong>의 사용자 규칙이 AI 결과보다 먼저
-              적용됩니다.
-            </p>
+            {showHelp && (
+              <p className="p-2.5 rounded-xl bg-white border border-slate-200 text-[10px] text-slate-500 leading-relaxed">
+                아래에서 선택한 내역의 고정비/변동비와 카테고리를 AI가 분류합니다. 구분이
+                모호하면
+                <strong> 서로 다른 3개월 이상 같은 날짜대에 같은 가맹점으로 반복</strong>되는지
+                보고 판단하며(공휴일·월말 차이 보정), 고정비로 분류되면 매월 결제일을 자동으로
+                채웁니다. <strong>카테고리 관리</strong>의 사용자 규칙이 AI 결과보다 먼저
+                적용됩니다.
+              </p>
+            )}
           </div>
         )}
 
@@ -751,6 +793,38 @@ export const AccountLedgerModal: React.FC<{
             </div>
           )}
 
+          {/* 고정비·변동비 */}
+          <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-xl">
+            {KIND_LABELS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setKindFilter(value)}
+                className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                  kindFilter === value
+                    ? "bg-white text-slate-900 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* 카테고리 */}
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-900 bg-white focus:border-emerald-400 focus:outline-none"
+          >
+            <option value={ALL_CATEGORIES}>전체 카테고리</option>
+            {categoryOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+
           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
             <button
               type="button"
@@ -766,11 +840,36 @@ export const AccountLedgerModal: React.FC<{
               <span>전체 선택</span>
             </button>
 
-            <span className="text-[10px] text-slate-400">
-              {selectedCount > 0
-                ? `${selectedCount}건 선택됨 · 조회 ${entries.length}건`
-                : `조회 ${entries.length}건`}
+            <span className="text-[10px] text-slate-400">조회 {entries.length}건</span>
+          </div>
+
+          {/* What the ticked entries come to */}
+          <div
+            className={`flex items-center justify-between gap-2 rounded-xl px-2.5 py-2 ${
+              selectedCount > 0 ? "bg-emerald-50" : "bg-slate-50"
+            }`}
+          >
+            <span
+              className={`text-[10px] font-bold ${
+                selectedCount > 0 ? "text-emerald-700" : "text-slate-400"
+              }`}
+            >
+              선택 {selectedCount}건 합계
             </span>
+            <div className="text-right min-w-0">
+              <div
+                className={`text-xs font-black ${
+                  selectedCount > 0 ? "text-emerald-800" : "text-slate-400"
+                }`}
+              >
+                {won(selectedTotals.total)}
+              </div>
+              {selectedTotals.expense > 0 && selectedTotals.income > 0 && (
+                <div className="text-[9px] text-slate-400">
+                  지출 {won(selectedTotals.expense)} · 수입 {won(selectedTotals.income)}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -781,14 +880,12 @@ export const AccountLedgerModal: React.FC<{
             <div className="text-xs font-bold text-slate-700">
               {accountEntries.length === 0
                 ? "등록된 내역이 없습니다"
-                : query
-                ? "검색 결과가 없습니다"
-                : `${periodSummary}에는 내역이 없습니다`}
+                : `${periodSummary}에는 조건에 맞는 내역이 없습니다`}
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed">
               {accountEntries.length === 0
                 ? "엑셀·CSV로 가져오거나 직접 추가해보세요."
-                : "위에서 다른 기간을 선택해보세요."}
+                : "위에서 기간·구분·카테고리 조건을 바꿔보세요."}
             </p>
           </div>
         ) : (
