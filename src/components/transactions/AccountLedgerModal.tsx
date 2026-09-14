@@ -20,6 +20,7 @@ import {
 } from "./ClassifyResultModal";
 import { CategoryRulesModal } from "./CategoryRulesModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
+import { MonthPickerModal } from "./MonthPickerModal";
 import {
   builtInCategoryFor,
   pickRule,
@@ -50,6 +51,7 @@ import {
   Square,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Tag,
   Calculator,
   UserCheck,
@@ -131,6 +133,7 @@ export const AccountLedgerModal: React.FC<{
 
   const [showRules, setShowRules] = useState(false);
   const [showBalance, setShowBalance] = useState(false);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
 
   const account = accounts.find((a: { id: string }) => a.id === accountId);
 
@@ -157,6 +160,7 @@ export const AccountLedgerModal: React.FC<{
     setSummary(null);
     setShowRules(false);
     setShowBalance(false);
+    setShowMonthPicker(false);
     setShowHelp(false);
     setPeriodMode("MONTH");
     setKindFilter("ALL");
@@ -195,7 +199,9 @@ export const AccountLedgerModal: React.FC<{
     const handleKeyDown = (e: KeyboardEvent) => {
       // While a sheet of our own is on top, Escape belongs to it alone —
       // otherwise one press would dismiss this sheet out from under it.
-      if (e.key === "Escape" && !summary && !showRules && !showBalance) onClose();
+      if (e.key === "Escape" && !summary && !showRules && !showBalance && !showMonthPicker) {
+        onClose();
+      }
     };
 
     const originalOverflow = document.body.style.overflow;
@@ -206,7 +212,7 @@ export const AccountLedgerModal: React.FC<{
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, summary, showRules, showBalance]);
+  }, [isOpen, onClose, summary, showRules, showBalance, showMonthPicker]);
 
   /** True when an entry falls inside the chosen month or span. */
   const inPeriod = useMemo(() => {
@@ -742,14 +748,20 @@ export const AccountLedgerModal: React.FC<{
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
-                <div className="text-center px-1">
-                  <div className="text-xs font-black text-slate-900 whitespace-nowrap">
-                    {monthLabel(month)}
+                <button
+                  type="button"
+                  onClick={() => setShowMonthPicker(true)}
+                  title="조회할 연월 직접 선택"
+                  className="text-center px-1.5 py-0.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <div className="text-xs font-black text-slate-900 whitespace-nowrap flex items-center gap-1">
+                    <span>{monthLabel(month)}</span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
                   </div>
                   <div className="text-[9px] text-slate-400">
                     {monthCounts.get(month) || 0}건
                   </div>
-                </div>
+                </button>
                 <button
                   type="button"
                   onClick={() => setMonth(nextMonth)}
@@ -1009,6 +1021,13 @@ export const AccountLedgerModal: React.FC<{
         isOpen={showBalance}
         accountId={accountId}
         onClose={() => setShowBalance(false)}
+      />
+      <MonthPickerModal
+        isOpen={showMonthPicker}
+        value={month}
+        counts={monthCounts}
+        onSelect={setMonth}
+        onClose={() => setShowMonthPicker(false)}
       />
       <ClassifyResultModal summary={summary} onClose={() => setSummary(null)} />
     </>
