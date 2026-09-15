@@ -745,7 +745,14 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
 
   const withdrawal = findColumn(
     headers,
-    ["출금", "지출", "차감", "결제금액", "납부금액", "청구금액", "입금하실"],
+    /*
+      원금 is last so the issuers that head the column properly — 이번달
+      결제금액 원금, 이번 달 입금하실 금액 원금 — keep matching on the fuller
+      name. 삼성 heads it 원금 and nothing else, beside an 이용금액 holding the
+      whole purchase; taken as the amount that one bills 160,550원 for a
+      16,000원 instalment.
+    */
+    ["출금", "지출", "차감", "결제금액", "납부금액", "청구금액", "입금하실", "원금"],
     notMoney
   );
 
@@ -967,6 +974,24 @@ export interface BuildOptions {
   fallbackDate?: string;
 }
 
+/**
+ * Whether a description is a total rather than something that was bought.
+ *
+ * Most statements leave the shop column empty on their totals, and a line with
+ * no shop was already kept out. 삼성 writes 할부합계 in that very column, so
+ * with a billing month to date it by, a 185,200원 "purchase" went straight into
+ * the ledger alongside the four instalments it was the sum of.
+ *
+ * The whole cell has to be the label — 합계, 소계, 할부합계, "합 계 45 건" —
+ * because a shop is free to have one of those words inside its name: 종합계좌
+ * carries 합계 and is not a total.
+ */
+export function isTotalLabel(text: string): boolean {
+  const value = (text || "").replace(/\s+/g, "");
+  if (!value) return false;
+  return /^[가-힣A-Za-z]*(합계|소계|총계|누계)(\d+건)?$/.test(value);
+}
+
 export function buildDrafts(
   table: ParsedTable,
   mapping: ColumnMapping,
@@ -996,6 +1021,13 @@ export function buildDrafts(
       has no shop against it and stays out.
     */
     const named = cell(mapping.merchant).trim();
+
+    // 할부합계 — a total 삼성 writes in the shop column, where it reads as a purchase
+    if (isTotalLabel(named)) {
+      skipped.push({ lineNumber, reason: "합계 줄" });
+      return;
+    }
+
     const dated = normaliseDate(cell(mapping.date));
     const charged =
       mapping.fee >= 0 ? normaliseAmount(cell(mapping.fee)) : { value: 0, negative: false };
