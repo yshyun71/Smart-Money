@@ -97,6 +97,8 @@ export const CsvImportModal: React.FC<{
   const [adjustBalance, setAdjustBalance] = useState(false);
   /** The month a card statement bills, when its lines do not each say. */
   const [billingMonth, setBillingMonth] = useState("");
+  /** Once the user sets it themselves, nothing else touches it. */
+  const [billingTouched, setBillingTouched] = useState(false);
   /** Where the column mapping came from, which the user is told. */
   const [mappingSource, setMappingSource] = useState<
     "RULES" | "AI" | "REMEMBERED" | "MANUAL"
@@ -123,6 +125,7 @@ export const CsvImportModal: React.FC<{
     setResult(null);
     setAdjustBalance(false);
     setBillingMonth("");
+    setBillingTouched(false);
     setMappingSource("RULES");
     setIsDetecting(false);
     setDetectNote(null);
@@ -179,14 +182,20 @@ export const CsvImportModal: React.FC<{
     The user corrects it on the mapping step.
   */
   useEffect(() => {
-    if (!table || !account || account.type === "BANK" || billingMonth) return;
+    if (!table || !account || account.type === "BANK" || billingTouched) return;
+
+    /*
+      Worked out again whenever the file or what was read from it changes, not
+      only while the field is empty: the first pass can run before the name or
+      the rows have settled, and a month guessed then would otherwise stand.
+    */
     const guess = guessBillingMonth(
       fileName,
       preview.drafts.map((draft) => ({ date: draft.date, memo: draft.memo }))
     );
-    if (guess) setBillingMonth(guess);
+    if (guess && guess !== billingMonth) setBillingMonth(guess);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, account, billingMonth, fileName, preview.drafts.length]);
+  }, [table, account, billingTouched, fileName, preview.drafts.length]);
 
   /**
    * Every line the file yielded, new and already-registered together.
@@ -723,7 +732,10 @@ export const CsvImportModal: React.FC<{
                 <input
                   type="month"
                   value={billingMonth}
-                  onChange={(e) => setBillingMonth(e.target.value)}
+                  onChange={(e) => {
+                    setBillingTouched(true);
+                    setBillingMonth(e.target.value);
+                  }}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
                 />
                 <p className="text-[10px] text-slate-400 leading-relaxed">
