@@ -339,6 +339,47 @@ section("기억된 형식 — 규칙이 나아지면 물러설 것");
 
   check("기억이 없으면 규칙", chooseMapping(table, null, guess).source === "RULES");
 
+  /*
+    회차·수수료 열이 생기기 전에 저장된 기억에는 그 항목이 아예 없다(-1이 아니라
+    없음). 그대로 두면 지난해 코드처럼 읽어 회차가 메모에 실리지 않고, 다음 달
+    할부가 지난달 것과 같은 중복 키를 갖는다.
+  */
+  const older: any = { ...guess };
+  delete older.instalment;
+  delete older.fee;
+
+  const grown = chooseMapping(table, older, guess);
+  check("옛 기억도 유지됨", grown.source === "REMEMBERED", grown.source);
+  check(
+    "모르던 열은 새로 인식한 값으로 채움",
+    grown.mapping.instalment === 4 && grown.mapping.fee === 7,
+    grown.mapping
+  );
+
+  const grownDrafts = buildDrafts(table, grown.mapping);
+  check("회차가 메모에 실림", grownDrafts.drafts[0]?.memo === "5/10", grownDrafts.drafts[0]?.memo);
+  check("수수료만 있는 줄도 살아남음", grownDrafts.drafts.length === 2, grownDrafts.drafts.length);
+
+  // 반대로, 그 열이 없다고 사람이 확인한 기억은 그대로 둔다
+  const declared = chooseMapping(table, { ...guess, instalment: -1 }, guess);
+  check(
+    "없다고 확인한 열은 건드리지 않음",
+    declared.mapping.instalment === -1,
+    declared.mapping.instalment
+  );
+
+  // 다음 달 같은 할부가 중복으로 걸리지 않는다
+  const august = buildDrafts(table, grown.mapping).drafts[0];
+  const julyText = lotte.replace(
+    '2026.04.11,본인LOCA,에스케이스토아,"136,800원",5,10',
+    '2026.04.11,본인LOCA,에스케이스토아,"136,800원",4,10'
+  );
+  const july = buildDrafts(parseDelimited(julyText), grown.mapping).drafts[0];
+  check("같은 할부의 다른 회차는 다른 건", duplicateKey(august) !== duplicateKey(july), [
+    duplicateKey(august),
+    duplicateKey(july),
+  ]);
+
   // 그리고 실제로 읽히는 결과가 달라진다
   const withStale = buildDrafts(table, stale);
   const withFresh = buildDrafts(table, superseded.mapping);

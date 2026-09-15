@@ -695,14 +695,39 @@ export function chooseMapping(
 ): { mapping: ColumnMapping; source: MappingSource } {
   if (!remembered) return { mapping: guess, source: "RULES" };
 
-  const kept = scoreMapping(table, remembered);
+  const settled = withNewColumns(remembered, guess);
+
+  const kept = scoreMapping(table, settled);
   const fresh = scoreMapping(table, guess);
 
   if (kept.ok || kept.usable >= fresh.usable) {
-    return { mapping: remembered, source: "REMEMBERED" };
+    return { mapping: settled, source: "REMEMBERED" };
   }
 
   return { mapping: guess, source: "RULES" };
+}
+
+/**
+ * A remembered format can only speak about the columns that existed when it
+ * was saved.
+ *
+ * 회차 and 수수료 were both added long after the first formats were stored, and
+ * a mapping saved before them has no such field at all — not -1, which would
+ * mean "this file has no such column", but nothing. Left as it was, the stored
+ * format went on reading the file the way last year's code did: the 회차 never
+ * reached the memo, so one month's instalment and the next shared a duplicate
+ * key and the second was filed as already registered. Fresh detection answers
+ * for anything the memory has no opinion on; every column it does name is left
+ * exactly as the person confirmed it.
+ */
+function withNewColumns(remembered: ColumnMapping, guess: ColumnMapping): ColumnMapping {
+  const filled = { ...remembered };
+
+  for (const key of Object.keys(guess) as (keyof ColumnMapping)[]) {
+    if (typeof filled[key] !== "number") filled[key] = guess[key];
+  }
+
+  return filled;
 }
 
 /**
