@@ -5,6 +5,7 @@ import type { Transaction } from "../../types/finance";
 import {
   autoDetectMapping,
   buildDrafts,
+  chooseMapping,
   draftToTransaction,
   duplicateKey,
   EMPTY_MAPPING,
@@ -249,22 +250,23 @@ export const CsvImportModal: React.FC<{
       setStep("MAP");
 
       /*
-        A format confirmed once is applied without another thought. Otherwise
-        the rules have a go, and only where they cannot account for most of the
-        file is the model asked — and then only about which column is which.
+        A format confirmed once is applied without another thought — unless it
+        reads this file worse than the rules now would, which is what happens
+        to a mapping saved before those rules were fixed.
       */
+      const guess = autoDetectMapping(parsed.headers, parsed.rows);
       const remembered = recallMapping(parsed.headers);
-      if (remembered) {
-        setMapping(remembered);
-        setMappingSource("REMEMBERED");
-        return;
+      const { mapping: chosen, source } = chooseMapping(parsed, remembered, guess);
+
+      setMapping(chosen);
+      setMappingSource(source);
+
+      if (source === "RULES" && remembered) {
+        setDetectNote("이전에 저장해 둔 열 지정이 이 파일과 맞지 않아 다시 인식했습니다");
       }
 
-      const guess = autoDetectMapping(parsed.headers, parsed.rows);
-      setMapping(guess);
-      setMappingSource("RULES");
-
-      if (scoreMapping(parsed, guess).ok || !hasApiKey()) return;
+      if (source === "REMEMBERED") return;
+      if (scoreMapping(parsed, chosen).ok || !hasApiKey()) return;
 
       setIsDetecting(true);
       try {
@@ -678,8 +680,9 @@ export const CsvImportModal: React.FC<{
                   </span>
                 ) : (
                   <span>
-                    파일의 열 제목과 값으로 자동 지정했습니다. 아래 미리보기가 비어 있거나
-                    금액이 이상하면 열을 직접 바꿔주세요.
+                    {detectNote ? `${detectNote}. ` : ""}파일의 열 제목과 값으로 자동
+                    지정했습니다. 아래 미리보기가 비어 있거나 금액이 이상하면 열을 직접
+                    바꿔주세요.
                   </span>
                 )}
 

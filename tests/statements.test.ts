@@ -12,6 +12,7 @@ import {
   autoDetectMapping,
   billingMonthFromName,
   buildDrafts,
+  chooseMapping,
   duplicateKey,
   guessBillingMonth,
   loadStatementFile,
@@ -277,6 +278,45 @@ section("롯데카드 — 같은 표를 .xls(HTML)로 받았을 때");
   check("xls에서도 2건", r.drafts.length === 2, r.drafts.map((d) => `${d.merchant} ${d.amount}`));
   check("xls: 원금", like(r.drafts[0], { amount: 13_600, type: "EXPENSE" }), r.drafts[0]);
   check("xls: 수수료만 있는 줄", like(r.drafts[1], { amount: 990, type: "EXPENSE" }), r.drafts[1]);
+}
+
+// ---------------------------------------------------------------------------
+section("기억된 형식 — 규칙이 나아지면 물러설 것");
+// ---------------------------------------------------------------------------
+{
+  const lotte = [
+    "이용일,이용카드,이용가맹점,이용총액,회차,할부,이번 달 입금하실 금액,,적립예정,이용혜택",
+    ",,,,,,원금,수수료,,",
+    '2026.04.11,본인LOCA,에스케이스토아,"136,800원",5,10,"13,600",,,무이자할부',
+    "2026.08.11,본인LOCA,07월 크레딧케어,,,,,990,,",
+  ].join("\n");
+
+  const table = parseDelimited(lotte);
+  const guess = autoDetectMapping(table.headers, table.rows);
+
+  // 수수료 열을 읽기 전에 저장된 지정: 원금을 입금으로 본다
+  const stale = { ...guess, withdrawal: -1, deposit: 6, fee: -1 };
+
+  const superseded = chooseMapping(table, stale, guess);
+  check("낡은 기억은 물러섬", superseded.source === "RULES", superseded.source);
+  check("새 인식이 쓰임", superseded.mapping.withdrawal === 6 && superseded.mapping.fee === 7, superseded.mapping);
+
+  const stillGood = chooseMapping(table, guess, guess);
+  check("맞는 기억은 그대로", stillGood.source === "REMEMBERED", stillGood.source);
+
+  // 사용자가 일부러 고른 지정(파일을 온전히 읽는다면)은 존중한다
+  const deliberate = { ...guess, merchant: 1 };
+  const kept = chooseMapping(table, deliberate, guess);
+  check("사용자가 고른 지정 존중", kept.source === "REMEMBERED" && kept.mapping.merchant === 1, kept.mapping);
+
+  check("기억이 없으면 규칙", chooseMapping(table, null, guess).source === "RULES");
+
+  // 그리고 실제로 읽히는 결과가 달라진다
+  const withStale = buildDrafts(table, stale);
+  const withFresh = buildDrafts(table, superseded.mapping);
+  check("낡은 기억으로는 1건", withStale.drafts.length === 1, withStale.drafts.length);
+  check("다시 인식하면 2건", withFresh.drafts.length === 2, withFresh.drafts.map((d) => d.amount));
+  check("방향도 바로잡힘", withFresh.drafts[0]?.type === "EXPENSE", withFresh.drafts[0]?.type);
 }
 
 // ---------------------------------------------------------------------------

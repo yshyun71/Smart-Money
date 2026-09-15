@@ -669,6 +669,34 @@ export function scoreMapping(table: ParsedTable, mapping: ColumnMapping): Mappin
   };
 }
 
+export type MappingSource = "REMEMBERED" | "RULES";
+
+/**
+ * Whether to trust a format remembered from before, or read the file afresh.
+ *
+ * A remembered mapping is a fine shortcut until the rules that read these
+ * files improve: a mapping saved while 입금하실 금액 was being read as income
+ * would go on reading it that way forever, quietly overriding the fix. So it
+ * is held up against the file it claims to describe, and set aside where
+ * fresh detection accounts for more of it.
+ */
+export function chooseMapping(
+  table: ParsedTable,
+  remembered: ColumnMapping | null,
+  guess: ColumnMapping
+): { mapping: ColumnMapping; source: MappingSource } {
+  if (!remembered) return { mapping: guess, source: "RULES" };
+
+  const kept = scoreMapping(table, remembered);
+  const fresh = scoreMapping(table, guess);
+
+  if (kept.ok || kept.usable >= fresh.usable) {
+    return { mapping: remembered, source: "REMEMBERED" };
+  }
+
+  return { mapping: guess, source: "RULES" };
+}
+
 /**
  * Names first, and the rows themselves when the names come to nothing.
  * `rows` is optional so the mapping can still be guessed from a header alone.
