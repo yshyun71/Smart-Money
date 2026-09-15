@@ -34,15 +34,26 @@ import {
   UserCheck,
 } from "lucide-react";
 
-/** When this build was made, so "이미 반영된 버전인가"를 화면에서 확인할 수 있습니다. */
+/**
+ * Which copy of the app this is.
+ *
+ * A PWA takes a new build on one launch and shows it on the next, so "is the
+ * fix in yet?" cannot be answered by looking at the screen — unless the screen
+ * says. In development the same stamp would read as a build time while really
+ * being when the dev server started, so it says so instead.
+ */
 function buildLabel(): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+
   try {
     const when = new Date(__BUILD_TIME__);
     if (Number.isNaN(when.getTime())) return "-";
-    const pad = (value: number) => String(value).padStart(2, "0");
-    return `${when.getFullYear()}.${pad(when.getMonth() + 1)}.${pad(when.getDate())} ${pad(
-      when.getHours()
-    )}:${pad(when.getMinutes())}`;
+
+    const stamp = `${when.getFullYear()}.${pad(when.getMonth() + 1)}.${pad(
+      when.getDate()
+    )} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
+
+    return import.meta.env.DEV ? `개발 서버 · ${stamp} 시작` : stamp;
   } catch {
     return "-";
   }
@@ -574,7 +585,8 @@ export const ConnectedAssetsView: React.FC<{
                 내 가계부만 표시 · 앱을 갱신해도 데이터는 유지됩니다
               </div>
               <div className="text-[9px] text-slate-500 font-mono">
-                빌드 {buildLabel()}
+                {import.meta.env.DEV ? "" : "빌드 "}
+                {buildLabel()}
               </div>
             </div>
           </div>
