@@ -254,3 +254,108 @@ export function pendingBill(cardId: string, transactions: Transaction[]): Pendin
     from: start,
   };
 }
+
+/**
+ * Every link between a card bill and the withdrawal that pays it, worked out
+ * afresh for the cards a change could have affected.
+ *
+ * The link has two sides and either one can complete it. A statement arriving
+ * makes a month's total equal to a withdrawal already sitting in the account
+ * the card is paid from; a bank statement arriving brings the withdrawal to a
+ * month already on file. Watching only the card side left the second case
+ * unlinked for good — the card was never looked at again — which is why a
+ * June bill matching its withdrawal to the won stayed unconnected.
+ *
+ * Run it backwards and it releases: delete the month and the withdrawal
+ * matches nothing, so the link it carried is cleared rather than left
+ * pointing at a statement that is no longer there.
+ *
+ * Returns only the entries whose link changed.
+ */
+export function planCardLinks(
+  accounts: ConnectedAccount[],
+  transactions: Transaction[],
+  touchedAccountIds: string[],
+  cardPaymentCategory: string
+): Transaction[] {
+  const touched = new Set(touchedAccountIds);
+
+  const cards = accounts.filter(
+    (account) =>
+      isCardAccount(account) &&
+      // Either side of the link: the card's own entries, or its payer's
+      (touched.has(account.id) ||
+        (account.paymentAccountId
+          ? touched.has(account.paymentAccountId)
+          : // No payer named, so any change could be the other side of it
+            touched.size > 0))
+  );
+  if (cards.length === 0) return [];
+
+  const updates: Transaction[] = [];
+
+  for (const card of cards) {
+    const totals = billingTotalsFor(transactions, card.id);
+
+    /*
+      Which withdrawals could be paying this card.
+
+      Naming a payment account settles it. Without one there is still an
+      answer where the bank writes the issuer and only one card of that issuer
+      is registered — the same standard `matchCardAccount` holds to, and the
+      amount must still agree to the won. Requiring the payment account
+      outright meant a card registered without one could never be linked by
+      anything, however exactly its bill matched.
+    */
+    const payments = transactions
+      .filter((tx) => {
+        if (tx.category !== cardPaymentCategory) return false;
+        if (card.paymentAccountId) return tx.accountId === card.paymentAccountId;
+        return touched.has(tx.accountId) && matchCardAccount(tx.merchant, accounts) === card.id;
+      })
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const claimed = new Set<string>();
+
+    for (const payment of payments) {
+      /*
+        A withdrawal another card has already claimed is left alone. Two cards
+        paid from one account can bill the same amount in the same month, and
+        whichever was examined last would otherwise take the link off the card
+        that actually sent the bill.
+      */
+      if (payment.linkedAccountId && payment.linkedAccountId !== card.id) continue;
+
+      const month = matchBillingMonth(
+        totals,
+        payment.amount,
+        payment.date.slice(0, 7),
+        claimed
+      );
+
+      if (month) {
+        claimed.add(month);
+        // Which statement, not just which card: the answer is kept rather
+        // than worked out again wherever it is shown.
+        if (payment.linkedAccountId !== card.id || payment.billingMonth !== month) {
+          updates.push({ ...payment, linkedAccountId: card.id, billingMonth: month });
+        }
+        continue;
+      }
+
+      /*
+        Nothing this card bills comes to this amount any more — the statement
+        that justified the link has been deleted. Only what the card's own
+        entries can account for is released: a link made by hand, to a card
+        whose statements were never imported, matches no month and is none of
+        this function's business.
+      */
+      if (payment.linkedAccountId === card.id && touched.has(card.id)) {
+        updates.push({ ...payment, linkedAccountId: undefined, billingMonth: undefined });
+      }
+    }
+  }
+
+  return updates;
+}

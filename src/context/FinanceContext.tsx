@@ -30,9 +30,8 @@ import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 import { resolveCategory } from "../services/categoryRules";
 import {
-  billingTotalsFor,
-  matchBillingMonth,
   matchCardForBill,
+  planCardLinks,
 } from "../services/cardLink";
 import {
   BUILT_IN_CATEGORIES,
@@ -703,67 +702,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
    * the withdrawal matches nothing, so the link it carried is cleared rather
    * than left pointing at a statement that is no longer there.
    *
-   * Returns the transaction list with those links applied.
+   * Returns the transaction list with those links applied. The deciding is
+   * done by `planCardLinks`, which is where it can be tested; this only writes
+   * down what it decides.
    */
   const reconcileCardBills = (
     next: Transaction[],
     touchedAccountIds: string[]
   ): Transaction[] => {
-    const cards = accounts.filter(
-      (account) => account.type !== "BANK" && touchedAccountIds.includes(account.id)
+    const updates = planCardLinks(
+      accounts,
+      next,
+      touchedAccountIds,
+      CARD_PAYMENT_CATEGORY
     );
-    if (cards.length === 0) return next;
-
-    const updates: Transaction[] = [];
-
-    for (const card of cards) {
-      const payerId = card.paymentAccountId;
-      if (!payerId) continue;
-
-      const totals = billingTotalsFor(next, card.id);
-
-      const payments = next
-        .filter(
-          (tx) =>
-            tx.accountId === payerId && tx.category === CARD_PAYMENT_CATEGORY
-        )
-        .slice()
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      const claimed = new Set<string>();
-
-      for (const payment of payments) {
-        const month = matchBillingMonth(
-          totals,
-          payment.amount,
-          payment.date.slice(0, 7),
-          claimed
-        );
-
-        if (month) {
-          claimed.add(month);
-          // Which statement, not just which card: the answer is kept rather
-          // than worked out again wherever it is shown.
-          if (payment.linkedAccountId !== card.id || payment.billingMonth !== month) {
-            updates.push({ ...payment, linkedAccountId: card.id, billingMonth: month });
-          }
-          continue;
-        }
-
-        /*
-          Nothing this card bills comes to this amount any more — the statement
-          that justified the link has been deleted. Only a link to this card is
-          released, and only because its own entries are what just changed.
-        */
-        if (payment.linkedAccountId === card.id) {
-          updates.push({
-            ...payment,
-            linkedAccountId: undefined,
-            billingMonth: undefined,
-          });
-        }
-      }
-    }
 
     if (updates.length === 0) return next;
 
