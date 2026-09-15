@@ -1093,8 +1093,8 @@ export function billingMonthFromName(fileName: string): string | null {
   }
 
   /*
-    202603 · 2026-03 · 2026_03 · 2026.03, but never the first six digits of a
-    longer run: 20260803 is a date, and its month is not the billing month.
+    202603 · 2026-03 · 2026_03 · 2026.03, standing on its own. A longer run of
+    digits is something else entirely and is left to the rules below.
   */
   for (const match of name.matchAll(/(\d{4})[-_. ]?(\d{2})/g)) {
     const index = match.index ?? 0;
@@ -1112,12 +1112,36 @@ export function billingMonthFromName(fileName: string): string | null {
     four digits can be one, which keeps the download timestamp out of it, and
     only 20xx–39xx, so a plain year like 2026 is not read as month 26.
   */
-  for (const run of name.match(/\d+/g) || []) {
+  const runs = name.match(/\d+/g) || [];
+
+  for (const run of runs) {
     if (run.length !== 4) continue;
-    const settled = asMonth(2000 + Number(run.slice(0, 2)), Number(run.slice(2)));
-    if (settled && Number(run.slice(0, 2)) >= 20 && Number(run.slice(0, 2)) <= 39) {
-      return settled;
-    }
+    const century = Number(run.slice(0, 2));
+    if (century < 20 || century > 39) continue;
+
+    const settled = asMonth(2000 + century, Number(run.slice(2)));
+    if (settled) return settled;
+  }
+
+  /*
+    20260903 — KB국민카드 names the file for the day it sends the statement,
+    "이용대금명세서_20260903.xlsx", and it sends September's statement in
+    September, so the leading 연월 is the billing month.
+
+    This is the weakest of the rules and goes last: 2608 and 202608 are
+    deliberate labels of the billing month, while a send date only agrees with
+    it by the issuer's habit. Where a name carries both, the label wins. Again
+    the length is the guard — exactly eight digits, so 20260915091506 (a
+    download time, which agrees with nothing) is not read as one.
+  */
+  for (const run of runs) {
+    if (run.length !== 8) continue;
+
+    const day = Number(run.slice(6));
+    if (day < 1 || day > 31) continue;
+
+    const settled = asMonth(Number(run.slice(0, 4)), Number(run.slice(4, 6)));
+    if (settled) return settled;
   }
 
   return null;
