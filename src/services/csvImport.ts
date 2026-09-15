@@ -108,11 +108,22 @@ function looksLikeHtml(text: string): boolean {
   );
 }
 
-/** How many rows of a sheet read as dated transactions, for choosing between them. */
-function scoreSheetText(text: string): number {
+/**
+ * How much a sheet looks like the statement's transactions.
+ *
+ * A row count alone is not enough: a cover sheet can hold one stray line with a
+ * date and a number in it, and would then tie with a real table that happens to
+ * carry a single purchase — and win, for being first. So a sheet whose heading
+ * reads like a transaction table is preferred outright.
+ */
+function scoreSheetText(text: string): { qualified: number; usable: number; hint: number } {
   const table = parseDelimited(text);
-  if (table.headers.length === 0) return 0;
-  return scoreMapping(table, autoDetectMapping(table.headers, table.rows)).usable;
+  if (table.headers.length === 0) return { qualified: 0, usable: 0, hint: 0 };
+
+  const hint = hintScoreOf(table.headers.map((header) => header.trim()));
+  const usable = scoreMapping(table, autoDetectMapping(table.headers, table.rows)).usable;
+
+  return { qualified: hint >= 2 && usable > 0 ? 1 : 0, usable, hint };
 }
 
 export async function loadStatementFile(
@@ -179,15 +190,21 @@ export async function loadStatementFile(
     transactions is the one used, with the first non-empty sheet as a fallback.
   */
   let chosen = "";
-  let best = -1;
+  let best = { qualified: -1, usable: -1, hint: -1 };
 
   for (const name of sheetNames) {
     const sheet = workbook.Sheets[name];
     if (!sheet || !Object.keys(sheet).some((cell) => !cell.startsWith("!"))) continue;
 
-    const text = toCsv(name);
-    const score = scoreSheetText(text);
-    if (!chosen || score > best) {
+    const score = scoreSheetText(toCsv(name));
+    const better =
+      score.qualified > best.qualified ||
+      (score.qualified === best.qualified && score.usable > best.usable) ||
+      (score.qualified === best.qualified &&
+        score.usable === best.usable &&
+        score.hint > best.hint);
+
+    if (!chosen || better) {
       chosen = name;
       best = score;
     }
@@ -345,7 +362,36 @@ function evaluateHeaderRow(all: string[][], index: number): TableStart | null {
     ? mergeHeaderRows(top, all[index + 1].map((cell) => cell.trim()))
     : top;
 
-  const rows = shapeRows(all, index + (hasSubHeader ? 2 : 1), headers.length);
+  const from = index + (hasSubHeader ? 2 : 1);
+
+  /*
+    The block ends where the next section starts. A 신한 statement carries
+    several tables in a row — 카드사용내역, 취소매출, 할인혜택 — and running one
+    into the next leaves every later heading and its "내역이 없습니다" line to be
+    reported as rows that could not be read.
+  */
+  let until = all.length;
+  for (let next = from; next < all.length; next++) {
+    const cells = all[next].map((cell) => cell.trim());
+    const filled = cells.filter(Boolean);
+    if (filled.length === 0) continue;
+
+    // "4.장기카드대출 이용내역" — a numbered heading standing on its own
+    const numbered = filled.length <= 2 && /^\d+\s*[.．]/.test(filled[0]);
+
+    const heading =
+      filled.length >= 2 &&
+      hintScoreOf(cells) >= 2 &&
+      // and not a transaction that happens to sit under one
+      usableRows(shapeRows([all[next]], 0, headers.length), autoDetectMapping(headers, shapeRows([all[next]], 0, headers.length))) === 0;
+
+    if (!numbered && !heading) continue;
+
+    until = next;
+    break;
+  }
+
+  const rows = shapeRows(all.slice(0, until), from, headers.length);
   const mapping = autoDetectMapping(headers, rows);
 
   return {
