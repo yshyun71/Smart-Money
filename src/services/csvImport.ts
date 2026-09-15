@@ -143,30 +143,25 @@ export async function loadStatementFile(
     A file named .xls that is not one is decoded here, where the encoding is
     understood, and only then handed over — as text for HTML, whose structure
     the reader still parses correctly, or straight through for CSV and TSV.
+
+    HTML is where the sheet count comes from: the reader makes a sheet of every
+    <table> in the document, and a statement writes each of its sections as one.
+    A file the user sees as a single sheet can arrive here as eleven.
   */
-  if (!looksLikeWorkbook(bytes)) {
+  let workbook;
+  if (looksLikeWorkbook(bytes)) {
+    workbook = XLSX.read(bytes, {
+      type: "array",
+      // Otherwise dates arrive as Excel serial numbers
+      cellDates: true,
+    });
+  } else {
     const text = decodeFile(buffer);
     if (!looksLikeHtml(text)) {
       return { text, sheetNames: [], usedSheet: null };
     }
-
-    const parsed = XLSX.read(text, { type: "string", cellDates: true });
-    const first = parsed.SheetNames[0];
-    return {
-      text: XLSX.utils.sheet_to_csv(parsed.Sheets[first], {
-        blankrows: false,
-        rawNumbers: false,
-      }),
-      sheetNames: parsed.SheetNames,
-      usedSheet: first,
-    };
+    workbook = XLSX.read(text, { type: "string", cellDates: true });
   }
-
-  const workbook = XLSX.read(bytes, {
-    type: "array",
-    // Otherwise dates arrive as Excel serial numbers
-    cellDates: true,
-  });
 
   const sheetNames = workbook.SheetNames;
   if (sheetNames.length === 0) {
@@ -180,6 +175,17 @@ export async function loadStatementFile(
       rawNumbers: false,
     });
 
+  /** Every sheet end to end, for a statement split across several of them. */
+  const everySheet = () =>
+    sheetNames
+      .map(toCsv)
+      .filter((text) => text.trim() !== "")
+      .join("\n\n");
+
+  // An empty name is the user asking for the whole document rather than a sheet
+  if (sheetName === "") {
+    return { text: everySheet(), sheetNames, usedSheet: null };
+  }
   if (sheetName && sheetNames.includes(sheetName)) {
     return { text: toCsv(sheetName), sheetNames, usedSheet: sheetName };
   }
@@ -187,7 +193,7 @@ export async function loadStatementFile(
   /*
     The transactions are not always on the first sheet — a statement often
     opens with a cover or a summary — so the sheet whose rows actually read as
-    transactions is the one used, with the first non-empty sheet as a fallback.
+    transactions is the one used.
   */
   let chosen = "";
   let best = { qualified: -1, usable: -1, hint: -1 };
@@ -207,6 +213,23 @@ export async function loadStatementFile(
     if (!chosen || better) {
       chosen = name;
       best = score;
+    }
+  }
+
+  /*
+    Where no single sheet holds a table of transactions, the document is read
+    whole: a section's heading and its rows can land in separate tables, and
+    together they still read as the statement they are.
+  */
+  if (sheetNames.length > 1) {
+    const combinedText = everySheet();
+    const combined = scoreSheetText(combinedText);
+    const better =
+      combined.qualified > best.qualified ||
+      (combined.qualified === best.qualified && combined.usable > best.usable);
+
+    if (better) {
+      return { text: combinedText, sheetNames, usedSheet: null };
     }
   }
 

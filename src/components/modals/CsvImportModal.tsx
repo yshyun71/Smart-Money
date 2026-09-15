@@ -613,6 +613,7 @@ export const CsvImportModal: React.FC<{
               }}
               className="w-full px-2.5 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none disabled:opacity-50"
             >
+              <option value="">전체 시트 합쳐서 읽기</option>
               {sheetNames.map((name) => (
                 <option key={name} value={name}>
                   {name}
