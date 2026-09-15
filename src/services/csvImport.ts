@@ -1106,6 +1106,20 @@ export function billingMonthFromName(fileName: string): string | null {
     if (settled) return settled;
   }
 
+  /*
+    2608 — a two-digit year, the way 롯데 names a file:
+    "이용대금명세서_2608(신용.체크)_20260915091506.xls". Only a run of exactly
+    four digits can be one, which keeps the download timestamp out of it, and
+    only 20xx–39xx, so a plain year like 2026 is not read as month 26.
+  */
+  for (const run of name.match(/\d+/g) || []) {
+    if (run.length !== 4) continue;
+    const settled = asMonth(2000 + Number(run.slice(0, 2)), Number(run.slice(2)));
+    if (settled && Number(run.slice(0, 2)) >= 20 && Number(run.slice(0, 2)) <= 39) {
+      return settled;
+    }
+  }
+
   return null;
 }
 
