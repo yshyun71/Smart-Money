@@ -189,32 +189,6 @@ const HEADER_HINTS = [
 ];
 
 /**
- * Statements often carry a title and an account summary above the real header,
- * so the header is found by looking for the row with the most known labels.
- */
-function findHeaderRow(rows: string[][]): number {
-  let bestIndex = 0;
-  let bestScore = -1;
-
-  const limit = Math.min(rows.length, 30);
-  for (let i = 0; i < limit; i++) {
-    const cells = rows[i].map((cell) => cell.replace(/\s/g, ""));
-    if (cells.filter((cell) => cell).length < 2) continue;
-
-    const score = cells.reduce(
-      (total, cell) => total + (HEADER_HINTS.some((hint) => cell.includes(hint)) ? 1 : 0),
-      0
-    );
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = i;
-    }
-  }
-
-  return bestScore > 0 ? bestIndex : 0;
-}
-
-/**
  * True when a row continues the header rather than starting the data.
  *
  * Card statements group their money columns under a merged title and put the
@@ -246,6 +220,92 @@ function mergeHeaderRows(top: string[], sub: string[]): string[] {
   });
 }
 
+/** Squares the rows under a header off to the same width. */
+function shapeRows(all: string[][], from: number, width: number): string[][] {
+  return all
+    .slice(from)
+    .map((row) => {
+      const padded = [...row];
+      while (padded.length < width) padded.push("");
+      return padded.slice(0, width).map((cell) => cell.trim());
+    })
+    .filter((row) => row.some((cell) => cell !== ""));
+}
+
+interface TableStart {
+  headerRowIndex: number;
+  hasSubHeader: boolean;
+  headers: string[];
+  rows: string[][];
+  /** Rows under this header that read as a dated transaction with an amount. */
+  usable: number;
+  hintScore: number;
+}
+
+function hintScoreOf(cells: string[]): number {
+  return cells.reduce(
+    (total, cell) =>
+      total + (HEADER_HINTS.some((hint) => cell.replace(/\s/g, "").includes(hint)) ? 1 : 0),
+    0
+  );
+}
+
+function evaluateHeaderRow(all: string[][], index: number): TableStart | null {
+  const top = all[index].map((cell) => cell.trim());
+  if (top.filter(Boolean).length < 2) return null;
+
+  const hintScore = hintScoreOf(top);
+  if (hintScore === 0) return null;
+
+  const hasSubHeader = looksLikeSubHeader(all[index + 1]);
+  const headers = hasSubHeader
+    ? mergeHeaderRows(top, all[index + 1].map((cell) => cell.trim()))
+    : top;
+
+  const rows = shapeRows(all, index + (hasSubHeader ? 2 : 1), headers.length);
+  const mapping = autoDetectMapping(headers, rows);
+
+  return {
+    headerRowIndex: index,
+    hasSubHeader,
+    headers,
+    rows,
+    usable: usableRows(rows, mapping),
+    hintScore,
+  };
+}
+
+/**
+ * Finds the table of transactions, which is not always the first table.
+ *
+ * A 신한 statement opens with the payment account, a summary of what is owed,
+ * a points balance and a list of discounts — each laid out as its own little
+ * table with headings that look every bit as much like a transaction table as
+ * the real one, which begins over halfway down under "3. 카드사용내역".
+ *
+ * So every candidate header is tried and the one whose rows actually read as
+ * dated transactions wins. Where none of them do — a statement with nothing on
+ * it — the most transaction-like heading is offered for the user to correct.
+ */
+function findTable(all: string[][]): TableStart | null {
+  let best: TableStart | null = null;
+
+  for (let index = 0; index < all.length; index++) {
+    const candidate = evaluateHeaderRow(all, index);
+    if (!candidate) continue;
+
+    if (
+      !best ||
+      candidate.usable > best.usable ||
+      (candidate.usable === best.usable && candidate.hintScore > best.hintScore)
+    ) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
 export function parseDelimited(text: string): ParsedTable {
   const delimiter = detectDelimiter(text);
   const all = splitRows(text, delimiter).filter((row) =>
@@ -256,26 +316,17 @@ export function parseDelimited(text: string): ParsedTable {
     return { headers: [], rows: [], headerRowIndex: 0 };
   }
 
-  const headerRowIndex = findHeaderRow(all);
-  const top = all[headerRowIndex].map((cell) => cell.trim());
+  const table = findTable(all);
+  if (!table) {
+    const headers = all[0].map((cell) => cell.trim());
+    return { headers, rows: shapeRows(all, 1, headers.length), headerRowIndex: 0 };
+  }
 
-  const hasSubHeader = looksLikeSubHeader(all[headerRowIndex + 1]);
-  const headers = hasSubHeader
-    ? mergeHeaderRows(top, all[headerRowIndex + 1].map((cell) => cell.trim()))
-    : top;
-
-  const firstDataRow = headerRowIndex + (hasSubHeader ? 2 : 1);
-  const width = headers.length;
-  const rows = all
-    .slice(firstDataRow)
-    .map((row) => {
-      const padded = [...row];
-      while (padded.length < width) padded.push("");
-      return padded.slice(0, width).map((cell) => cell.trim());
-    })
-    .filter((row) => row.some((cell) => cell !== ""));
-
-  return { headers, rows, headerRowIndex };
+  return {
+    headers: table.headers,
+    rows: table.rows,
+    headerRowIndex: table.headerRowIndex,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +517,11 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
   */
   const notMoney = ["잔액", "회차", "개월", "건수", "포인트", "마일리지", "번호"];
 
-  const withdrawal = findColumn(headers, ["출금", "지출", "차감", "결제금액"], notMoney);
+  const withdrawal = findColumn(
+    headers,
+    ["출금", "지출", "차감", "결제금액", "납부금액", "청구금액"],
+    notMoney
+  );
   const deposit = findColumn(headers, ["입금", "수입", "적립"], notMoney);
 
   const counterparty = findColumn(headers, COUNTERPARTY_KEYWORDS);
@@ -669,7 +724,20 @@ export interface BuildResult {
   skipped: { lineNumber: number; reason: string }[];
 }
 
-export function buildDrafts(table: ParsedTable, mapping: ColumnMapping): BuildResult {
+export interface BuildOptions {
+  /**
+   * Stands in for a missing date, where the statement supplies one for the
+   * whole file rather than per line — an annual fee is charged in a billing
+   * month without being used on any particular day.
+   */
+  fallbackDate?: string;
+}
+
+export function buildDrafts(
+  table: ParsedTable,
+  mapping: ColumnMapping,
+  options: BuildOptions = {}
+): BuildResult {
   const drafts: DraftRow[] = [];
   const skipped: { lineNumber: number; reason: string }[] = [];
 
@@ -684,7 +752,16 @@ export function buildDrafts(table: ParsedTable, mapping: ColumnMapping): BuildRe
     const billed = normaliseDate(cell(mapping.billing));
     const billingMonth = billed ? billed.slice(0, 7) : undefined;
 
-    const date = normaliseDate(cell(mapping.date));
+    /*
+      A line with no date but a shop and an amount is a charge the statement
+      dates as a whole: an annual fee, an interest charge. It is taken at the
+      billing month the import was given, and only then — a total or a footer
+      has no shop against it and stays out.
+    */
+    const named = cell(mapping.merchant).trim();
+    const date =
+      normaliseDate(cell(mapping.date)) || (named ? options.fallbackDate || null : null);
+
     if (!date) {
       skipped.push({ lineNumber, reason: "날짜를 읽을 수 없음" });
       return;

@@ -134,7 +134,9 @@ export const CsvImportModal: React.FC<{
 
   const preview = useMemo(() => {
     if (!table) return { drafts: [] as DraftRow[], skipped: [] as { lineNumber: number; reason: string }[] };
-    const built = buildDrafts(table, mapping);
+    const built = buildDrafts(table, mapping, {
+      fallbackDate: billingMonth ? `${billingMonth}-01` : undefined,
+    });
     // A standing rule decides the category here too, so the preview shows
     // exactly what will be saved rather than the guess it started from.
     return {
