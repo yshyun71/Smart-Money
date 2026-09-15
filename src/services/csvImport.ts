@@ -504,6 +504,13 @@ export interface ColumnMapping {
    * principal column is empty.
    */
   fee: number;
+  /**
+   * 회차 — which instalment of a purchase a line is.
+   *
+   * The same purchase is billed again every month with the same date, shop and
+   * amount; only this number tells one month's billing from the next.
+   */
+  instalment: number;
 }
 
 export const EMPTY_MAPPING: ColumnMapping = {
@@ -515,6 +522,7 @@ export const EMPTY_MAPPING: ColumnMapping = {
   memo: -1,
   billing: -1,
   fee: -1,
+  instalment: -1,
 };
 
 function findColumn(headers: string[], keywords: string[], exclude: string[] = []): number {
@@ -742,6 +750,8 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
   const guess: ColumnMapping = {
     billing,
     fee: findColumn(headers, ["수수료", "이자"], [...notMoney, "율"]),
+    // 결제 후 잔액 회차 is what is left to pay, not which instalment this is
+    instalment: findColumn(headers, ["회차"], ["잔액", "남은", "잔여"]),
     date: findColumn(headers, [
       "거래일시", "거래일자", "거래일", "이용일자", "이용일", "승인일자", "승인일", "날짜", "일자",
     ]),
@@ -1006,8 +1016,23 @@ export function buildDrafts(
       return;
     }
 
-    // A blank counterparty (a card payment, a fee) falls back to the memo
-    const memo = cell(mapping.memo).trim();
+    /*
+      The instalment number belongs with the description, which is where the
+      duplicate check reads identity from. Statements keep it in a column of
+      its own — 회차 — beside a 할부 column holding only how many months the
+      purchase runs for, which is the same every month and settles nothing.
+    */
+    const described = cell(mapping.memo).trim();
+    const round = cell(mapping.instalment).trim();
+    const months = /^\d{1,3}$/.test(described) ? described : "";
+
+    const marker = round
+      ? months
+        ? `${Number(round)}/${Number(months)}`
+        : `${Number(round)}회차`
+      : "";
+
+    const memo = [months ? "" : described, marker].filter(Boolean).join(" ").trim();
     const merchant = cell(mapping.merchant).trim() || memo || "내역 없음";
     const expenseType = guessExpenseType(`${merchant} ${memo}`, type);
 
@@ -1122,15 +1147,20 @@ export function guessBillingMonth(
 
 export function instalmentMarker(text: string): string {
   const value = (text || "").replace(/\s+/g, "");
-  const match = value.match(/(\d{1,2})\/(\d{1,2})/);
-  return match ? `${Number(match[1])}/${Number(match[2])}` : "";
+
+  const pair = value.match(/(\d{1,2})\/(\d{1,2})/);
+  if (pair) return `${Number(pair[1])}/${Number(pair[2])}`;
+
+  // Some statements number the instalments without saying how many there are
+  const single = value.match(/(\d{1,3})회차/);
+  return single ? `${Number(single[1])}회차` : "";
 }
 
 /** True when a line is billed over several months rather than at once. */
 export function isInstalment(text: string): boolean {
   const value = (text || "").replace(/\s+/g, "");
   if (!value || value.includes("일시불")) return false;
-  return value.includes("할부") || /\d{1,2}\/\d{1,2}/.test(value);
+  return value.includes("할부") || /\d{1,2}\/\d{1,2}/.test(value) || /\d{1,3}회차/.test(value);
 }
 
 /**

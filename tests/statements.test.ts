@@ -117,9 +117,11 @@ section("KB국민카드 — 두 줄 머리글, 이번달 결제금액 원금");
   check("3건", r.drafts.length === 3, r.drafts.map((d) => d.merchant));
   check(
     "할부는 이번달 원금",
-    like(r.drafts[0], { date: "2025-10-19", amount: 25_947, memo: "할부", type: "EXPENSE" }),
+    like(r.drafts[0], { date: "2025-10-19", amount: 25_947, type: "EXPENSE" }),
     r.drafts[0]
   );
+  check("회차가 메모에 실림", r.drafts[0]?.memo === "할부 9회차", r.drafts[0]?.memo);
+  check("일시불은 회차 없음", r.drafts[1]?.memo === "리볼빙-일시", r.drafts[1]?.memo);
   check("일시불", like(r.drafts[1], { date: "2026-06-01", amount: 59_810 }), r.drafts[1]);
   check("관리비는 주거", r.drafts[2]?.category === "주거", r.drafts[2]);
   check(
@@ -201,6 +203,32 @@ section("롯데카드 — 입금하실 금액, 수수료만 있는 줄");
     r.drafts[1]
   );
   check("합계가 명세서와 같음", r.drafts.reduce((sum, d) => sum + d.amount, 0) === 14_590);
+  check("회차 열 인식", r.mapping.instalment === 4, r.mapping);
+  check("회차와 할부개월이 메모로", r.drafts[0]?.memo === "5/10", r.drafts[0]?.memo);
+
+  /*
+    같은 할부가 다음 달에 다시 청구된다. 이용일·가맹점·금액이 모두 같고 회차만
+    다르므로, 회차를 읽지 못하면 두 번째 달이 중복으로 걸러진다 — 실제로 9건 중
+    8건만 등록되던 원인이다.
+  */
+  const next = read(
+    [
+      "이용일,이용카드,이용가맹점,이용총액,회차,할부,이번 달 입금하실 금액,,적립예정",
+      ",,,,,,원금,수수료,",
+      '2026.04.11,본인LOCA,에스케이스토아,"136,800원",6,10,"13,600",,',
+    ].join("\n")
+  );
+  check("다음 달은 회차가 다름", next.drafts[0]?.memo === "6/10", next.drafts[0]?.memo);
+  check(
+    "그래서 중복이 아님",
+    duplicateKey(r.drafts[0]) !== duplicateKey(next.drafts[0]),
+    [duplicateKey(r.drafts[0]), duplicateKey(next.drafts[0])]
+  );
+  check(
+    "같은 회차는 여전히 중복",
+    duplicateKey(r.drafts[0]) === duplicateKey({ ...r.drafts[0] }),
+    duplicateKey(r.drafts[0])
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +411,10 @@ section("중복 판정 — 할부 회차");
   check("회차가 다르면 다른 건", duplicateKey({ ...base, memo: "할부 8/10" }) !== duplicateKey({ ...base, memo: "할부 9/10" }));
   check("같은 회차면 같은 건", duplicateKey({ ...base, memo: "8/10" }) === duplicateKey({ ...base, memo: "할부 8/10" }));
   check("일시불은 회차가 붙지 않음", duplicateKey({ ...base, memo: "일시불" }) === duplicateKey(base));
+  check(
+    "개월 수를 모르는 회차도 구분됨",
+    duplicateKey({ ...base, memo: "할부 4회차" }) !== duplicateKey({ ...base, memo: "할부 5회차" })
+  );
 }
 
 // ---------------------------------------------------------------------------

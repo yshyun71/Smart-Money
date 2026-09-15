@@ -457,6 +457,7 @@ const MAPPING_SCHEMA = object({
   memo: int("구분·비고 등 메모 열 번호. 없으면 -1"),
   billing: int("결제일·청구년월 열 번호. 없으면 -1"),
   fee: int("수수료·이자 열 번호. 원금과 별도로 청구되는 금액. 없으면 -1"),
+  instalment: int("할부 회차 열 번호. 몇 번째 청구인지(예: 4). 할부개월 수가 아님. 없으면 -1"),
   reason: str("어느 열을 왜 골랐는지 한 줄"),
 });
 
@@ -469,6 +470,7 @@ export interface DetectedMapping {
   memo: number;
   billing: number;
   fee: number;
+  instalment: number;
   reason?: string;
 }
 
@@ -510,7 +512,9 @@ ${sampleRows.map((row) => JSON.stringify(row)).join("\n")}
 5. merchant는 사람이 보고 무엇에 썼는지 알 수 있는 열(가맹점명 등)입니다.
 6. memo에는 "할부/일시불" 같은 결제 구분 열을 우선합니다. 할부개월 수가 담긴
    열은 memo가 아닙니다.
-7. 수수료·이자가 원금과 별도 열에 있으면 fee로 지정하세요. "이번 달 입금하실
+7. 할부 회차(몇 번째 청구인지, 예: 4)가 별도 열에 있으면 instalment로 지정하세요.
+   할부 개월 수(총 몇 개월인지)나 "결제 후 잔액 회차"는 instalment가 아닙니다.
+8. 수수료·이자가 원금과 별도 열에 있으면 fee로 지정하세요. "이번 달 입금하실
    금액"처럼 카드가 청구하는 금액은 입금(deposit)이 아니라 withdrawal 입니다.
 7. 표본 행에서 그 열의 값이 실제로 규칙에 맞는지 확인한 뒤 답하세요.
 `;
@@ -537,6 +541,7 @@ ${sampleRows.map((row) => JSON.stringify(row)).join("\n")}
     memo: column(parsed.memo, headers.length),
     billing: column(parsed.billing, headers.length),
     fee: column(parsed.fee, headers.length),
+    instalment: column(parsed.instalment, headers.length),
     reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
   };
 }
