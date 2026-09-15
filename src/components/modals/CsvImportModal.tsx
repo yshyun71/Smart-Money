@@ -181,6 +181,30 @@ export const CsvImportModal: React.FC<{
     the usage dates otherwise — a card bills the month after it was used in.
     The user corrects it on the mapping step.
   */
+  /*
+    The ledger already knows which card is being added to, so the picker starts
+    there rather than on whichever account happens to be first.
+
+    accountId is initialised once, when the modal first mounts — long before
+    any ledger has been opened — and reset() deliberately leaves it alone so a
+    person importing several files in a row does not have to choose the account
+    each time. Neither of those gives the opening account a chance to be
+    applied, which is why an import begun from a card's own screen still
+    offered the first bank account.
+
+    It runs on opening only: while the modal is open the person's own choice is
+    theirs to keep.
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const known = (id?: string) => (accounts.some((a: any) => a.id === id) ? id : "");
+    const wanted = known(defaultAccountId) || known(accountId) || accounts[0]?.id || "";
+
+    if (wanted !== accountId) setAccountId(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, defaultAccountId]);
+
   useEffect(() => {
     if (!table || !account || account.type === "BANK" || billingTouched) return;
 
