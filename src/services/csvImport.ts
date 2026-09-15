@@ -975,6 +975,9 @@ export function buildDrafts(
   const drafts: DraftRow[] = [];
   const skipped: { lineNumber: number; reason: string }[] = [];
 
+  /** Which row the last draft came from, so an adjustment knows what it adjusts. */
+  let lastDraftRow = -1;
+
   table.rows.forEach((row, index) => {
     const lineNumber = table.headerRowIndex + 2 + index;
     const cell = (column: number) => (column >= 0 ? row[column] || "" : "");
@@ -993,8 +996,29 @@ export function buildDrafts(
       has no shop against it and stays out.
     */
     const named = cell(mapping.merchant).trim();
-    const date =
-      normaliseDate(cell(mapping.date)) || (named ? options.fallbackDate || null : null);
+    const dated = normaliseDate(cell(mapping.date));
+    const charged =
+      mapping.fee >= 0 ? normaliseAmount(cell(mapping.fee)) : { value: 0, negative: false };
+
+    /*
+      무이자혜택금액 — a line of its own, directly under the purchase, handing
+      back the interest charged on it. KB bills an instalment as 원금 25,947 +
+      수수료 838 and then waives the 838 this way, so the line above is only
+      settled once this one is read; a purchase whose interest is not waived
+      (원금 17,321 + 수수료 46) has no such line and keeps its fee.
+
+      It belongs to the line immediately above it and nothing else, which is
+      what the adjacency check holds to.
+    */
+    if (!dated && charged.negative && charged.value > 0 && lastDraftRow === index - 1) {
+      const previous = drafts[drafts.length - 1];
+      if (previous) {
+        previous.amount = Math.max(0, previous.amount - charged.value);
+        return;
+      }
+    }
+
+    const date = dated || (named ? options.fallbackDate || null : null);
 
     if (!date) {
       skipped.push({ lineNumber, reason: "날짜를 읽을 수 없음" });
@@ -1022,18 +1046,18 @@ export function buildDrafts(
     }
 
     /*
-      A line with no principal but a fee against it is a charge in its own
-      right: 크레딧케어, an SMS charge, interest billed on its own. Where a line
-      carries both, the principal is the amount and the fee is left where the
-      statement puts it — adding them would double-count the waivers that
-      offset interest on a separate line.
+      수수료 is billed alongside the principal, not instead of it, so what is
+      charged for the line is the two together. A line carrying only a fee —
+      크레딧케어, an SMS charge, interest billed on its own — is a charge in its
+      own right and the fee stands as the amount.
+
+      Interest that is waived comes back on its own line and is taken off
+      above, which is why adding it here does not overcount: 원금 25,947 +
+      수수료 838 − 혜택 838 leaves 25,947, while 원금 17,321 + 수수료 46 stays
+      17,367. Netting the fee against the principal instead would lose that 46.
     */
-    if (amount <= 0 && mapping.fee >= 0) {
-      const fee = normaliseAmount(cell(mapping.fee));
-      if (fee.value > 0 && !fee.negative) {
-        amount = fee.value;
-        type = "EXPENSE";
-      }
+    if (charged.value > 0 && !charged.negative && type === "EXPENSE") {
+      amount += charged.value;
     }
 
     if (amount <= 0) {
@@ -1074,6 +1098,8 @@ export function buildDrafts(
       memo,
       billingMonth,
     });
+
+    lastDraftRow = index;
   });
 
   return { drafts, skipped };

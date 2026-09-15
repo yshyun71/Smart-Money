@@ -97,37 +97,75 @@ section("통장 거래내역 — 출금과 입금이 별도 열");
 section("KB국민카드 — 두 줄 머리글, 이번달 결제금액 원금");
 // ---------------------------------------------------------------------------
 {
-  const r = read(
-    [
+  const kb = [
       "이용일자,이용카드,구분,이용하신 가맹점,,이용금액,할부개월,이번달 결제금액,,,결제 후 잔액,,적립예정 포인트",
       "이용일자,이용카드,구분,이용하신 가맹점,,이용금액,할부개월,회차,원금,수수료(이자),회차,원금,적립예정 포인트",
       '25.10.19,JCB097,할부,롯데백화점-방송이산마1, ,"279,000",10,9,"25,947",838,1,"25,947", ',
       " , , ,무이자할부금액, , , , , ,-838, , , ",
+      '26.06.11,JCB097,리볼빙-일시,OPENAI, ,"17,367", , ,"17,321",46, , , ',
+      '26.06.18,JCB097,리볼빙-일시,카카오T일반택시(법인)_3, ,"8,700", , ,"7,830", , , , ',
+      " , , ,톡톡 교통/통신 할인, ,-870, , , , , , , ",
       '26.06.01,JCB097,리볼빙-일시,(주)다올이앤에스-에넥스몰, ,"59,810", , ,"59,810", , , , ',
       '26.06.24,JCB097,리볼빙-일시,KB아파트관리비-26년05월분, ,"238,580", , ,"238,580", , , , ',
-      '본인회원  소계 41 건 ,,,,,, , ,"964,708",46, ,"218,169", ',
-      '합 계 45 건 ,,,,,, , ,"1,035,170",46, ,"278,169", ',
-    ].join("\n")
-  );
+      '본인회원  소계 41 건 ,,,,,, , ,"349,488",46, ,"218,169", ',
+      '합 계 45 건 ,,,,,, , ,"349,488",46, ,"278,169", ',
+  ].join("\n");
+
+  const r = read(kb);
 
   check("두 줄 머리글 병합", r.table.headers[8] === "이번달 결제금액 원금", r.table.headers[8]);
   check("회차는 금액이 아님", r.mapping.withdrawal === 8, r.mapping);
   check("적립 포인트는 입금이 아님", r.mapping.deposit === -1, r.mapping);
   check("구분이 메모로", r.mapping.memo === 2, r.mapping);
-  check("3건", r.drafts.length === 3, r.drafts.map((d) => d.merchant));
+  check("5건", r.drafts.length === 5, r.drafts.map((d) => d.merchant));
   check(
     "할부는 이번달 원금",
     like(r.drafts[0], { date: "2025-10-19", amount: 25_947, type: "EXPENSE" }),
     r.drafts[0]
   );
   check("회차가 메모에 실림", r.drafts[0]?.memo === "할부 9회차", r.drafts[0]?.memo);
-  check("일시불은 회차 없음", r.drafts[1]?.memo === "리볼빙-일시", r.drafts[1]?.memo);
-  check("일시불", like(r.drafts[1], { date: "2026-06-01", amount: 59_810 }), r.drafts[1]);
-  check("관리비는 주거", r.drafts[2]?.category === "주거", r.drafts[2]);
+  check("일시불은 회차 없음", r.drafts[3]?.memo === "리볼빙-일시", r.drafts[3]?.memo);
+  check("일시불", like(r.drafts[3], { date: "2026-06-01", amount: 59_810 }), r.drafts[3]);
+  check("관리비는 주거", r.drafts[4]?.category === "주거", r.drafts[4]);
+
+  /*
+    청구액은 원금 + 수수료다. 무이자 건은 바로 아래 줄에서 그 수수료를 돌려주므로
+    원금만 남고, 무이자가 아닌 건(46원)은 수수료가 그대로 붙는다. 이 46원이 빠져
+    월 합계가 명세서와 어긋났고, 카드대금 자동 연결까지 실패했다.
+  */
+  check("무이자 할부는 수수료가 상쇄돼 원금만", r.drafts[0]?.amount === 25_947, r.drafts[0]?.amount);
   check(
-    "소계·합계·환급 줄은 제외",
-    !r.drafts.some((d) => /소계|합 계|무이자할부금액/.test(d.merchant)),
+    "무이자가 아니면 원금 + 수수료",
+    like(r.drafts[1], { merchant: "OPENAI", amount: 17_367 }),
+    r.drafts[1]
+  );
+  check(
+    "할인은 이미 원금에 반영돼 있어 따로 세지 않음",
+    like(r.drafts[2], { merchant: "카카오T일반택시(법인)_3", amount: 7_830 }),
+    r.drafts[2]
+  );
+  check(
+    "합계가 명세서의 원금합계 + 수수료합계와 같음",
+    r.drafts.reduce((sum, d) => sum + d.amount, 0) === 349_488 + 46,
+    r.drafts.reduce((sum, d) => sum + d.amount, 0)
+  );
+  check(
+    "소계·합계·환급·할인 줄은 제외",
+    !r.drafts.some((d) => /소계|합 계|무이자할부금액|할인/.test(d.merchant)),
     r.drafts.map((d) => d.merchant)
+  );
+
+  // 결제월을 줘도 날짜 없는 조정 줄이 내역으로 둔갑하면 안 된다
+  const adjusted = read(kb, { fallbackDate: "2026-07-01" });
+  check(
+    "결제월을 줘도 조정 줄은 들어오지 않음",
+    !adjusted.drafts.some((d) => /무이자할부금액|할인/.test(d.merchant)),
+    adjusted.drafts.map((d) => d.merchant)
+  );
+  check(
+    "결제월을 줘도 합계는 같음",
+    adjusted.drafts.reduce((sum, d) => sum + d.amount, 0) === 349_488 + 46,
+    adjusted.drafts.reduce((sum, d) => sum + d.amount, 0)
   );
 }
 
