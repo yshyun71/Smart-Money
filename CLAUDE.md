@@ -224,7 +224,13 @@ PICK(계좌·파일 선택) → MAP(열 지정·미리보기) → REVIEW(중복 
 ### 7.2 파일 해독
 
 `decodeFile`: UTF-8 BOM → UTF-8 → euc-kr/windows-949 순서로 시도합니다. 한국 은행 파일은 대부분 euc-kr입니다.
-`loadStatementFile`: `.xls/.xlsx`는 `import("xlsx")`로 **동적 로드**해 CSV로 바꿉니다(별도 청크 ≈500KB). `cellDates: true`, `sheet_to_csv({ blankrows: false, rawNumbers: false })`. 시트가 여럿이면 사용자가 고릅니다.
+
+**`.xls`는 세 가지 서로 다른 것에 붙는 이름입니다.** 진짜 BIFF 워크북, HTML 표, 그리고 CSV·TSV 텍스트. 한국 금융기관이 셋 다 `.xls`로 내려줍니다. 그래서 `loadStatementFile`은 **확장자가 아니라 바이트로 판별**합니다.
+
+- `D0 CF 11 E0`(OLE2) 또는 `PK\x03\x04`(ZIP) → 진짜 워크북. `import("xlsx")`로 **동적 로드**(별도 청크 ≈500KB), `cellDates: true`, `sheet_to_csv({ blankrows: false, rawNumbers: false })`.
+- 그 외 → 먼저 `decodeFile`로 **직접 해독**합니다. HTML이면(`<html`·`<table`·`<!doctype html`) 해독한 **문자열**을 `XLSX.read(text, { type: "string" })`에 넘겨 표 구조만 얻고, 아니면 텍스트 그대로 파싱합니다.
+- **텍스트 파일을 워크북 리더에 넘기면 한글이 깨집니다.** SheetJS가 바이트를 레거시 코드페이지로 읽기 때문입니다. 같은 내용인데 csv는 되고 xls는 안 되던 원인이 이것이었습니다.
+- **시트 선택은 내용 기준**입니다. 각 시트를 CSV로 바꿔 "날짜+금액으로 읽히는 줄 수"가 가장 많은 시트를 씁니다(명세서는 표지·요약 시트로 시작하는 경우가 많습니다). 사용자가 고른 시트가 있으면 그것이 우선합니다.
 
 ### 7.3 표 인식
 

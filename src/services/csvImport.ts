@@ -73,18 +73,85 @@ export interface LoadedFile {
  * The spreadsheet reader is imported on demand — it is a large library, and
  * most sessions never open an Excel file.
  */
+/**
+ * Whether the bytes really are a workbook, rather than a file merely named one.
+ *
+ * `.xls` is handed out by Korean banks for three quite different things: a real
+ * BIFF workbook, an HTML table, and plain CSV or TSV text. Only the first is a
+ * workbook, and giving the other two to the spreadsheet reader mangles them —
+ * text read as a workbook comes back as mojibake, because the bytes are taken
+ * for a legacy codepage instead of UTF-8 or euc-kr.
+ */
+function looksLikeWorkbook(bytes: Uint8Array): boolean {
+  // OLE2 compound file: .xls
+  if (
+    bytes[0] === 0xd0 &&
+    bytes[1] === 0xcf &&
+    bytes[2] === 0x11 &&
+    bytes[3] === 0xe0
+  ) {
+    return true;
+  }
+
+  // ZIP container: .xlsx / .xlsm / .xlsb
+  return (
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07)
+  );
+}
+
+function looksLikeHtml(text: string): boolean {
+  const head = text.slice(0, 2048).toLowerCase();
+  return (
+    head.includes("<html") || head.includes("<table") || head.includes("<!doctype html")
+  );
+}
+
+/** How many rows of a sheet read as dated transactions, for choosing between them. */
+function scoreSheetText(text: string): number {
+  const table = parseDelimited(text);
+  if (table.headers.length === 0) return 0;
+  return scoreMapping(table, autoDetectMapping(table.headers, table.rows)).usable;
+}
+
 export async function loadStatementFile(
   file: File,
   sheetName?: string
 ): Promise<LoadedFile> {
   const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
 
   if (!isSpreadsheetFile(file)) {
     return { text: decodeFile(buffer), sheetNames: [], usedSheet: null };
   }
 
   const XLSX = await import("xlsx");
-  const workbook = XLSX.read(new Uint8Array(buffer), {
+
+  /*
+    A file named .xls that is not one is decoded here, where the encoding is
+    understood, and only then handed over — as text for HTML, whose structure
+    the reader still parses correctly, or straight through for CSV and TSV.
+  */
+  if (!looksLikeWorkbook(bytes)) {
+    const text = decodeFile(buffer);
+    if (!looksLikeHtml(text)) {
+      return { text, sheetNames: [], usedSheet: null };
+    }
+
+    const parsed = XLSX.read(text, { type: "string", cellDates: true });
+    const first = parsed.SheetNames[0];
+    return {
+      text: XLSX.utils.sheet_to_csv(parsed.Sheets[first], {
+        blankrows: false,
+        rawNumbers: false,
+      }),
+      sheetNames: parsed.SheetNames,
+      usedSheet: first,
+    };
+  }
+
+  const workbook = XLSX.read(bytes, {
     type: "array",
     // Otherwise dates arrive as Excel serial numbers
     cellDates: true,
@@ -95,25 +162,41 @@ export async function loadStatementFile(
     throw new Error("엑셀 파일에 시트가 없습니다.");
   }
 
-  // The requested sheet, else the first one with any content
-  const chosen =
-    (sheetName && sheetNames.includes(sheetName) && sheetName) ||
-    sheetNames.find((name) => {
-      const sheet = workbook.Sheets[name];
-      return sheet && Object.keys(sheet).some((cell) => !cell.startsWith("!"));
-    }) ||
-    sheetNames[0];
+  const toCsv = (name: string) =>
+    XLSX.utils.sheet_to_csv(workbook.Sheets[name], {
+      blankrows: false,
+      // Use the displayed value, so dates and amounts read as the bank wrote them
+      rawNumbers: false,
+    });
 
-  const text = XLSX.utils.sheet_to_csv(workbook.Sheets[chosen], {
-    blankrows: false,
-    // Use the displayed value, so dates and amounts read as the bank wrote them
-    rawNumbers: false,
-  });
+  if (sheetName && sheetNames.includes(sheetName)) {
+    return { text: toCsv(sheetName), sheetNames, usedSheet: sheetName };
+  }
 
-  return { text, sheetNames, usedSheet: chosen };
+  /*
+    The transactions are not always on the first sheet — a statement often
+    opens with a cover or a summary — so the sheet whose rows actually read as
+    transactions is the one used, with the first non-empty sheet as a fallback.
+  */
+  let chosen = "";
+  let best = -1;
+
+  for (const name of sheetNames) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet || !Object.keys(sheet).some((cell) => !cell.startsWith("!"))) continue;
+
+    const text = toCsv(name);
+    const score = scoreSheetText(text);
+    if (!chosen || score > best) {
+      chosen = name;
+      best = score;
+    }
+  }
+
+  const used = chosen || sheetNames[0];
+  return { text: toCsv(used), sheetNames, usedSheet: used };
 }
 
-// ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
 
