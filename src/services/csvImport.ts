@@ -496,6 +496,14 @@ export interface ColumnMapping {
   memo: number;
   /** 결제일·청구년월, when the statement carries one per line. */
   billing: number;
+  /**
+   * 수수료·이자, charged beside the principal.
+   *
+   * Some lines are nothing but a fee — an insurance premium, an SMS charge —
+   * and carry no principal at all, so this stands in as the amount when the
+   * principal column is empty.
+   */
+  fee: number;
 }
 
 export const EMPTY_MAPPING: ColumnMapping = {
@@ -506,6 +514,7 @@ export const EMPTY_MAPPING: ColumnMapping = {
   deposit: -1,
   memo: -1,
   billing: -1,
+  fee: -1,
 };
 
 function findColumn(headers: string[], keywords: string[], exclude: string[] = []): number {
@@ -552,7 +561,9 @@ function usableRows(rows: string[][], mapping: ColumnMapping): number {
           )
         : normaliseAmount(cell(mapping.amount)).value;
 
-    if (amount > 0) count++;
+    const fee = mapping.fee >= 0 ? normaliseAmount(cell(mapping.fee)).value : 0;
+
+    if (amount > 0 || fee > 0) count++;
   }
   return count;
 }
@@ -667,14 +678,21 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
     A statement counts things as well as money: instalment numbers, months,
     points. They read as perfectly good numbers and belong to no transaction.
   */
-  const notMoney = ["잔액", "회차", "개월", "건수", "포인트", "마일리지", "번호"];
+  const notMoney = [
+    "잔액", "회차", "개월", "건수", "포인트", "마일리지", "번호", "적립", "혜택",
+  ];
 
   const withdrawal = findColumn(
     headers,
-    ["출금", "지출", "차감", "결제금액", "납부금액", "청구금액"],
+    ["출금", "지출", "차감", "결제금액", "납부금액", "청구금액", "입금하실"],
     notMoney
   );
-  const deposit = findColumn(headers, ["입금", "수입", "적립"], notMoney);
+
+  /*
+    "이번 달 입금하실 금액" is what the card is asking for, not money arriving —
+    read as a deposit it turns a month of spending into income.
+  */
+  const deposit = findColumn(headers, ["입금", "수입"], [...notMoney, "입금하실"]);
 
   const counterparty = findColumn(headers, COUNTERPARTY_KEYWORDS);
   const description = findColumn(headers, DESCRIPTION_KEYWORDS);
@@ -695,6 +713,7 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
 
   const guess: ColumnMapping = {
     billing,
+    fee: findColumn(headers, ["수수료", "이자"], [...notMoney, "율"]),
     date: findColumn(headers, [
       "거래일시", "거래일자", "거래일", "이용일자", "이용일", "승인일자", "승인일", "날짜", "일자",
     ]),
@@ -937,6 +956,21 @@ export function buildDrafts(
       amount = single.value;
       // A signed column: a minus normally means money leaving
       type = single.negative ? "EXPENSE" : "EXPENSE";
+    }
+
+    /*
+      A line with no principal but a fee against it is a charge in its own
+      right: 크레딧케어, an SMS charge, interest billed on its own. Where a line
+      carries both, the principal is the amount and the fee is left where the
+      statement puts it — adding them would double-count the waivers that
+      offset interest on a separate line.
+    */
+    if (amount <= 0 && mapping.fee >= 0) {
+      const fee = normaliseAmount(cell(mapping.fee));
+      if (fee.value > 0 && !fee.negative) {
+        amount = fee.value;
+        type = "EXPENSE";
+      }
     }
 
     if (amount <= 0) {

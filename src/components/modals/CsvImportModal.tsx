@@ -277,6 +277,7 @@ export const CsvImportModal: React.FC<{
           deposit: detected.deposit,
           memo: detected.memo,
           billing: detected.billing,
+          fee: detected.fee,
         };
 
         // Only if it actually reads the file better than the rules did
@@ -323,6 +324,7 @@ export const CsvImportModal: React.FC<{
         deposit: detected.deposit,
         memo: detected.memo,
         billing: detected.billing,
+        fee: detected.fee,
       });
       setMappingSource("AI");
       setDetectNote(detected.reason || null);
@@ -702,6 +704,8 @@ export const CsvImportModal: React.FC<{
               {columnSelect("메모", "memo", "비고·업종")}
               {account && account.type !== "BANK" &&
                 columnSelect("결제월", "billing", "청구년월·결제일")}
+              {account && account.type !== "BANK" &&
+                columnSelect("수수료", "fee", "원금이 없는 줄의 금액")}
             </div>
 
             {/* One statement bills one month, which its lines may not each say */}
