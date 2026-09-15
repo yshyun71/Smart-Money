@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist dev-dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx tests/statements.test.ts",
+    "check": "npm run lint && npm test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -29,6 +31,7 @@
     "@types/sql.js": "^1.4.11",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",
+    "tsx": "^4.23.13",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vite-plugin-pwa": "^1.3.0"
