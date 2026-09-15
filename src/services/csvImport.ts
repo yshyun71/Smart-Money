@@ -359,6 +359,9 @@ interface TableStart {
   headerRowIndex: number;
   hasSubHeader: boolean;
   headers: string[];
+  /** Where this block's rows start and stop, so two blocks can be told apart. */
+  from: number;
+  until: number;
   rows: string[][];
   /** Rows under this header that read as a dated transaction with an amount. */
   usable: number;
@@ -421,6 +424,8 @@ function evaluateHeaderRow(all: string[][], index: number): TableStart | null {
     headerRowIndex: index,
     hasSubHeader,
     headers,
+    from,
+    until,
     rows,
     usable: usableRows(rows, mapping),
     hintScore,
@@ -439,13 +444,34 @@ function evaluateHeaderRow(all: string[][], index: number): TableStart | null {
  * dated transactions wins. Where none of them do — a statement with nothing on
  * it — the most transaction-like heading is offered for the user to correct.
  */
+/**
+ * Whether two blocks are the same table written twice.
+ *
+ * 삼성 splits a statement across sheets — 할부 on one, 리볼빙 일시불 on the
+ * next — with the same columns on each, though the shorter one stops before
+ * 적립금액 and 입금후잔액. Comparing only as far as the shorter one goes is
+ * what lets those two count as one table.
+ */
+function sameShape(a: string[], b: string[]): boolean {
+  const width = Math.min(a.length, b.length);
+  if (width < 3) return false;
+
+  for (let index = 0; index < width; index++) {
+    if ((a[index] || "").trim() !== (b[index] || "").trim()) return false;
+  }
+  return true;
+}
+
 function findTable(all: string[][]): TableStart | null {
-  let best: TableStart | null = null;
+  const candidates: TableStart[] = [];
 
   for (let index = 0; index < all.length; index++) {
     const candidate = evaluateHeaderRow(all, index);
-    if (!candidate) continue;
+    if (candidate) candidates.push(candidate);
+  }
 
+  let best: TableStart | null = null;
+  for (const candidate of candidates) {
     if (
       !best ||
       candidate.usable > best.usable ||
@@ -455,7 +481,43 @@ function findTable(all: string[][]): TableStart | null {
     }
   }
 
-  return best;
+  if (!best) return null;
+
+  /*
+    One statement, several tables of the same shape: 삼성 puts 할부 on one sheet
+    and 리볼빙 일시불 on the next, and reading the document whole used to yield
+    whichever block was longer — the other had to be imported all over again as
+    a second file. Blocks that repeat the chosen table's columns are its
+    continuation and are taken with it, in the order the document has them.
+
+    Only whole blocks that sit outside the ones already taken are joined, so a
+    sub-header or a summary that happens to share a column name cannot pull the
+    same rows in twice.
+  */
+  const chosen: TableStart[] = [best];
+
+  for (const candidate of candidates) {
+    if (candidate === best) continue;
+    if (candidate.usable === 0) continue;
+    if (!sameShape(candidate.headers, best.headers)) continue;
+
+    const overlaps = chosen.some(
+      (taken) => candidate.headerRowIndex < taken.until && candidate.until > taken.headerRowIndex
+    );
+    if (overlaps) continue;
+
+    chosen.push(candidate);
+  }
+
+  if (chosen.length === 1) return best;
+
+  chosen.sort((a, b) => a.headerRowIndex - b.headerRowIndex);
+
+  return {
+    ...best,
+    rows: chosen.flatMap((block) => shapeRows(block.rows, 0, best.headers.length)),
+    usable: chosen.reduce((total, block) => total + block.usable, 0),
+  };
 }
 
 export function parseDelimited(text: string): ParsedTable {
@@ -978,18 +1040,20 @@ export interface BuildOptions {
  * Whether a description is a total rather than something that was bought.
  *
  * Most statements leave the shop column empty on their totals, and a line with
- * no shop was already kept out. 삼성 writes 할부합계 in that very column, so
+ * no shop was already kept out. 삼성 writes the total in that very column, so
  * with a billing month to date it by, a 185,200원 "purchase" went straight into
  * the ledger alongside the four instalments it was the sum of.
  *
- * The whole cell has to be the label — 합계, 소계, 할부합계, "합 계 45 건" —
- * because a shop is free to have one of those words inside its name: 종합계좌
- * carries 합계 and is not a total.
+ * What it writes there is the section's own name with 합계 stuck on the end,
+ * so the label can be as long as 일부결제금액이월약정(리볼빙) 일시불합계. The
+ * word has to come at the end rather than merely appear: Korean puts the head
+ * noun last, so anything ending in 합계 is a total, while 종합계좌이체 carries
+ * the same two syllables in the middle of a perfectly real payment.
  */
 export function isTotalLabel(text: string): boolean {
   const value = (text || "").replace(/\s+/g, "");
   if (!value) return false;
-  return /^[가-힣A-Za-z]*(합계|소계|총계|누계)(\d+건)?$/.test(value);
+  return /(합계|소계|총계|누계)(\d+건)?$/.test(value);
 }
 
 export function buildDrafts(

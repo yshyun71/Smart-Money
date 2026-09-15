@@ -259,9 +259,111 @@ section("삼성카드 — 가맹점 칸에 적힌 할부합계, 이자면제 혜
   for (const label of ["할부합계", "합계", "합 계 45 건", "소계", "본인회원 소계 41 건", "총계", "이용합계"]) {
     check(`합계로 읽음: ${label}`, isTotalLabel(label), label);
   }
+  /*
+    삼성은 합계 줄에 그 구역의 이름을 그대로 쓰고 뒤에 "합계"를 붙인다. 그래서
+    칸 전체가 "합계"여야 한다는 규칙으로는 "일부결제금액이월약정(리볼빙)
+    일시불합계"를 놓친다. 끝나는 말로 판단한다 — 한국어는 핵심 명사가 뒤에
+    오므로, 가운데에 든 "합계"(종합계좌이체)와 구분된다.
+  */
+  for (const label of [
+    "할부합계",
+    "일부결제금액이월약정(리볼빙) 일시불합계",
+    "합계",
+    "합 계 45 건",
+    "소계",
+    "본인회원 소계 41 건",
+    "총계",
+    "이용합계",
+  ]) {
+    check(`합계로 읽음: ${label}`, isTotalLabel(label), label);
+  }
   for (const shop of ["종합계좌이체", "합계정공", "회계법인", "GS SHOP", "", "누계산업개발"]) {
     check(`가맹점으로 남김: ${shop}`, !isTotalLabel(shop), shop);
   }
+}
+
+// ---------------------------------------------------------------------------
+section("삼성카드 — 할부와 리볼빙이 시트 둘로 나뉜 파일");
+// ---------------------------------------------------------------------------
+{
+  const columns = [
+    "이용일",
+    "이용구분",
+    "가맹점",
+    "이용금액",
+    "총할부금액",
+    "이용혜택",
+    "혜택금액",
+    "개월",
+    "회차",
+    "원금",
+    "이자/수수료",
+    "포인트명",
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet([
+      ["할부"],
+      [...columns, "적립금액", "입금후잔액"],
+      [20251208, "본 인 289", "(주)엔에스쇼핑", 160550, null, "이자면제", -512, 10, 9, 16000, 0, null, 0, 16000],
+      [20260601, "본 인 289", "주식회사 지마켓", 241240, null, "이자면제", -1189, 3, 3, 80400, 0, null, 0, 0],
+      [null, null, "할부합계", null, null, null, null, null, null, 96400, 0, null, 0, 125200],
+    ]),
+    "할부"
+  );
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet([
+      ["일부결제금액이월약정(리볼빙) 일시불"],
+      columns,
+      [20260727, "본 인 289", "바로알림서비스 07월이용료", 300, null, null, null, null, null, 300, 0, null],
+      [20260729, "본 인 289", "삼성전자(주)", 10600, null, null, null, null, null, 10600, 0, null],
+      [20260801, "본 인 289", "(주)어비즈", 14190, null, null, null, null, null, 14190, 0, null],
+      [
+        null, null, "일부결제금액이월약정(리볼빙) 일시불합계",
+        null, null, null, null, null, null, 25090, 0, null,
+      ],
+    ]),
+    "일부결제금액이월약정(리볼빙) 일시불"
+  );
+
+  const bytes = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "biff8" }));
+  const loaded = await loadStatementFile(fileOf("samsungcard_20260826.xls", bytes));
+
+  /*
+    두 시트가 같은 표를 나눠 담고 있다. 예전에는 둘 중 긴 쪽만 읽혀, 나머지
+    시트를 같은 파일로 한 번 더 등록해야 했다.
+  */
+  check("시트 두 개를 모두 읽음", loaded.usedSheet === null, loaded.usedSheet);
+
+  const r = read(loaded.text, { fallbackDate: "2026-08-01" });
+  check("두 시트를 합쳐 5건", r.drafts.length === 5, r.drafts.map((d) => d.merchant));
+  check(
+    "할부 시트",
+    r.drafts.some((d) => d.merchant === "(주)엔에스쇼핑" && d.amount === 16_000),
+    r.drafts
+  );
+  check(
+    "리볼빙 시트",
+    r.drafts.some((d) => d.merchant === "(주)어비즈" && d.amount === 14_190),
+    r.drafts
+  );
+  check(
+    "두 시트의 합계 줄 모두 제외",
+    !r.drafts.some((d) => /합계/.test(d.merchant)),
+    r.drafts.map((d) => d.merchant)
+  );
+  check(
+    "합계가 두 시트의 합계 줄을 더한 값",
+    r.drafts.reduce((sum, d) => sum + d.amount, 0) === 96_400 + 25_090,
+    r.drafts.reduce((sum, d) => sum + d.amount, 0)
+  );
+
+  // 사용자가 한 시트를 고르면 그 시트만 읽는 것은 그대로다
+  const one = await loadStatementFile(fileOf("samsungcard.xls", bytes), "할부");
+  check("시트를 고르면 그 시트만", read(one.text).drafts.length === 2, read(one.text).drafts);
 }
 
 // ---------------------------------------------------------------------------
