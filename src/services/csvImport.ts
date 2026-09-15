@@ -1087,14 +1087,31 @@ export function billingMonthFromName(fileName: string): string | null {
 /**
  * Which month a card statement bills.
  *
- * The file name settles it where it says so. Otherwise a card bills the month
- * after the one it was used in, which the newest usage date gives.
+ * The file name settles it where it says so — a statement is downloaded named
+ * for the month it bills, and that name is the month itself, not a month to
+ * count from.
+ *
+ * Otherwise it is read from the usage dates, where a purchase is billed the
+ * month after it was made. Instalments are left out of that reckoning: they
+ * carry the date of a purchase made months ago and would date the statement to
+ * whenever that was.
  */
-export function guessBillingMonth(fileName: string, usageDates: string[]): string | null {
+export function guessBillingMonth(
+  fileName: string,
+  entries: { date: string; memo?: string }[]
+): string | null {
   const named = billingMonthFromName(fileName);
   if (named) return named;
 
-  const months = usageDates.map((date) => date.slice(0, 7)).filter(Boolean).sort();
+  const monthsOf = (rows: { date: string }[]) =>
+    rows
+      .map((row) => (row.date || "").slice(0, 7))
+      .filter(Boolean)
+      .sort();
+
+  const oneOff = entries.filter((entry) => !isInstalment(entry.memo || ""));
+  const months = monthsOf(oneOff.length > 0 ? oneOff : entries);
+
   const newest = months[months.length - 1];
   if (!newest) return null;
 

@@ -182,7 +182,7 @@ export const CsvImportModal: React.FC<{
     if (!table || !account || account.type === "BANK" || billingMonth) return;
     const guess = guessBillingMonth(
       fileName,
-      preview.drafts.map((draft) => draft.date)
+      preview.drafts.map((draft) => ({ date: draft.date, memo: draft.memo }))
     );
     if (guess) setBillingMonth(guess);
     // eslint-disable-next-line react-hooks/exhaustive-deps

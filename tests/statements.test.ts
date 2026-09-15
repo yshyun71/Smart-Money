@@ -339,16 +339,39 @@ section("결제월 추정 — 파일 이름, 없으면 이용월의 다음 달")
     check(`이름 ${JSON.stringify(name)}`, billingMonthFromName(name) === want, billingMonthFromName(name));
   }
 
+  const used = (date: string, memo?: string) => ({ date, memo });
+
   check(
-    "이름에 있으면 그것을 씀",
-    guessBillingMonth("2026년3월 명세서.xls", ["2026-01-05", "2026-01-20"]) === "2026-03"
+    "이름에 있으면 그 연월이 곧 결제월",
+    guessBillingMonth("2026년3월 명세서.xls", [used("2026-01-05"), used("2026-01-20")]) === "2026-03"
   );
   check(
     "없으면 이용월의 다음 달",
-    guessBillingMonth("명세서.xls", ["2026-08-03", "2026-08-31"]) === "2026-09"
+    guessBillingMonth("명세서.xls", [used("2026-08-03"), used("2026-08-31")]) === "2026-09"
   );
-  check("연말은 다음 해로", guessBillingMonth("명세서.xls", ["2026-12-30"]) === "2027-01");
-  check("가장 늦은 이용월 기준", guessBillingMonth("x.xls", ["2026-06-01", "2026-08-11"]) === "2026-09");
+  check("연말은 다음 해로", guessBillingMonth("명세서.xls", [used("2026-12-30")]) === "2027-01");
+  check(
+    "가장 늦은 이용월 기준",
+    guessBillingMonth("x.xls", [used("2026-06-01"), used("2026-08-11")]) === "2026-09"
+  );
+  check(
+    "할부는 추측에서 제외 — 몇 달 전 구매일을 갖고 있다",
+    guessBillingMonth("x.xls", [
+      used("2025-10-19", "할부 9/10"),
+      used("2026-08-03", "일시불"),
+    ]) === "2026-09"
+  );
+  check(
+    "할부가 더 최근이어도 일시불 기준",
+    guessBillingMonth("x.xls", [
+      used("2026-08-03", "일시불"),
+      used("2026-09-20", "할부 2/6"),
+    ]) === "2026-09"
+  );
+  check(
+    "할부뿐이면 그것으로라도",
+    guessBillingMonth("x.xls", [used("2026-08-03", "할부 3/6")]) === "2026-09"
+  );
   check("이용 내역이 없으면 비움", guessBillingMonth("x.xls", []) === null);
 }
 
