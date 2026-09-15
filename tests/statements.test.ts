@@ -10,8 +10,10 @@
 import * as XLSX from "xlsx";
 import {
   autoDetectMapping,
+  billingMonthFromName,
   buildDrafts,
   duplicateKey,
+  guessBillingMonth,
   loadStatementFile,
   normaliseDate,
   parseDelimited,
@@ -238,6 +240,76 @@ section("날짜 형식");
   for (const [input, want] of cases) {
     check(`날짜 ${JSON.stringify(input)}`, normaliseDate(input) === want, normaliseDate(input));
   }
+}
+
+// ---------------------------------------------------------------------------
+section("롯데카드 — 같은 표를 .xls(HTML)로 받았을 때");
+// ---------------------------------------------------------------------------
+{
+  /* 합쳐진 머리글 칸을 HTML이 쓰는 방식 그대로: 금액 두 칸은 colspan,
+     나머지는 rowspan. */
+  const html = `<html><head><meta charset="utf-8"></head><body>
+<table>
+ <tr><th>이용내역</th><th>금액</th></tr>
+ <tr><td>할부</td><td>13,600</td></tr>
+ <tr><td>합계</td><td>14,590</td></tr>
+</table>
+<table>
+ <tr>
+  <th rowspan="2">이용일</th><th rowspan="2">이용카드</th><th rowspan="2">이용가맹점</th>
+  <th rowspan="2">이용총액</th><th rowspan="2">회차</th><th rowspan="2">할부</th>
+  <th colspan="2">이번 달 입금하실 금액</th>
+  <th rowspan="2">적립예정</th><th rowspan="2">이용혜택</th><th rowspan="2">혜택금액</th>
+ </tr>
+ <tr><th>원금</th><th>수수료</th></tr>
+ <tr><td>2026.04.11</td><td>본인LOCA LIKIT 1.2</td><td>에스케이스토아</td><td>136,800원</td><td>5</td><td>10</td><td>13,600</td><td></td><td></td><td>무이자할부</td><td>1,322</td></tr>
+ <tr><td>2026.08.11</td><td>본인LOCA LIKIT 1.2</td><td>07월 크레딧케어</td><td></td><td></td><td></td><td></td><td>990</td><td></td><td></td><td></td></tr>
+</table>
+</body></html>`;
+
+  const loaded = await loadStatementFile(
+    fileOf("이용대금명세서.xls", new TextEncoder().encode(html))
+  );
+  const r = read(loaded.text);
+
+  check("요약표가 아닌 상세내역을 고름", r.table.headers[2] === "이용가맹점", r.table.headers);
+  check("colspan 머리글 병합", r.table.headers[6] === "이번 달 입금하실 금액 원금", r.table.headers[6]);
+  check("xls에서도 2건", r.drafts.length === 2, r.drafts.map((d) => `${d.merchant} ${d.amount}`));
+  check("xls: 원금", like(r.drafts[0], { amount: 13_600, type: "EXPENSE" }), r.drafts[0]);
+  check("xls: 수수료만 있는 줄", like(r.drafts[1], { amount: 990, type: "EXPENSE" }), r.drafts[1]);
+}
+
+// ---------------------------------------------------------------------------
+section("결제월 추정 — 파일 이름, 없으면 이용월의 다음 달");
+// ---------------------------------------------------------------------------
+{
+  const named: [string, string | null][] = [
+    ["2026년3월 이용대금명세서(신한카드).xls", "2026-03"],
+    ["2026년 12월 이용대금명세서.xls", "2026-12"],
+    ["신한카드_202603_명세서.csv", "2026-03"],
+    ["202607_usage.csv", "2026-07"],
+    ["2026-03 카드내역.xlsx", "2026-03"],
+    ["카드내역 2026.09.csv", "2026-09"],
+    ["카드내역_20260803.xls", null], // 8자리는 날짜, 결제월이 아니다
+    ["이용대금명세서.xls", null],
+    ["2026년13월.xls", null],
+    ["", null],
+  ];
+  for (const [name, want] of named) {
+    check(`이름 ${JSON.stringify(name)}`, billingMonthFromName(name) === want, billingMonthFromName(name));
+  }
+
+  check(
+    "이름에 있으면 그것을 씀",
+    guessBillingMonth("2026년3월 명세서.xls", ["2026-01-05", "2026-01-20"]) === "2026-03"
+  );
+  check(
+    "없으면 이용월의 다음 달",
+    guessBillingMonth("명세서.xls", ["2026-08-03", "2026-08-31"]) === "2026-09"
+  );
+  check("연말은 다음 해로", guessBillingMonth("명세서.xls", ["2026-12-30"]) === "2027-01");
+  check("가장 늦은 이용월 기준", guessBillingMonth("x.xls", ["2026-06-01", "2026-08-11"]) === "2026-09");
+  check("이용 내역이 없으면 비움", guessBillingMonth("x.xls", []) === null);
 }
 
 // ---------------------------------------------------------------------------

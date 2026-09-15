@@ -6,6 +6,14 @@ import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
+    /*
+      Stamped into the bundle so a screen can say which build it is running.
+      A PWA updates on one launch and shows it on the next, and "is the fix in
+      yet?" is otherwise unanswerable from the device.
+    */
+    define: {
+      __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    },
     plugins: [
       react(),
       tailwindcss(),

@@ -34,6 +34,20 @@ import {
   UserCheck,
 } from "lucide-react";
 
+/** When this build was made, so "이미 반영된 버전인가"를 화면에서 확인할 수 있습니다. */
+function buildLabel(): string {
+  try {
+    const when = new Date(__BUILD_TIME__);
+    if (Number.isNaN(when.getTime())) return "-";
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${when.getFullYear()}.${pad(when.getMonth() + 1)}.${pad(when.getDate())} ${pad(
+      when.getHours()
+    )}:${pad(when.getMinutes())}`;
+  } catch {
+    return "-";
+  }
+}
+
 const PRESET_BANKS = [
   { name: "카카오뱅크", color: "#FEE500", textColor: "#000000" },
   { name: "신한은행", color: "#0046FF", textColor: "#ffffff" },
@@ -558,6 +572,9 @@ export const ConnectedAssetsView: React.FC<{
               </div>
               <div className="text-[10px] text-slate-400">
                 내 가계부만 표시 · 앱을 갱신해도 데이터는 유지됩니다
+              </div>
+              <div className="text-[9px] text-slate-500 font-mono">
+                빌드 {buildLabel()}
               </div>
             </div>
           </div>

@@ -11,6 +11,7 @@ import {
   instalmentMarker,
   isInstalment,
   loadStatementFile,
+  guessBillingMonth,
   parseDelimited,
   scoreMapping,
   type ColumnMapping,
@@ -172,17 +173,19 @@ export const CsvImportModal: React.FC<{
   }, [account, accountId, fresh, duplicates]);
 
   /*
-    A statement that does not date its billing still belongs to one month, and
-    the newest line it carries is the closest thing the file says about which.
+    The month a statement bills, taken from its name where it says so and from
+    the usage dates otherwise — a card bills the month after it was used in.
     The user corrects it on the mapping step.
   */
   useEffect(() => {
     if (!table || !account || account.type === "BANK" || billingMonth) return;
-    const months = preview.drafts.map((draft) => draft.date.slice(0, 7)).sort();
-    const newest = months[months.length - 1];
-    if (newest) setBillingMonth(newest);
+    const guess = guessBillingMonth(
+      fileName,
+      preview.drafts.map((draft) => draft.date)
+    );
+    if (guess) setBillingMonth(guess);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, account, billingMonth, preview.drafts.length]);
+  }, [table, account, billingMonth, fileName, preview.drafts.length]);
 
   /**
    * Every line the file yielded, new and already-registered together.
@@ -721,8 +724,9 @@ export const CsvImportModal: React.FC<{
                   className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
                 />
                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                  명세서에 적힌 결제월을 넣어두면 카드 내역을 <strong>결제월</strong> 기준으로도
-                  조회할 수 있습니다. 할부처럼 이용한 달과 청구되는 달이 다른 항목에 필요합니다.
+                  파일 이름에 적힌 연월, 없으면 <strong>이용일자의 다음 달</strong>로 채워두었습니다.
+                  명세서에 적힌 결제월과 다르면 바꿔주세요. 할부처럼 이용한 달과 청구되는 달이
+                  다른 항목을 결제월 기준으로 조회하는 데 쓰입니다.
                 </p>
               </div>
             )}

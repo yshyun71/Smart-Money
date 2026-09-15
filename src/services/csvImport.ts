@@ -1012,6 +1012,69 @@ export function buildDrafts(
  * KB writes "8/10" — the eighth of ten — in the 할부 column, which is what
  * tells one month's billing of a purchase from the next.
  */
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** A plausible 연월, or nothing. */
+function asMonth(year: number, month: number): string | null {
+  if (year < 2000 || year > 2099) return null;
+  if (month < 1 || month > 12) return null;
+  return `${year}-${pad2(month)}`;
+}
+
+/**
+ * The billing month written into a file's name.
+ *
+ * Statements are downloaded named for the month they bill —
+ * "2026년3월 이용대금명세서(신한카드).xls", "신한카드_202603_명세서.csv",
+ * "202607_usage.csv" — which is a better answer than anything the rows can
+ * give, since the rows hold usage dates rather than the billing month.
+ */
+export function billingMonthFromName(fileName: string): string | null {
+  const name = (fileName || "").replace(/\.[A-Za-z0-9]+$/, "");
+
+  // 2026년 3월 — said outright
+  const spelled = name.match(/(\d{4})\s*년\s*(\d{1,2})\s*월/);
+  if (spelled) {
+    const settled = asMonth(Number(spelled[1]), Number(spelled[2]));
+    if (settled) return settled;
+  }
+
+  /*
+    202603 · 2026-03 · 2026_03 · 2026.03, but never the first six digits of a
+    longer run: 20260803 is a date, and its month is not the billing month.
+  */
+  for (const match of name.matchAll(/(\d{4})[-_. ]?(\d{2})/g)) {
+    const index = match.index ?? 0;
+    const before = index > 0 ? name[index - 1] : "";
+    const after = name[index + match[0].length] || "";
+    if (/\d/.test(before) || /\d/.test(after)) continue;
+
+    const settled = asMonth(Number(match[1]), Number(match[2]));
+    if (settled) return settled;
+  }
+
+  return null;
+}
+
+/**
+ * Which month a card statement bills.
+ *
+ * The file name settles it where it says so. Otherwise a card bills the month
+ * after the one it was used in, which the newest usage date gives.
+ */
+export function guessBillingMonth(fileName: string, usageDates: string[]): string | null {
+  const named = billingMonthFromName(fileName);
+  if (named) return named;
+
+  const months = usageDates.map((date) => date.slice(0, 7)).filter(Boolean).sort();
+  const newest = months[months.length - 1];
+  if (!newest) return null;
+
+  const [year, month] = newest.split("-").map(Number);
+  const moved = new Date(year, month, 1);
+  return `${moved.getFullYear()}-${pad2(moved.getMonth() + 1)}`;
+}
+
 export function instalmentMarker(text: string): string {
   const value = (text || "").replace(/\s+/g, "");
   const match = value.match(/(\d{1,2})\/(\d{1,2})/);
