@@ -485,9 +485,18 @@ export const CsvImportModal: React.FC<{
     PICK: { title: "내역 가져오기", sub: "은행·카드사에서 받은 엑셀·CSV 파일" },
     MAP: {
       title: "항목 확인",
-      sub: `${fileName}${usedSheet ? ` · [${usedSheet}]` : ""} · ${
-        table?.rows.length ?? 0
-      }줄`,
+      /*
+        Which sheet the rows came from, and 전체 when they came from all of
+        them — a statement split across sheets is read whole, and without
+        saying so the count looks like one sheet's worth.
+      */
+      sub: `${fileName}${
+        usedSheet
+          ? ` · [${usedSheet}]`
+          : sheetNames.length > 1
+            ? ` · [전체 시트 ${sheetNames.length}개]`
+            : ""
+      } · ${table?.rows.length ?? 0}줄`,
     },
     REVIEW: { title: "중복 확인", sub: `새 내역 ${fresh.length}건 · 중복 ${duplicates.length}건` },
     DONE: { title: "가져오기 완료", sub: "가계부에 반영되었습니다" },
@@ -646,6 +655,11 @@ export const CsvImportModal: React.FC<{
               <span className="font-normal text-slate-400">
                 · 통합문서에 {sheetNames.length}개
               </span>
+              {!usedSheet && (
+                <span className="ml-auto px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-extrabold">
+                  전체 시트
+                </span>
+              )}
             </label>
             <select
               value={usedSheet ?? ""}
@@ -655,13 +669,19 @@ export const CsvImportModal: React.FC<{
               }}
               className="w-full px-2.5 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none disabled:opacity-50"
             >
-              <option value="">전체 시트 합쳐서 읽기</option>
+              <option value="">전체 — 시트 {sheetNames.length}개 합쳐서 읽기</option>
               {sheetNames.map((name) => (
                 <option key={name} value={name}>
                   {name}
                 </option>
               ))}
             </select>
+            {/* 삼성처럼 한 명세서가 시트 둘로 나뉜 경우가 있어, 무엇을 읽었는지 밝힙니다 */}
+            <p className="mt-1 text-[10px] text-slate-400 leading-relaxed">
+              {usedSheet
+                ? `[${usedSheet}] 시트만 읽었습니다. 명세서가 여러 시트로 나뉘어 있으면 전체를 고르세요.`
+                : `시트 ${sheetNames.length}개를 합쳐서 읽었습니다. 한 시트만 보려면 위에서 고르세요.`}
+            </p>
           </div>
         )}
 
