@@ -833,7 +833,12 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
       ? description
       : findColumn(
           headers,
-          ["구분", "결제구분", "거래구분", "할부", "메모", "비고", "업종", "적요2"],
+          /*
+            매출구분 first: 우리카드 heads two columns 구분 — 카드구분 holds
+            신용/본인, while 매출구분 holds 국내할부·일시불·차감·카드소계, which
+            is what says how a line was paid and whether it is a total at all.
+          */
+          ["매출구분", "구분", "결제구분", "거래구분", "할부", "메모", "비고", "업종", "적요2"],
           ["개월", "회차"]
         );
 
@@ -1044,16 +1049,21 @@ export interface BuildOptions {
  * with a billing month to date it by, a 185,200원 "purchase" went straight into
  * the ledger alongside the four instalments it was the sum of.
  *
- * What it writes there is the section's own name with 합계 stuck on the end,
- * so the label can be as long as 일부결제금액이월약정(리볼빙) 일시불합계. The
- * word has to come at the end rather than merely appear: Korean puts the head
- * noun last, so anything ending in 합계 is a total, while 종합계좌이체 carries
- * the same two syllables in the middle of a perfectly real payment.
+ * The label is the section's own name with 합계 or 소계 worked into it, and
+ * where it sits varies by issuer: 삼성 puts it last (일부결제금액이월약정(리볼빙)
+ * 일시불합계), 우리 puts it first or mid-string (소계(양승현),
+ * 청구합계-국민은행 357******155).
+ *
+ * What holds across all of them is that the word ends there — the next
+ * character is a bracket, a dash, a digit, or nothing. A shop can carry the
+ * same syllables inside a longer Korean word (종합계좌이체 is a real payment,
+ * not a total), and that is exactly the case a following 한글 letter rules
+ * out. Matching on mere containment would drop such a payment in silence.
  */
 export function isTotalLabel(text: string): boolean {
   const value = (text || "").replace(/\s+/g, "");
   if (!value) return false;
-  return /(합계|소계|총계|누계)(\d+건)?$/.test(value);
+  return /(합계|소계|총계|누계)(?![가-힣])/.test(value);
 }
 
 export function buildDrafts(
@@ -1086,8 +1096,12 @@ export function buildDrafts(
     */
     const named = cell(mapping.merchant).trim();
 
-    // 할부합계 — a total 삼성 writes in the shop column, where it reads as a purchase
-    if (isTotalLabel(named)) {
+    /*
+      A total, wherever the statement writes it. 삼성 and 우리 put it in the
+      shop column; 우리 also names it in 매출구분 (카드소계, 청구결제번호소계),
+      which is the plainer statement of the two.
+    */
+    if (isTotalLabel(named) || isTotalLabel(cell(mapping.memo))) {
       skipped.push({ lineNumber, reason: "합계 줄" });
       return;
     }
@@ -1128,11 +1142,18 @@ export function buildDrafts(
       const out = normaliseAmount(cell(mapping.withdrawal));
       const inn = normaliseAmount(cell(mapping.deposit));
       if (out.value > 0) {
+        /*
+          A minus in the charge column is money coming off the bill, not onto
+          it: 우리카드 bills 차감-[청구할인] as 원금 −10,000. Read as a charge it
+          adds 10,000 to the month instead of taking it away, and the month's
+          total then matches no withdrawal — which is what ties a bill to the
+          payment that settles it (9.2).
+        */
         amount = out.value;
-        type = "EXPENSE";
+        type = out.negative ? "INCOME" : "EXPENSE";
       } else if (inn.value > 0) {
         amount = inn.value;
-        type = "INCOME";
+        type = inn.negative ? "EXPENSE" : "INCOME";
       }
     } else {
       const single = normaliseAmount(cell(mapping.amount));
