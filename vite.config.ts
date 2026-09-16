@@ -75,6 +75,20 @@ export default defineConfig(() => {
       },
     },
     server: {
+      /*
+        The port is part of the data's identity, not a detail.
+
+        Everything this app stores lives in IndexedDB, which browsers separate
+        by origin — and the port is part of the origin. Moving the dev server
+        from :3000 to Vite's default :5173 therefore opened a different, empty
+        database, and the app did what an empty database means: it asked for a
+        first user. Two users and every account looked deleted; nothing was.
+
+        strictPort so it fails loudly rather than sliding to 3001 when 3000 is
+        taken, which would lose sight of the data the same way.
+      */
+      port: 3000,
+      strictPort: true,
       // Set DISABLE_HMR=true to turn off hot reloading.
       hmr: process.env.DISABLE_HMR !== 'true',
       // File watching is also disabled in that case, to save CPU.
