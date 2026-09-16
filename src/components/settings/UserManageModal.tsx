@@ -4,6 +4,7 @@ import { useAuth, type UserSummary } from "../../context/AuthContext";
 import { PinPad } from "../auth/PinPad";
 import { UserRegistrationSteps } from "../auth/UserRegistrationSteps";
 import { PinSetupModal } from "../auth/PinSetupModal";
+import { formatPhone } from "../../utils/format";
 import {
   Users,
   UserPlus,
@@ -86,11 +87,16 @@ export const UserManageModal: React.FC<{
   /*
     이름이나 연락처가 실제로 달라졌는가. 비밀번호는 여기 들어가지 않습니다 —
     그쪽은 전용 화면에서 그 자리에서 저장되므로 확인할 것이 남지 않습니다.
+
+    연락처는 숫자만 견줍니다. 화면에 띄울 때 하이픈을 넣어 주므로, 예전에
+    하이픈 없이 저장된 값이 열리면 손대지 않아도 글자로는 달라 보입니다.
   */
+  const digitsOf = (value: string) => (value || "").replace(/[^0-9]/g, "");
+  const phoneChanged =
+    target !== null && digitsOf(editPhone) !== digitsOf(target.phone || "");
   const detailsChanged =
     target !== null &&
-    (editName.trim() !== (target.name || "").trim() ||
-      editPhone.trim() !== (target.phone || "").trim());
+    (editName.trim() !== (target.name || "").trim() || phoneChanged);
 
   const headings: Record<Mode, { title: string; sub: string }> = {
     LIST: { title: "사용자 관리", sub: `이 기기에 등록된 사용자 ${users.length}명` },
@@ -182,7 +188,7 @@ export const UserManageModal: React.FC<{
                           )}
                         </div>
                         <div className="text-[10px] text-slate-400 font-mono truncate">
-                          {user.phone || "-"}
+                          {formatPhone(user.phone || "") || "-"}
                         </div>
                       </div>
                     </div>
@@ -195,7 +201,7 @@ export const UserManageModal: React.FC<{
                         clearAuthError();
                         setTarget(user);
                         setEditName(user.name);
-                        setEditPhone(user.phone || "");
+                        setEditPhone(formatPhone(user.phone || ""));
                         setAskPin(false);
                         setFormError(null);
                         setMode("EDIT");
@@ -310,7 +316,7 @@ export const UserManageModal: React.FC<{
                   value={editPhone}
                   onChange={(e) => {
                     clearAuthError();
-                    setEditPhone(e.target.value);
+                    setEditPhone(formatPhone(e.target.value));
                   }}
                   placeholder="010-0000-0000"
                   className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden"
@@ -362,12 +368,15 @@ export const UserManageModal: React.FC<{
                       </span>
                     </div>
                   )}
-                  {editPhone.trim() !== (target.phone || "").trim() && (
+                  {phoneChanged && (
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-slate-400 shrink-0">연락처</span>
                       <span className="text-slate-500 truncate font-mono">
-                        {target.phone || "-"} <span className="text-slate-300">→</span>{" "}
-                        <strong className="text-slate-900">{editPhone.trim() || "-"}</strong>
+                        {formatPhone(target.phone || "") || "-"}{" "}
+                        <span className="text-slate-300">→</span>{" "}
+                        <strong className="text-slate-900">
+                          {formatPhone(editPhone) || "-"}
+                        </strong>
                       </span>
                     </div>
                   )}
@@ -381,7 +390,7 @@ export const UserManageModal: React.FC<{
                 onComplete={async (pin) => {
                   const ok = await editUser(
                     target.id,
-                    { name: editName, phone: editPhone },
+                    { name: editName, phone: formatPhone(editPhone) },
                     pin
                   );
                   if (!ok) return false;

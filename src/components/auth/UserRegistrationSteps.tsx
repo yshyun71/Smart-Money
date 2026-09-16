@@ -9,14 +9,7 @@ import {
   KeyRound,
   CheckCircle2,
 } from "lucide-react";
-
-/** 01012345678 → 010-1234-5678, as the user types. */
-export function formatPhone(raw: string): string {
-  const digits = raw.replace(/[^0-9]/g, "").slice(0, 11);
-  if (digits.length < 4) return digits;
-  if (digits.length < 8) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-}
+import { formatPhone } from "../../utils/format";
 
 interface Props {
   /** Shown as "<prefix> (1/3)" and so on. */

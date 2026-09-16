@@ -67,3 +67,43 @@ export function asOfFromParts(date: string, hour: string): string {
   const when = new Date(year, month - 1, day, Number(hour) || 0, 0, 0, 0);
   return when.toISOString();
 }
+
+/**
+ * 연락처를 보이는 대로 끊어 줍니다 — 숫자만 눌러도 010-1234-5678 로.
+ *
+ * 입력 중에도 자연스럽게 자라도록 자릿수에 따라 나눕니다. 서울 국번(02)만
+ * 앞자리가 둘이고 나머지는 셋입니다. 저장은 이 형태 그대로 하고, 자릿수
+ * 검사는 숫자만 세므로(`AuthContext`) 하이픈이 끼어도 영향이 없습니다.
+ */
+export function formatPhone(raw: string): string {
+  const digits = (raw || "").replace(/[^0-9]/g, "");
+  if (!digits) return "";
+
+  const seoul = digits.startsWith("02");
+  const head = seoul ? 2 : 3;
+
+  // 11자리를 넘는 숫자는 전화번호가 아니므로 더 받지 않습니다
+  const capped = digits.slice(0, seoul ? 10 : 11);
+  if (capped.length <= head) return capped;
+
+  /*
+    가운데 자리는 전체 길이가 정해 줍니다: 짧으면 3자리, 길면 4자리. 뒷자리
+    4개는 어느 쪽이든 같습니다.
+
+    010 만 예외로 처음부터 4자리입니다. 휴대전화 번호는 11자리로 정해져 있어,
+    다 누르기 전에도 끊을 자리를 알 수 있습니다 — 그래야 0101234 가 010-123-4
+    였다가 010-1234 로 되돌아가는 일이 없습니다.
+  */
+  const full = seoul ? 10 : 11;
+  const middle = capped.startsWith("010") || capped.length >= full ? 4 : 3;
+
+  if (capped.length <= head + middle) {
+    return `${capped.slice(0, head)}-${capped.slice(head)}`;
+  }
+
+  return [
+    capped.slice(0, head),
+    capped.slice(head, head + middle),
+    capped.slice(head + middle),
+  ].join("-");
+}
