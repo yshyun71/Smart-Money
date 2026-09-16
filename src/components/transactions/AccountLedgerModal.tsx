@@ -200,6 +200,12 @@ export const AccountLedgerModal: React.FC<{
   } | null>(null);
 
   const account = accounts.find((a: { id: string }) => a.id === accountId);
+  /*
+    훅 안에서도 쓰이므로 조기 반환보다 위에 둡니다(§14.2 — 훅은 위로, 그러면
+    훅이 읽는 값도 위에 있어야 합니다). 아래에서 다시 선언하면 그 훅이 초기화
+    전의 값을 읽어 화면이 통째로 죽습니다.
+  */
+  const isBank = account?.type === "BANK";
 
   /** Every entry on this account, before any filtering. */
   const accountEntries: Transaction[] = useMemo(
@@ -334,8 +340,13 @@ export const AccountLedgerModal: React.FC<{
       if (tx.type === "INCOME") income += tx.amount;
       else expense += tx.amount;
     }
-    return { expense, income, total: expense + income };
-  }, [entries, selected]);
+
+    /*
+      카드는 한 덩어리를 청구하므로 차감·환불이 그 금액을 줄입니다. 계좌에서는
+      들어온 돈과 나간 돈이 각각이라 더한 값이 "고른 것들의 합"입니다(9.5).
+    */
+    return { expense, income, total: isBank ? expense + income : expense - income };
+  }, [entries, selected, isBank]);
 
   /** Newest month first, entries already sorted by the context. */
   const grouped = useMemo(() => {
@@ -693,7 +704,6 @@ export const AccountLedgerModal: React.FC<{
 
   if (!isOpen || !account) return null;
 
-  const isBank = account.type === "BANK";
   const prevMonth = shiftMonth(month, -1);
   const nextMonth = shiftMonth(month, 1);
 
@@ -1167,7 +1177,11 @@ export const AccountLedgerModal: React.FC<{
               </div>
               {selectedTotals.expense > 0 && selectedTotals.income > 0 && (
                 <div className="text-[9px] text-slate-400">
-                  지출 {won(selectedTotals.expense)} · 수입 {won(selectedTotals.income)}
+                  {isBank
+                    ? `지출 ${won(selectedTotals.expense)} · 수입 ${won(selectedTotals.income)}`
+                    : `이용 ${won(selectedTotals.expense)} − 차감·환불 ${won(
+                        selectedTotals.income
+                      )}`}
                 </div>
               )}
             </div>

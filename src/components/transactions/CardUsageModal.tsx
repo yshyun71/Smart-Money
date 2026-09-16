@@ -195,9 +195,20 @@ export const CardUsageModal: React.FC<{
 
         {/* Totals */}
         <div className="grid grid-cols-2 gap-2 text-center">
+          {/*
+            차감·환불을 뺀 금액. 옆 칸이 "결제액과 일치"라고 말하는 근거가 바로
+            이 값이라, 여기에 이용액만 보여 주면 두 칸이 서로 다른 말을 합니다 —
+            합계 690,141원 옆에 "결제액과 일치 0원"이 붙어 있었습니다.
+            계좌 내역 화면의 이용 합계와도 같은 값이어야 합니다(9.5).
+          */}
           <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100">
             <div className="text-[10px] text-rose-600">이용 합계</div>
-            <div className="text-xs font-black text-rose-700">{won(totals.spent)}</div>
+            <div className="text-xs font-black text-rose-700">{won(totals.net)}</div>
+            {totals.refunded > 0 && (
+              <div className="text-[9px] text-rose-400 font-medium mt-0.5">
+                이용 {won(totals.spent)} − 차감·환불 {won(totals.refunded)}
+              </div>
+            )}
           </div>
           <div
             className={`p-2.5 rounded-xl border ${
