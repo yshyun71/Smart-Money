@@ -4,7 +4,7 @@ import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput } from "../../utils/format";
 import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
 import { suggestPattern } from "../../services/categoryRules";
-import { matchCardForBill, isCardAccount } from "../../services/cardLink";
+import { matchCardForBill, isCardAccount, settlesFromBank } from "../../services/cardLink";
 import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
 import {
   noteReach,
@@ -162,6 +162,8 @@ export const AddTransactionModal: React.FC<{
     // is what made "연결 안 함" impossible to save.
     if (!isOpen || linkTouched) return;
     if (category !== CARD_PAYMENT_CATEGORY || linkedAccountId) return;
+    // 카드 자기 내역은 명세서를 대표하지 않습니다 — 연결은 계좌 출금과 명세서 사이의 일입니다
+    if (!settlesFromBank(selectedAccountId, accounts)) return;
 
     const bill = matchCardForBill(
       merchant,

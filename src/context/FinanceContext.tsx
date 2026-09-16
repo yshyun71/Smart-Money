@@ -33,6 +33,7 @@ import { resolveCategory } from "../services/categoryRules";
 import {
   matchCardForBill,
   planCardLinks,
+  settlesFromBank,
 } from "../services/cardLink";
 import {
   BUILT_IN_CATEGORIES,
@@ -686,9 +687,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     const next = decided ? { ...tx, category: decided } : tx;
 
-    // A card bill says which issuer it settles; if exactly one registered card
-    // matches, the payment points at it from the start.
-    if (next.category === CARD_PAYMENT_CATEGORY && !next.linkedAccountId) {
+    /*
+       A card bill says which issuer it settles; if exactly one registered card
+       matches, the payment points at it from the start.
+
+       Only ever on a bank account. A card's own statement carries lines that
+       name an issuer — 우리카드's "차감-[청구할인] … 우리카드II …" — and linking
+       one of those pointed a statement at itself.
+     */
+    if (
+      next.category === CARD_PAYMENT_CATEGORY &&
+      !next.linkedAccountId &&
+      settlesFromBank(tx.accountId, accounts)
+    ) {
       const bill = matchCardForBill(
         next.merchant,
         Number((next as { amount?: number }).amount || 0),

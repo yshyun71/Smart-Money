@@ -25,6 +25,23 @@ export function isCardAccount(account: Pick<ConnectedAccount, "type">): boolean 
 }
 
 /**
+ * Whether an entry could be a card bill being paid.
+ *
+ * A bill is money leaving a bank account. A line inside a card's own statement
+ * never is, however much it reads like one — 우리카드 bills a discount as
+ * "차감-[청구할인] 청호나이스 우리카드II …", which names an issuer and so was
+ * being filed as 카드대금 and linked to a statement of its own card. Part of a
+ * statement cannot stand for the statement.
+ */
+export function settlesFromBank(
+  accountId: string,
+  accounts: ConnectedAccount[]
+): boolean {
+  const account = accounts.find((candidate) => candidate.id === accountId);
+  return Boolean(account) && !isCardAccount(account as ConnectedAccount);
+}
+
+/**
  * The registered card a description settles, when exactly one fits.
  *
  * Returning nothing on an ambiguous match is deliberate: guessing between two
@@ -207,7 +224,13 @@ export function pendingBill(cardId: string, transactions: Transaction[]): Pendin
   const totals = billingTotalsFor(transactions, cardId);
   const settled = new Set<string>();
   const payments = transactions
-    .filter((tx) => tx.category === "카드대금" && tx.linkedAccountId === cardId)
+    .filter(
+      (tx) =>
+        tx.category === "카드대금" &&
+        tx.linkedAccountId === cardId &&
+        // A card cannot settle its own bill; such a link is stale data
+        tx.accountId !== cardId
+    )
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -310,6 +333,8 @@ export function planCardLinks(
     const payments = transactions
       .filter((tx) => {
         if (tx.category !== cardPaymentCategory) return false;
+        // A bill is paid out of a bank account, never out of a card's own lines
+        if (!settlesFromBank(tx.accountId, accounts)) return false;
         if (card.paymentAccountId) return tx.accountId === card.paymentAccountId;
         return touched.has(tx.accountId) && matchCardAccount(tx.merchant, accounts) === card.id;
       })

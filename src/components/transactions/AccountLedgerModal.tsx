@@ -355,7 +355,16 @@ export const AccountLedgerModal: React.FC<{
     const expense = entries
       .filter((tx) => tx.type === "EXPENSE")
       .reduce((sum, tx) => sum + tx.amount, 0);
-    return { income, expense };
+
+    /*
+      A card bills one figure, and money coming off it is part of that figure:
+      우리카드's 차감-[청구할인] and any refund lower what is owed. Showing only
+      the charges put 이용 합계 34,000원 above the 소계 the statement prints,
+      and it is the same sum that has to equal a withdrawal for the bill to be
+      tied to it (9.2). A bank account keeps the two apart — there 수입 is
+      money arriving, not a smaller bill.
+    */
+    return { income, expense, billed: expense - income };
   }, [entries]);
 
   /** How many entries each month holds, shown under the month being viewed. */
@@ -795,8 +804,16 @@ export const AccountLedgerModal: React.FC<{
           </>
         ) : (
           <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold text-rose-600">이용 합계</span>
-            <span className="text-sm font-black text-rose-700">{won(totals.expense)}</span>
+            <div>
+              <span className="text-[11px] font-bold text-rose-600">이용 합계</span>
+              {/* 명세서의 소계와 같은 값이 되도록, 차감·환불을 뺀 금액입니다 */}
+              {totals.income > 0 && (
+                <div className="text-[10px] text-rose-400 font-medium">
+                  이용 {won(totals.expense)} − 차감·환불 {won(totals.income)}
+                </div>
+              )}
+            </div>
+            <span className="text-sm font-black text-rose-700">{won(totals.billed)}</span>
           </div>
         )}
 
@@ -1186,11 +1203,16 @@ export const AccountLedgerModal: React.FC<{
                 <div className="rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
                   {list.map((tx) => {
                     const isChecked = selected.has(tx.id);
-                    const linkedCard = tx.linkedAccountId
-                      ? accounts.find(
-                          (a: { id: string }) => a.id === tx.linkedAccountId
-                        )
-                      : null;
+                    /*
+                       명세서 바로가기는 계좌의 출금 건에만 답니다. 카드 내역의
+                       한 줄은 그 명세서의 일부일 뿐, 명세서를 대표하지 않습니다.
+                     */
+                    const linkedCard =
+                      tx.linkedAccountId && isBank
+                        ? accounts.find(
+                            (a: { id: string }) => a.id === tx.linkedAccountId
+                          )
+                        : null;
                     const billedMonth =
                       tx.billingMonth || billingLinks.get(tx.id) || null;
                     return (

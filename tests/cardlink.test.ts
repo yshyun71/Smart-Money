@@ -5,7 +5,13 @@
  * 출금이 들어오거나. 한쪽만 지켜보다가 "6월은 금액이 같은데 연결되지 않는"
  * 일이 실제로 있었습니다. 그래서 판단을 순수 함수로 꺼내 여기서 확인합니다.
  */
-import { planCardLinks, matchBillingMonth, billingTotalsFor } from "../src/services/cardLink";
+import {
+  planCardLinks,
+  matchBillingMonth,
+  billingTotalsFor,
+  pendingBill,
+  settlesFromBank,
+} from "../src/services/cardLink";
 
 let passed = 0;
 const failures: string[] = [];
@@ -239,6 +245,68 @@ section("합계와 달 고르기");
   check("가까운 달이 이김", matchBillingMonth(twoWays, 9_000, "2026-07") === "2026-06");
   check("이미 가져간 달은 제외", matchBillingMonth(twoWays, 9_000, "2026-07", new Set(["2026-06"])) === "2026-01");
   check("맞는 달이 없으면 없음", matchBillingMonth(twoWays, 1, "2026-07") === null);
+}
+
+// ---------------------------------------------------------------------------
+section("카드 내역은 명세서와 연결되지 않는다");
+// ---------------------------------------------------------------------------
+{
+  check("은행 계좌에서 나가는 것만 대금", settlesFromBank("bank", [bank, kb]));
+  check("카드 자기 내역은 아님", !settlesFromBank("kb", [bank, kb]));
+  check("모르는 계좌도 아님", !settlesFromBank("없음", [bank, kb]));
+
+  /*
+    우리카드는 청구할인을 "차감-[청구할인] 청호나이스 우리카드II …"로 적습니다.
+    카드사 이름이 들어 있어 카드대금으로 분류되는데, 이 줄은 그 명세서의
+    일부일 뿐 명세서를 대표하지 않습니다. 연결은 계좌 출금과 명세서 사이의
+    일입니다.
+  */
+  const discount: any = {
+    id: "d1",
+    accountId: "kb",
+    date: "2026-08-17",
+    billingMonth: "2026-09",
+    amount: 10_000,
+    type: "EXPENSE",
+    category: CARD_PAYMENT,
+    merchant: "차감-[청구할인] 청호나이스 KB국민카드 장기할부",
+  };
+  const usage = use("kb", "2026-09", 10_000);
+
+  const plan = planCardLinks([bank, kb], [usage, discount], ["kb"], CARD_PAYMENT);
+  check("카드 안의 카드대금 건은 연결 대상이 아님", plan.length === 0, plan);
+
+  // 결제 계좌를 등록하지 않은 카드에서도 마찬가지다
+  const loose: any = { id: "kb9", name: "KB국민카드", institution: "KB국민카드", type: "CARD" };
+  const own = { ...discount, accountId: "kb9" };
+  const loosePlan = planCardLinks(
+    [bank, loose],
+    [use("kb9", "2026-09", 10_000), own],
+    ["kb9"],
+    CARD_PAYMENT
+  );
+  check("결제 계좌가 없어도 자기 내역과는 연결 안 함", loosePlan.length === 0, loosePlan);
+
+  // 이미 잘못 걸린 자기 연결은 청구예정액 계산에서 무시한다
+  const selfLinked = { ...discount, linkedAccountId: "kb" };
+  const bill = pendingBill("kb", [use("kb", "2026-09", 50_000), selfLinked]);
+  check("자기 연결은 정산으로 치지 않음", bill.basis !== "AFTER_PAYMENT", bill);
+}
+
+// ---------------------------------------------------------------------------
+section("차감은 그 달 청구액에서 빠진다");
+// ---------------------------------------------------------------------------
+{
+  const totals = billingTotalsFor(
+    [
+      use("kb", "2026-09", 53_888),
+      use("kb", "2026-09", 15_300),
+      { ...use("kb", "2026-09", 10_000), type: "INCOME" },
+      { ...use("kb", "2026-09", 7_000), type: "INCOME" },
+    ],
+    "kb"
+  );
+  check("차감 두 건이 빠진 합계", totals.get("2026-09") === 53_888 + 15_300 - 17_000, [...totals]);
 }
 
 // ---------------------------------------------------------------------------
