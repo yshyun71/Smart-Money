@@ -4,7 +4,13 @@
  * 사람이 이미 적어 둔 설명을 조용히 덮어쓰지 않는 것이 핵심입니다 —
  * 그 한 줄이 그 건에 대해 알려진 가장 구체적인 사실입니다.
  */
-import { planNote, noteReach, sameMerchant } from "../src/services/notes";
+import {
+  planNote,
+  noteReach,
+  sameMerchant,
+  planClassification,
+  classificationReach,
+} from "../src/services/spread";
 
 let passed = 0;
 const failures: string[] = [];
@@ -127,6 +133,83 @@ section("적용 범위 미리보기");
   const edited = { ...target, note: "예전 설명" };
   const own = noteReach([edited, ...rows.slice(1)], edited);
   check("대상 자신은 충돌이 아님", own.described === 2, own);
+}
+
+// ---------------------------------------------------------------------------
+section("분류 — 카테고리와 고정비를 같은 내역명 전체에");
+// ---------------------------------------------------------------------------
+{
+  const target = tx("코웨이렌탈09", { category: "기타지출", expenseType: "VARIABLE" });
+  const rows = [
+    target,
+    tx("코웨이렌탈09", { category: "기타지출", expenseType: "VARIABLE" }),
+    tx("코웨이렌탈09", { category: "생활", expenseType: "FIXED", isFixedRecurring: true, recurringDay: 9 }),
+    tx("스타벅스", { category: "카페/간식" }),
+    tx("코웨이렌탈09", { accountId: "bank", category: "기타지출" }),
+  ];
+
+  const next = {
+    category: "생활" as any,
+    expenseType: "FIXED" as any,
+    isFixedRecurring: true,
+    recurringDay: 9,
+  };
+
+  const plan = planClassification(rows, target, next);
+  check("대상 자신은 제외 — 폼이 직접 저장한다", !plan.updates.some((t) => t.id === target.id), plan.updates);
+  check("같은 내역명 1건만 바뀜", plan.applied === 1, plan.updates);
+  check("카테고리가 옮겨감", plan.updates[0]?.category === "생활", plan.updates[0]);
+  check("고정비도 함께", plan.updates[0]?.expenseType === "FIXED", plan.updates[0]);
+  check("결제일도 함께", plan.updates[0]?.recurringDay === 9, plan.updates[0]);
+  check("다른 가맹점은 제외", !plan.updates.some((t) => t.merchant === "스타벅스"), plan.updates);
+  check("다른 계좌는 제외", !plan.updates.some((t) => t.accountId === "bank"), plan.updates);
+
+  // 이미 그 분류인 건은 다시 쓰지 않는다 (§14.3 멱등)
+  const settled = planClassification(rows.map((t) => ({ ...t, ...next })), target, next);
+  check("바뀔 것이 없으면 빈 목록", settled.applied === 0, settled);
+
+  const reach = classificationReach(rows, target, next);
+  check("같은 내역명 3건", reach.total === 3, reach);
+  check("그중 1건이 바뀜", reach.changing === 1, reach);
+
+  // 변동비로 되돌리면 결제일이 떨어진다
+  const back = planClassification(rows, target, {
+    ...next,
+    expenseType: "VARIABLE" as any,
+    isFixedRecurring: false,
+  });
+  const moved = back.updates.find((t) => t.id === rows[2].id);
+  check("고정비 해제 시 결제일 제거", moved && moved.recurringDay === undefined, moved);
+}
+
+// ---------------------------------------------------------------------------
+section("분류 — 수입은 고정비 판정에서 빼놓는다");
+// ---------------------------------------------------------------------------
+{
+  const target = tx("당근마켓", { category: "기타지출", expenseType: "VARIABLE" });
+  const income = tx("당근마켓", { type: "INCOME", expenseType: "INCOME", category: "기타수입" });
+  const rows = [target, income];
+
+  const plan = planClassification(rows, target, {
+    category: "쇼핑" as any,
+    expenseType: "FIXED" as any,
+    isFixedRecurring: true,
+    recurringDay: 3,
+  });
+
+  const touched = plan.updates.find((t) => t.id === income.id);
+  check("수입 건도 카테고리는 따라감", touched?.category === "쇼핑", touched);
+  check("수입 건의 구분은 그대로", touched?.expenseType === "INCOME", touched);
+  check("수입 건에 결제일을 달지 않음", touched?.recurringDay === undefined, touched);
+
+  // 대상이 수입이면 고정비 자체를 퍼뜨리지 않는다
+  const fromIncome = planClassification([income, target], income, {
+    category: "기타수입" as any,
+    expenseType: "INCOME" as any,
+    isFixedRecurring: false,
+  });
+  const expense = fromIncome.updates.find((t) => t.id === target.id);
+  check("지출 건의 구분은 그대로", expense?.expenseType === "VARIABLE", expense);
 }
 
 // ---------------------------------------------------------------------------

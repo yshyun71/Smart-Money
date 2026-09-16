@@ -6,7 +6,13 @@ import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../t
 import { suggestPattern } from "../../services/categoryRules";
 import { matchCardForBill, isCardAccount } from "../../services/cardLink";
 import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
-import { noteReach, planNote, type NoteScope } from "../../services/notes";
+import {
+  noteReach,
+  planNote,
+  classificationReach,
+  planClassification,
+  type NoteScope,
+} from "../../services/spread";
 import { CategorySelect } from "./CategorySelect";
 import {
   X,
@@ -60,6 +66,8 @@ export const AddTransactionModal: React.FC<{
   const [note, setNote] = useState("");
   const [noteScope, setNoteScope] = useState<NoteScope>("ONE");
   const [noteOverwrite, setNoteOverwrite] = useState(false);
+  /** 분류(카테고리·고정비)를 이 건만 바꿀지, 같은 내역명 전체에 쓸지. */
+  const [classifyScope, setClassifyScope] = useState<NoteScope>("ONE");
   /** For a card bill: which registered card it settles. */
   const [linkedAccountId, setLinkedAccountId] = useState("");
   /** Once the user has answered, including with "연결 안 함", nothing overrides it. */
@@ -116,6 +124,7 @@ export const AddTransactionModal: React.FC<{
 
     setNoteScope("ONE");
     setNoteOverwrite(false);
+    setClassifyScope("ONE");
     setMakeRule(false);
     setPatternTouched(false);
     setCategoryTouched(false);
@@ -180,9 +189,41 @@ export const AddTransactionModal: React.FC<{
     [editing, allTransactions]
   );
 
+  /*
+    지금 폼에 적힌 분류. 훅 밖에서 다시 계산하면 조기 반환 위아래로 갈리므로
+    여기서 한 번만 만듭니다(§14.2).
+  */
+  const wantedClass = useMemo(
+    () => ({
+      category,
+      expenseType: (formType === "INCOME"
+        ? "INCOME"
+        : formType === "FIXED"
+        ? "FIXED"
+        : "VARIABLE") as ExpenseType,
+      isFixedRecurring: formType === "FIXED",
+      recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
+    }),
+    [category, formType, recurringDay]
+  );
+
+  const classifyReach = useMemo(
+    () =>
+      editing
+        ? classificationReach(allTransactions, editing, wantedClass)
+        : { total: 0, changing: 0 },
+    [editing, allTransactions, wantedClass]
+  );
+
   if (!isOpen) return null;
 
   const categoryChanged = Boolean(editing) && editing!.category !== category;
+  /** 분류를 실제로 건드렸을 때만 적용 범위를 묻습니다. */
+  const classifyChanged =
+    Boolean(editing) &&
+    (editing!.category !== category ||
+      editing!.expenseType !== wantedClass.expenseType ||
+      Boolean(editing!.isFixedRecurring) !== wantedClass.isFixedRecurring);
   const canOfferRule = merchant.trim() !== "" && Boolean(selectedAccountId);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -243,6 +284,15 @@ export const AddTransactionModal: React.FC<{
         고친 값이 아니라 저장돼 있는 값으로 맞춥니다 — 나머지 건들이 갖고 있는
         이름이 그것이기 때문입니다.
       */
+      /*
+        분류는 규칙으로 덮을 수 없는 것이 둘 있습니다 — 이미 등록된 지난 달들과,
+        규칙이 아예 담지 않는 고정비 여부. 그래서 여기서 바로 씁니다.
+      */
+      if (classifyScope === "SAME_MERCHANT") {
+        const spread = planClassification(allTransactions, editing, wantedClass);
+        if (spread.updates.length > 0) updateTransactions(spread.updates);
+      }
+
       if (noteScope === "SAME_MERCHANT") {
         const wanted = note.trim();
         const plan = planNote(
@@ -461,6 +511,49 @@ export const AddTransactionModal: React.FC<{
                     </p>
                   </>
                 )}
+              </div>
+            )}
+
+            {/*
+              규칙은 앞으로 들어올 내역만 정하고, 그나마 카테고리뿐입니다.
+              이미 등록된 지난 달들과 고정비 여부는 여기서 직접 씁니다.
+            */}
+            {editing && classifyReach.total > 1 && classifyChanged && (
+              <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 space-y-2">
+                <p className="text-[10px] font-bold text-slate-500">
+                  이 계좌에 <span className="text-slate-800">{editing.merchant}</span>{" "}
+                  내역이 {classifyReach.total}건 있습니다
+                </p>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(
+                    [
+                      ["ONE", "이 건만"],
+                      ["SAME_MERCHANT", `같은 내역명 ${classifyReach.total}건 모두`],
+                    ] as [NoteScope, string][]
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setClassifyScope(value)}
+                      className={`rounded-lg px-2 py-2 text-[11px] font-bold transition border ${
+                        classifyScope === value
+                          ? "bg-white border-emerald-400 text-emerald-700 shadow-xs"
+                          : "bg-transparent border-slate-200 text-slate-500 hover:bg-white"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  {classifyScope === "SAME_MERCHANT"
+                    ? classifyReach.changing > 0
+                      ? `다른 결제월을 포함해 ${classifyReach.changing}건의 분류가 함께 바뀝니다.`
+                      : "나머지 건은 이미 같은 분류입니다."
+                    : "다른 결제월의 같은 내역은 그대로 둡니다."}
+                </p>
               </div>
             )}
           </div>
