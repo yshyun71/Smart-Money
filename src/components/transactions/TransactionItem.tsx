@@ -171,6 +171,16 @@ export const TransactionItem: React.FC<{ transaction: Transaction }> = ({
             )}
           </div>
 
+          {/*
+            사람이 적은 설명을 명세서가 적어 준 메모보다 앞에, 기울임 없이
+            둡니다. 둘 다 있으면 무엇을 샀는지가 먼저 읽혀야 합니다.
+          */}
+          {transaction.note && (
+            <p className="text-[10px] font-semibold text-slate-600 mt-0.5 truncate">
+              {transaction.note}
+            </p>
+          )}
+
           {transaction.memo && (
             <p className="text-[10px] text-slate-500 mt-0.5 italic truncate">
               "{transaction.memo}"

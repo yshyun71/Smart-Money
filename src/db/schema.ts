@@ -17,7 +17,7 @@ import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export interface Migration {
   version: number;
@@ -66,6 +66,7 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "transactions", column: "billing_month", type: "TEXT" },
   { table: "accounts", column: "payment_account_id", type: "TEXT" },
   { table: "accounts", column: "payment_account_label", type: "TEXT" },
+  { table: "transactions", column: "note", type: "TEXT" },
 ];
 
 /**
@@ -465,6 +466,19 @@ export const MIGRATIONS: Migration[] = [
     up: (db) => {
       addColumn(db, "accounts", "payment_account_id", "TEXT");
       addColumn(db, "accounts", "payment_account_label", "TEXT");
+    },
+  },
+  {
+    version: 11,
+    /*
+      사용자가 직접 적는 설명. memo와 따로 두는 이유가 있습니다 — memo에는
+      명세서가 적어 준 구분과 할부 회차("4/10")가 들어 있고, 그 회차가
+      중복 판정 키와 할부 필터의 근거입니다(7.6, 9.5). 사용자가 그 칸에
+      "친구 생일선물"이라고 쓰면 다음 달 같은 할부가 중복으로 걸러집니다.
+    */
+    description: "사용자가 직접 적는 설명",
+    up: (db) => {
+      addColumn(db, "transactions", "note", "TEXT");
     },
   },
 ];

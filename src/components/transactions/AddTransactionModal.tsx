@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput } from "../../utils/format";
@@ -6,6 +6,7 @@ import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../t
 import { suggestPattern } from "../../services/categoryRules";
 import { matchCardForBill, isCardAccount } from "../../services/cardLink";
 import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
+import { noteReach, planNote, type NoteScope } from "../../services/notes";
 import { CategorySelect } from "./CategorySelect";
 import {
   X,
@@ -18,6 +19,7 @@ import {
   CheckSquare,
   Square,
   Tag,
+  MessageSquareText,
 } from "lucide-react";
 
 export const AddTransactionModal: React.FC<{
@@ -34,6 +36,7 @@ export const AddTransactionModal: React.FC<{
     deleteTransaction,
     accounts,
     allTransactions,
+    updateTransactions,
     saveCategoryRule,
     categoryForMerchant,
   } = useFinance();
@@ -50,6 +53,13 @@ export const AddTransactionModal: React.FC<{
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [recurringDay, setRecurringDay] = useState("5");
   const [memo, setMemo] = useState("");
+  /*
+    설명은 memo와 다른 칸입니다. memo에는 명세서가 적어 준 구분과 할부 회차가
+    들어 있고 그것이 중복 판정의 근거라, 사람이 쓰는 글은 따로 받습니다.
+  */
+  const [note, setNote] = useState("");
+  const [noteScope, setNoteScope] = useState<NoteScope>("ONE");
+  const [noteOverwrite, setNoteOverwrite] = useState(false);
   /** For a card bill: which registered card it settles. */
   const [linkedAccountId, setLinkedAccountId] = useState("");
   /** Once the user has answered, including with "연결 안 함", nothing overrides it. */
@@ -87,6 +97,7 @@ export const AddTransactionModal: React.FC<{
       setDate(editing.date);
       setRecurringDay(String(editing.recurringDay ?? 5));
       setMemo(editing.memo || "");
+      setNote(editing.note || "");
       setLinkedAccountId(editing.linkedAccountId || "");
       setLinkTouched(false);
     } else {
@@ -98,10 +109,13 @@ export const AddTransactionModal: React.FC<{
       setDate(new Date().toISOString().split("T")[0]);
       setRecurringDay("5");
       setMemo("");
+      setNote("");
       setLinkedAccountId("");
       setLinkTouched(false);
     }
 
+    setNoteScope("ONE");
+    setNoteOverwrite(false);
     setMakeRule(false);
     setPatternTouched(false);
     setCategoryTouched(false);
@@ -157,6 +171,15 @@ export const AddTransactionModal: React.FC<{
     setMakeRule(editing.category !== category);
   }, [isOpen, editing, category]);
 
+  /*
+    같은 내역명이 몇 건이고 그중 몇 건에 이미 설명이 적혀 있는지. 무엇이
+    바뀔지 누르기 전에 보여 주려는 것입니다.
+  */
+  const reach = useMemo(
+    () => (editing ? noteReach(allTransactions, editing) : { total: 0, described: 0 }),
+    [editing, allTransactions]
+  );
+
   if (!isOpen) return null;
 
   const categoryChanged = Boolean(editing) && editing!.category !== category;
@@ -192,6 +215,7 @@ export const AddTransactionModal: React.FC<{
       paymentMethod,
       accountId: selectedAccountId,
       memo: memo.trim() || undefined,
+      note: note.trim() || undefined,
       isFixedRecurring: formType === "FIXED",
       recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
       linkedAccountId:
@@ -213,6 +237,24 @@ export const AddTransactionModal: React.FC<{
 
     if (editing) {
       updateTransaction({ ...payload, id: editing.id });
+
+      /*
+        같은 내역명의 나머지 건에도 같은 설명을 답니다. 가맹점 이름은 이 폼에서
+        고친 값이 아니라 저장돼 있는 값으로 맞춥니다 — 나머지 건들이 갖고 있는
+        이름이 그것이기 때문입니다.
+      */
+      if (noteScope === "SAME_MERCHANT") {
+        const wanted = note.trim();
+        const plan = planNote(
+          allTransactions,
+          { ...editing, note: wanted || undefined },
+          wanted,
+          "SAME_MERCHANT",
+          noteOverwrite
+        );
+        const others = plan.updates.filter((tx: Transaction) => tx.id !== editing.id);
+        if (others.length > 0) updateTransactions(others);
+      }
     } else {
       addTransaction(payload);
     }
@@ -513,6 +555,93 @@ export const AddTransactionModal: React.FC<{
               placeholder="예: 친구와 저녁식사, 알뜰폰 변경 검토"
               className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden"
             />
+          </div>
+
+          {/* 설명 — 명세서가 말해 주지 않는 것을 사람이 적는 칸 */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+              <MessageSquareText className="w-3.5 h-3.5 text-slate-400" />
+              설명 (선택)
+            </label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="예: 사무실 프린터 토너, 어머니 생신 선물"
+              className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+            />
+
+            {editing && reach.total > 1 && (
+              <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 space-y-2">
+                <p className="text-[10px] font-bold text-slate-500">
+                  이 계좌에 <span className="text-slate-800">{editing.merchant}</span>{" "}
+                  내역이 {reach.total}건 있습니다
+                </p>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(
+                    [
+                      ["ONE", "이 건만"],
+                      ["SAME_MERCHANT", `같은 내역명 ${reach.total}건 모두`],
+                    ] as [NoteScope, string][]
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setNoteScope(value)}
+                      className={`rounded-lg px-2 py-2 text-[11px] font-bold transition border ${
+                        noteScope === value
+                          ? "bg-white border-emerald-400 text-emerald-700 shadow-xs"
+                          : "bg-transparent border-slate-200 text-slate-500 hover:bg-white"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/*
+                  이미 적어 둔 설명은 그 건에 대해 알려진 가장 구체적인 사실이라,
+                  덮어쓸지 말지를 사람이 정하게 합니다.
+                */}
+                {noteScope === "SAME_MERCHANT" && reach.described > 0 && (
+                  <div className="space-y-1.5 pt-1.5 border-t border-slate-200">
+                    <p className="text-[10px] font-bold text-amber-700">
+                      그중 {reach.described}건에는 이미 다른 설명이 적혀 있습니다
+                    </p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(
+                        [
+                          [false, "그대로 두기"],
+                          [true, "덮어쓰기"],
+                        ] as [boolean, string][]
+                      ).map(([value, label]) => (
+                        <button
+                          key={String(value)}
+                          type="button"
+                          onClick={() => setNoteOverwrite(value)}
+                          className={`rounded-lg px-2 py-2 text-[11px] font-bold transition border ${
+                            noteOverwrite === value
+                              ? "bg-white border-amber-400 text-amber-700 shadow-xs"
+                              : "bg-transparent border-slate-200 text-slate-500 hover:bg-white"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {noteScope === "SAME_MERCHANT" && (
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    {noteOverwrite
+                      ? `${reach.total}건 모두 이 설명으로 바뀝니다.`
+                      : `설명이 비어 있는 ${reach.total - reach.described}건에만 적습니다.`}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Submit Button */}

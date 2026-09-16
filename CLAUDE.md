@@ -46,7 +46,7 @@
 ```bash
 npm run dev      # 개발 서버
 npm run lint     # tsc --noEmit
-npm test         # 명세서 형식 회귀 세트 (15절)
+npm test         # 회귀 세트 3종 — 명세서·카드연결·설명 (15절)
 npm run check    # lint + test — 커밋 전에 이것을 돌립니다
 npm run build    # vite build → dist/
 ```
@@ -127,8 +127,9 @@ src/
 | 8 | `transactions.linked_account_id` (카드대금이 결제하는 카드) |
 | 9 | `transactions.billing_month` (결제월) |
 | 10 | `accounts.payment_account_id`, `payment_account_label` (카드의 결제 계좌) |
+| 11 | `transactions.note` (사용자가 직접 적는 설명) |
 
-현재 `SCHEMA_VERSION = 10`.
+현재 `SCHEMA_VERSION = 11`.
 
 ### 4.4 테이블 (현재 형태)
 
@@ -146,7 +147,7 @@ accounts(id PK, user_id, name, type, institution, identifier,
          color, is_auto_sync_enabled, last_synced_at, created_at)
 
 transactions(id PK, user_id, date, time, type, expense_type, category, merchant,
-             amount, payment_method, account_id, memo,
+             amount, payment_method, account_id, memo, note,
              is_fixed_recurring, recurring_day,
              linked_account_id, billing_month, created_at)
 
@@ -160,6 +161,7 @@ ai_analyses(user_id, month, analysis_json, health_score, updated_at, PK(user_id,
 
 - `accounts.type`은 타입 선언상 `"BANK" | "CREDIT_CARD" | "CHECK_CARD"`이지만 **실제 저장값은 `"BANK"` 또는 `"CARD"`** 입니다. 판별은 항상 `type === "BANK"` / `type !== "BANK"`로 하세요.
 - 날짜는 `YYYY-MM-DD`, 시각은 `HH:mm`, 결제월은 `YYYY-MM`, 기준일시는 ISO 문자열입니다.
+- **`memo`와 `note`는 주인이 다릅니다.** `memo`는 **명세서가 적어 준 것**(`구분`, 할부 회차 `4/10`)이고 가져오기가 씁니다. `note`는 **사람이 적는 설명**입니다. 절대 합치지 마세요 — `memo`의 회차가 중복 판정 키(7.6)와 `할부` 필터(9.5)의 근거라, 사람이 그 칸에 글을 쓰면 다음 달 같은 할부가 중복으로 걸러집니다.
 
 ### 4.5 저장
 
@@ -374,6 +376,18 @@ PICK(계좌·파일 선택) → MAP(열 지정·미리보기) → REVIEW(중복 
 
 ---
 
+## 9.6 설명(`note`)과 일괄 적용
+
+명세서의 내역명은 `삼성전자(주)`처럼 무엇을 샀는지 말해 주지 않습니다. 그래서 사람이 직접 적는 **설명** 칸이 거래 수정 화면에 있습니다.
+
+- 판단은 `services/notes.ts`의 순수 함수입니다 — `planNote(전체, 대상, 설명, 범위, 덮어쓰기)`와 미리보기용 `noteReach`. 화면은 결과를 저장만 합니다(§17.5).
+- **범위**: `이 건만` / `같은 내역명 N건 모두`. 같은 내역명은 **같은 계좌 안에서** 공백·대소문자를 무시하고 비교합니다(`sameMerchant`). 카드와 통장에 같은 이름이 찍혀도 서로 다른 결제이고, 설명을 적은 화면이 그 계좌의 내역이기 때문입니다.
+- **이미 설명이 적힌 건은 기본적으로 건너뜁니다.** 사람이 적어 둔 한 줄이 그 건에 대해 알려진 가장 구체적인 사실입니다. 몇 건이 그런지 화면에 먼저 보여 주고, `그대로 두기`/`덮어쓰기`를 사람이 고릅니다(§17.2·§17.3).
+- 범위·충돌 선택지는 **수정 중인 건이 있고 같은 내역명이 2건 이상일 때만** 나타납니다. 그 외에는 설명 입력칸 하나뿐입니다.
+- **가져오기에서 덮어쓰기를 골라도 `note`는 남습니다.** 명세서는 그 칸에 대해 할 말이 없습니다. 같은 이유로 수동으로 걸어 둔 `linkedAccountId`와 기존 `billingMonth`도 초안이 값을 갖지 않으면 보존합니다(§17.3).
+
+---
+
 ## 10. 고정비 판정 (`recurrence.ts`)
 
 고정비/변동비가 이름만으로 모호할 때의 기준입니다.
@@ -548,9 +562,11 @@ Python heredoc 문자열 치환으로 소스를 고치다 **`\b`가 실제 0x08 
 ### 15.1 명세서 형식 회귀 세트 (고정)
 
 ```bash
-npm test     # tests/statements.test.ts + tests/cardlink.test.ts
+npm test     # statements + cardlink + notes
 npm run check  # lint + test
 ```
+
+`tests/notes.test.ts`는 **설명 일괄 적용**을 지킵니다: 가맹점 이름 비교(공백·대소문자), `이 건만`/`같은 내역명 모두`, 이미 적힌 설명은 기본적으로 건너뛸 것, `덮어쓰기`를 골랐을 때만 바꿀 것, 다른 계좌·다른 가맹점은 제외할 것, 같은 값이면 쓰지 않을 것(§14.3).
 
 `tests/cardlink.test.ts`는 **카드 청구액 ↔ 은행 출금 연결**을 지킵니다: 카드·은행 어느 쪽이 들어와도 연결될 것, 금액이 정확히 같을 때만 연결할 것, 한 출금은 한 명세서에만, 다른 카드가 가져간 출금은 빼앗지 않을 것, 결제 계좌가 없는 카드는 카드사가 유일할 때만, 해지는 카드 쪽이 바뀌었을 때만, 그리고 같은 입력에 두 번 돌려도 결과가 같을 것(§14.3).
 

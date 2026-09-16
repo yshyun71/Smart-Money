@@ -297,7 +297,7 @@ export function listTransactions(month?: string): Transaction[] {
   let sql = `
     SELECT id, date, time, type,
            expense_type as expenseType, category, merchant, amount,
-           payment_method as paymentMethod, account_id as accountId, memo,
+           payment_method as paymentMethod, account_id as accountId, memo, note,
            is_fixed_recurring as isFixedRecurring, recurring_day as recurringDay,
            linked_account_id as linkedAccountId, billing_month as billingMonth
     FROM transactions
@@ -315,14 +315,15 @@ export function listTransactions(month?: string): Transaction[] {
     recurringDay: row.recurringDay || undefined,
     linkedAccountId: row.linkedAccountId || undefined,
     billingMonth: row.billingMonth || undefined,
+    note: row.note || undefined,
   }));
 }
 
 function insertStatement(tx: Transaction, userId: string) {
   return {
     sql: `INSERT INTO transactions
-            (id, user_id, date, time, type, expense_type, category, merchant, amount, payment_method, account_id, memo, is_fixed_recurring, recurring_day, linked_account_id, billing_month, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, user_id, date, time, type, expense_type, category, merchant, amount, payment_method, account_id, memo, note, is_fixed_recurring, recurring_day, linked_account_id, billing_month, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     params: [
       tx.id,
       userId,
@@ -336,6 +337,7 @@ function insertStatement(tx: Transaction, userId: string) {
       tx.paymentMethod || "카드결제",
       tx.accountId || "",
       tx.memo || "",
+      tx.note || null,
       tx.isFixedRecurring ? 1 : 0,
       tx.recurringDay ?? null,
       tx.linkedAccountId || null,
@@ -430,7 +432,7 @@ export function updateTransaction(tx: Transaction): void {
   run(
     `UPDATE transactions SET
        date = ?, time = ?, type = ?, expense_type = ?, category = ?, merchant = ?,
-       amount = ?, payment_method = ?, account_id = ?, memo = ?,
+       amount = ?, payment_method = ?, account_id = ?, memo = ?, note = ?,
        is_fixed_recurring = ?, recurring_day = ?, linked_account_id = ?,
        billing_month = ?
      WHERE id = ? AND user_id = ?`,
@@ -445,6 +447,7 @@ export function updateTransaction(tx: Transaction): void {
       tx.paymentMethod || "카드결제",
       tx.accountId || "",
       tx.memo || "",
+      tx.note || null,
       tx.isFixedRecurring ? 1 : 0,
       tx.recurringDay ?? null,
       tx.linkedAccountId || null,
@@ -470,7 +473,7 @@ export function applyImport(inserts: Transaction[], updates: Transaction[]): voi
     ...updates.map((tx) => ({
       sql: `UPDATE transactions SET
               date = ?, time = ?, type = ?, expense_type = ?, category = ?, merchant = ?,
-              amount = ?, payment_method = ?, account_id = ?, memo = ?,
+              amount = ?, payment_method = ?, account_id = ?, memo = ?, note = ?,
               is_fixed_recurring = ?, recurring_day = ?, linked_account_id = ?,
               billing_month = ?
             WHERE id = ? AND user_id = ?`,
@@ -485,6 +488,7 @@ export function applyImport(inserts: Transaction[], updates: Transaction[]): voi
         tx.paymentMethod || "카드결제",
         tx.accountId || "",
         tx.memo || "",
+        tx.note || null,
         tx.isFixedRecurring ? 1 : 0,
         tx.recurringDay ?? null,
         tx.linkedAccountId || null,

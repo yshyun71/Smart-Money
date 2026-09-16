@@ -445,12 +445,25 @@ export const CsvImportModal: React.FC<{
       draftToTransaction(draft, accountId, paymentMethod)
     );
 
+    /*
+      Overwriting replaces what the statement says, not what the person said
+      about it. A note typed on an entry — and the card a bill was linked to —
+      is theirs and survives the same statement arriving again; the statement
+      has nothing to say about either, so taking the draft wholesale would
+      silently erase both.
+    */
     const overwrites = duplicates
       .filter((item) => item.decision === "OVERWRITE")
-      .map((item) => ({
-        ...draftToTransaction(item.draft, accountId, paymentMethod),
-        id: item.existing.id,
-      }));
+      .map((item) => {
+        const replacement = draftToTransaction(item.draft, accountId, paymentMethod);
+        return {
+          ...replacement,
+          id: item.existing.id,
+          note: item.existing.note,
+          linkedAccountId: replacement.linkedAccountId ?? item.existing.linkedAccountId,
+          billingMonth: replacement.billingMonth ?? item.existing.billingMonth,
+        };
+      });
 
     try {
       importTransactions(inserts, overwrites);

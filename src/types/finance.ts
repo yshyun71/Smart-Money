@@ -89,7 +89,17 @@ export interface Transaction {
   amount: number;
   paymentMethod: string;
   accountId: string;
+  /** What the statement said: 구분, 할부 회차 — written by the importer. */
   memo?: string;
+  /**
+   * What the person says it was.
+   *
+   * Kept apart from `memo` because the importer owns that one: the 회차 it
+   * carries is what tells one month's instalment from the next, both for the
+   * duplicate check and the 할부 filter. A note typed over it would quietly
+   * make next month's billing look like a duplicate of this one.
+   */
+  note?: string;
   isFixedRecurring?: boolean;
   recurringDay?: number; // e.g. 매월 25일
   /**
