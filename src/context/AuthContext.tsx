@@ -41,7 +41,18 @@ export interface AuthContextType {
     details: { name: string; phone: string; newPin?: string },
     authorizingPin: string
   ) => Promise<boolean>;
-  changePin: (details: { currentPin: string; newPin: string }) => Promise<boolean>;
+  /**
+   * Sets any user's PIN, authorised by the signed-in user's own.
+   *
+   * One path for both cases: changing your own PIN authorises with the PIN you
+   * are replacing, which is the signed-in user's — the same thing the check
+   * asks for when the target is someone else.
+   */
+  resetPin: (
+    targetId: string,
+    newPin: string,
+    authorizingPin: string
+  ) => Promise<boolean>;
   saveProfile: (details: { name: string; phone: string }) => boolean;
   logout: () => void;
 
@@ -262,10 +273,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   ): Promise<boolean> => {
     setAuthError(null);
 
-    if (users.length <= 1) {
-      setAuthError("마지막 사용자는 삭제할 수 없습니다.");
-      return false;
-    }
+    /*
+      마지막 사용자도 지울 수 있습니다. 사용자가 0명인 상태는 이 앱이 정상으로
+      다루는 상태이고(5절 — 첫 실행 등록 화면), 막을 기술적 이유가 없습니다.
+      대신 무엇이 사라지는지 삭제 화면에서 분명히 말합니다.
+    */
     if (!currentUserId) {
       setAuthError("로그인 상태에서만 삭제할 수 있습니다.");
       return false;
@@ -304,17 +316,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const changePin = async (details: {
-    currentPin: string;
-    newPin: string;
-  }): Promise<boolean> => {
+  const resetPin = async (
+    targetId: string,
+    newPin: string,
+    authorizingPin: string
+  ): Promise<boolean> => {
     setAuthError(null);
 
     if (!currentUserId) {
       setAuthError("로그인 상태에서만 변경할 수 있습니다.");
       return false;
     }
-    if (!isValidPinFormat(details.newPin)) {
+    if (!isValidPinFormat(newPin)) {
       setAuthError("새 비밀번호는 숫자 6자리로 설정해주세요.");
       return false;
     }
@@ -327,11 +340,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setIsBusy(true);
     try {
-      if (!(await checkPin(details.currentPin, stored))) {
-        setAuthError("현재 비밀번호가 일치하지 않습니다.");
+      if (!(await checkPin(authorizingPin, stored))) {
+        setAuthError(
+          targetId === currentUserId
+            ? "현재 비밀번호가 일치하지 않습니다."
+            : "내 비밀번호가 일치하지 않습니다."
+        );
         return false;
       }
-      repo.savePinHash(currentUserId, await hashPin(details.newPin));
+      repo.savePinHash(targetId, await hashPin(newPin));
       return true;
     } catch (error) {
       console.error("비밀번호 변경에 실패했습니다:", error);
@@ -390,7 +407,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         addUser,
         removeUser,
         editUser,
-        changePin,
+        resetPin,
         saveProfile,
         logout,
         authError,

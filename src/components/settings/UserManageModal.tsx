@@ -3,11 +3,13 @@ import { createPortal } from "react-dom";
 import { useAuth, type UserSummary } from "../../context/AuthContext";
 import { PinPad } from "../auth/PinPad";
 import { UserRegistrationSteps } from "../auth/UserRegistrationSteps";
+import { PinSetupModal } from "../auth/PinSetupModal";
 import {
   Users,
   UserPlus,
   Trash2,
   Pencil,
+  KeyRound,
   X,
   CheckCircle,
   ShieldAlert,
@@ -39,34 +41,45 @@ export const UserManageModal: React.FC<{
   const [mode, setMode] = useState<Mode>("LIST");
   const [target, setTarget] = useState<UserSummary | null>(null);
 
-  /** 수정 화면의 입력값. PIN은 비워 두면 그대로 둡니다. */
+  /** 수정 화면의 입력값. 비밀번호는 전용 화면에서 따로 바꿉니다. */
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editPin, setEditPin] = useState("");
   const [askPin, setAskPin] = useState(false);
+  /** 비밀번호 변경 화면을 띄울 대상. */
+  const [pinTarget, setPinTarget] = useState<UserSummary | null>(null);
+  /** 이름이 이미 쓰이고 있는지 — PIN을 받기 전에 알려 줍니다. */
+  const [formError, setFormError] = useState<string | null>(null);
 
+  // 열릴 때 한 번만 되돌립니다 — 키 리스너와 한 효과에 두면 위 모달이 열고
+  // 닫힐 때마다 화면이 처음으로 돌아갑니다(14.5)
   useEffect(() => {
     if (!isOpen) return;
 
     setMode("LIST");
     setTarget(null);
     setAskPin(false);
+    setPinTarget(null);
+    setFormError(null);
     clearAuthError();
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Escape 는 가장 위 모달만 닫습니다 — 비밀번호 화면이 떠 있으면 그쪽 몫입니다(14.4)
+  useEffect(() => {
+    if (!isOpen || pinTarget) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, pinTarget, onClose]);
 
   if (!isOpen) return null;
 
@@ -164,8 +177,8 @@ export const UserManageModal: React.FC<{
                         setTarget(user);
                         setEditName(user.name);
                         setEditPhone(user.phone || "");
-                        setEditPin("");
                         setAskPin(false);
+                        setFormError(null);
                         setMode("EDIT");
                       }}
                       className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition cursor-pointer"
@@ -175,18 +188,13 @@ export const UserManageModal: React.FC<{
 
                     <button
                       type="button"
-                      disabled={users.length <= 1}
-                      title={
-                        users.length <= 1
-                          ? "마지막 사용자는 삭제할 수 없습니다"
-                          : "이 사용자와 가계부 전체 삭제"
-                      }
+                      title="이 사용자와 가계부 전체 삭제"
                       onClick={() => {
                         clearAuthError();
                         setTarget(user);
                         setMode("DELETE");
                       }}
-                      className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition shrink-0 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 cursor-pointer"
+                      className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition shrink-0 cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -266,6 +274,7 @@ export const UserManageModal: React.FC<{
                   value={editName}
                   onChange={(e) => {
                     clearAuthError();
+                    setFormError(null);
                     setEditName(e.target.value);
                   }}
                   placeholder="홍길동"
@@ -288,30 +297,34 @@ export const UserManageModal: React.FC<{
                 />
               </div>
 
+              {/*
+                비밀번호는 글자로 받지 않습니다. 키패드로 두 번 눌러 확인하는
+                전용 화면이 이미 있고, 화면에 남는 입력창보다 안전합니다.
+              */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  새 간편 비밀번호 <span className="font-normal text-slate-400">(선택)</span>
+                  간편 비밀번호
                 </label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={editPin}
-                  onChange={(e) => {
+                <button
+                  type="button"
+                  onClick={() => {
                     clearAuthError();
-                    setEditPin(e.target.value.replace(/[^0-9]/g, ""));
+                    setPinTarget(target);
                   }}
-                  placeholder="바꾸지 않으려면 비워 두세요"
-                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 tracking-[0.3em] focus:border-emerald-500 focus:outline-hidden"
-                />
+                  className="w-full py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>간편비밀번호 등록·변경</span>
+                </button>
                 <p className="mt-1 text-[10px] text-slate-400 leading-relaxed">
-                  숫자 6자리. 비워 두면 {target.name} 님의 비밀번호는 그대로 둡니다.
+                  6자리 숫자를 키패드로 입력합니다. 이름·연락처와 따로 저장되니,
+                  여기서 바꾸면 아래 [변경 확인]을 누르지 않아도 적용됩니다.
                 </p>
               </div>
             </div>
 
-            {authError && !askPin && (
-              <p className="text-[11px] font-bold text-rose-600">{authError}</p>
+            {(formError || (authError && !askPin)) && (
+              <p className="text-[11px] font-bold text-rose-600">{formError || authError}</p>
             )}
 
             {askPin ? (
@@ -323,11 +336,7 @@ export const UserManageModal: React.FC<{
                 onComplete={async (pin) => {
                   const ok = await editUser(
                     target.id,
-                    {
-                      name: editName,
-                      phone: editPhone,
-                      newPin: editPin || undefined,
-                    },
+                    { name: editName, phone: editPhone },
                     pin
                   );
                   if (!ok) return false;
@@ -351,9 +360,27 @@ export const UserManageModal: React.FC<{
                 </button>
                 <button
                   type="button"
-                  disabled={!editName.trim() || (editPin !== "" && editPin.length !== 6)}
+                  disabled={!editName.trim()}
                   onClick={() => {
                     clearAuthError();
+
+                    /*
+                      이름은 로그인 화면에서 사람을 고르는 이름이라 유일해야
+                      합니다. 여기서 먼저 확인합니다 — 비밀번호 6자리를 다
+                      누른 뒤에 "이미 쓰는 이름"이라고 하면 헛수고입니다.
+                    */
+                    const wanted = editName.trim().toLowerCase();
+                    const clash = users.some(
+                      (other: UserSummary) =>
+                        other.id !== target.id &&
+                        (other.name || "").trim().toLowerCase() === wanted
+                    );
+                    if (clash) {
+                      setFormError("이미 같은 이름의 사용자가 있습니다.");
+                      return;
+                    }
+
+                    setFormError(null);
                     setAskPin(true);
                   }}
                   className="py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-40"
@@ -374,13 +401,28 @@ export const UserManageModal: React.FC<{
                   {target.name} 님을 삭제하면 되돌릴 수 없습니다
                 </div>
                 <p className="mt-0.5 leading-relaxed">
-                  이 사용자의 <strong>계좌·카드, 거래 내역, 예산, AI 분석이 모두 함께
-                  삭제</strong>됩니다. 다른 사용자의 가계부는 그대로 유지됩니다.
-                  {target.id === currentUserId && (
+                  이 사용자의 <strong>계좌·카드, 거래 내역, 예산, AI 분석, 등록한 AI 키가
+                  모두 함께 삭제</strong>됩니다.
+                  {users.length > 1 && " 다른 사용자의 가계부는 그대로 유지됩니다."}
+                  {/*
+                    마지막 한 명을 지우는 것은 기기 초기화와 같습니다. 막지는
+                    않되, 무엇이 일어나는지는 분명히 말합니다.
+                  */}
+                  {users.length <= 1 ? (
                     <>
                       <br />
-                      지금 로그인한 계정이므로 삭제 후 로그인 화면으로 이동합니다.
+                      <strong>
+                        마지막 사용자입니다. 이 기기의 가계부가 전부 사라지고 첫 사용자
+                        등록부터 다시 시작합니다.
+                      </strong>
                     </>
+                  ) : (
+                    target.id === currentUserId && (
+                      <>
+                        <br />
+                        지금 로그인한 계정이므로 삭제 후 로그인 화면으로 이동합니다.
+                      </>
+                    )
                   )}
                 </p>
               </div>
@@ -412,6 +454,19 @@ export const UserManageModal: React.FC<{
           </button>
         </div>
       </div>
+
+      {/*
+        위층에 띄웁니다 — 이 모달이 9999이므로 그보다 위여야 하고, PinSetupModal
+        자신이 <body>로 포털되므로 여기서는 위치만 정해 주면 됩니다(14.4).
+      */}
+      <PinSetupModal
+        isOpen={pinTarget !== null}
+        target={pinTarget}
+        onClose={() => {
+          setPinTarget(null);
+          clearAuthError();
+        }}
+      />
     </div>
   );
 

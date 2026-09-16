@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { useAuth } from "../../context/AuthContext";
 import { UserSecurityModal } from "../auth/UserSecurityModal";
-import { PinSetupModal } from "../auth/PinSetupModal";
 import { AIKeyModal } from "../settings/AIKeyModal";
 import { UserManageModal } from "../settings/UserManageModal";
 import { PWAInstallGuideModal } from "../pwa/PWAInstallButton";
@@ -23,7 +22,6 @@ import {
   CreditCard,
   ShieldCheck,
   Settings,
-  KeyRound,
   Sparkles,
   UserPlus,
   LogOut,
@@ -45,7 +43,6 @@ export const MobileHeader: React.FC<{
   const { currentUser, users, logout } = useAuth();
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [showPinModal, setShowPinModal] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showAIKeyModal, setShowAIKeyModal] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
@@ -114,14 +111,6 @@ export const MobileHeader: React.FC<{
       badge: undefined as string | undefined,
       danger: false,
       onSelect: () => onNavigateTab?.("assets"),
-    },
-    {
-      icon: KeyRound,
-      label: "간편비밀번호 등록/변경",
-      description: "로그인에 사용할 6자리 PIN",
-      badge: undefined,
-      danger: false,
-      onSelect: () => setShowPinModal(true),
     },
     {
       icon: Sparkles,
@@ -383,11 +372,6 @@ export const MobileHeader: React.FC<{
       />
 
       {/* Settings menu targets */}
-      <PinSetupModal
-        isOpen={showPinModal}
-        onClose={() => setShowPinModal(false)}
-      />
-
       <AIKeyModal
         isOpen={showAIKeyModal}
         onClose={() => setShowAIKeyModal(false)}
