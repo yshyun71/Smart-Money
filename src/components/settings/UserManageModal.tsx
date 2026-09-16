@@ -83,11 +83,22 @@ export const UserManageModal: React.FC<{
 
   if (!isOpen) return null;
 
+  /*
+    이름이나 연락처가 실제로 달라졌는가. 비밀번호는 여기 들어가지 않습니다 —
+    그쪽은 전용 화면에서 그 자리에서 저장되므로 확인할 것이 남지 않습니다.
+  */
+  const detailsChanged =
+    target !== null &&
+    (editName.trim() !== (target.name || "").trim() ||
+      editPhone.trim() !== (target.phone || "").trim());
+
   const headings: Record<Mode, { title: string; sub: string }> = {
     LIST: { title: "사용자 관리", sub: `이 기기에 등록된 사용자 ${users.length}명` },
     ADD: { title: "새 사용자", sub: "정보와 간편 비밀번호를 등록합니다" },
     ADDED: { title: "추가 완료", sub: "새 사용자가 등록되었습니다" },
-    EDIT: { title: "사용자 수정", sub: "이름·연락처·간편 비밀번호를 바꿉니다" },
+    EDIT: askPin
+      ? { title: "수정 확인", sub: "내 간편 비밀번호로 확인합니다" }
+      : { title: "사용자 수정", sub: "이름·연락처·간편 비밀번호를 바꿉니다" },
     DELETE: { title: "사용자 삭제", sub: "내 간편 비밀번호로 확인합니다" },
   };
 
@@ -108,6 +119,14 @@ export const UserManageModal: React.FC<{
                 type="button"
                 onClick={() => {
                   clearAuthError();
+                  /*
+                    한 단계씩 돌아갑니다. 확인 단계에서 목록으로 튕기면 이름을
+                    다시 입력해야 하고, 무엇을 바꾸던 중이었는지도 사라집니다.
+                  */
+                  if (mode === "EDIT" && askPin) {
+                    setAskPin(false);
+                    return;
+                  }
                   setTarget(null);
                   setMode("LIST");
                 }}
@@ -262,10 +281,11 @@ export const UserManageModal: React.FC<{
         {mode === "EDIT" && target && (
           <>
             {/*
-              등록 때 받는 것과 같은 항목입니다. 다른 점은 비밀번호로, 비워 두면
-              쓰지 않습니다 — 이름만 고치려고 남의 비밀번호를 새로 정하게 할
-              이유가 없습니다.
+              등록 때 받는 것과 같은 항목입니다. 확인 단계(askPin)에서는 감춥니다 —
+              그 자리는 "이대로 저장할까" 하나만 묻는 자리이고, 거기서 비밀번호를
+              바꾸러 나가는 길이 보이면 무엇을 확인하는 중인지 흐려집니다.
             */}
+            {!askPin && (
             <div className="space-y-3">
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">이름</label>
@@ -317,17 +337,42 @@ export const UserManageModal: React.FC<{
                   <span>간편비밀번호 등록·변경</span>
                 </button>
                 <p className="mt-1 text-[10px] text-slate-400 leading-relaxed">
-                  6자리 숫자를 키패드로 입력합니다. 이름·연락처와 따로 저장되니,
-                  여기서 바꾸면 아래 [변경 확인]을 누르지 않아도 적용됩니다.
+                  6자리 숫자를 키패드로 입력합니다. 이름·연락처와 <strong>따로
+                  저장</strong>되므로, 그 화면에서 바꾸면 여기서 [변경 확인]을 누르지
+                  않아도 이미 적용된 것입니다.
                 </p>
               </div>
             </div>
+            )}
 
             {(formError || (authError && !askPin)) && (
               <p className="text-[11px] font-bold text-rose-600">{formError || authError}</p>
             )}
 
             {askPin ? (
+              <>
+                {/* 무엇을 확인하는 중인지 — 입력 항목을 감췄으니 여기에 적습니다 */}
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 text-[11px] space-y-1">
+                  {editName.trim() !== (target.name || "").trim() && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-400 shrink-0">이름</span>
+                      <span className="text-slate-500 truncate">
+                        {target.name} <span className="text-slate-300">→</span>{" "}
+                        <strong className="text-slate-900">{editName.trim()}</strong>
+                      </span>
+                    </div>
+                  )}
+                  {editPhone.trim() !== (target.phone || "").trim() && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-400 shrink-0">연락처</span>
+                      <span className="text-slate-500 truncate font-mono">
+                        {target.phone || "-"} <span className="text-slate-300">→</span>{" "}
+                        <strong className="text-slate-900">{editPhone.trim() || "-"}</strong>
+                      </span>
+                    </div>
+                  )}
+                </div>
+
               <PinPad
                 title="내 간편 비밀번호 6자리"
                 description={`${target.name} 님의 정보를 바꾸기 위해 로그인한 사용자의 비밀번호를 입력합니다.`}
@@ -345,6 +390,7 @@ export const UserManageModal: React.FC<{
                   setMode("LIST");
                 }}
               />
+              </>
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -360,7 +406,7 @@ export const UserManageModal: React.FC<{
                 </button>
                 <button
                   type="button"
-                  disabled={!editName.trim()}
+                  disabled={!editName.trim() || !detailsChanged}
                   onClick={() => {
                     clearAuthError();
 
@@ -387,6 +433,12 @@ export const UserManageModal: React.FC<{
                 >
                   변경 확인
                 </button>
+
+                {!detailsChanged && (
+                  <p className="col-span-2 text-[10px] text-slate-400 text-center">
+                    이름과 연락처가 그대로입니다. 비밀번호만 바꾸려면 위 버튼을 쓰세요.
+                  </p>
+                )}
               </div>
             )}
           </>
