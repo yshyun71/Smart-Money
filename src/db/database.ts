@@ -17,6 +17,8 @@ import {
 const IDB_NAME = "smartmoney";
 const IDB_STORE = "sqlite";
 const IDB_KEY = "finance.db";
+/** Where the bytes go when they cannot be opened, rather than under a new database. */
+const IDB_QUARANTINE = "finance.db.unreadable";
 
 export interface DBStats {
   path: string;
@@ -26,8 +28,27 @@ export interface DBStats {
   schemaVersion: number;
 }
 
+/**
+ * The stored ledger exists but could not be opened or read.
+ *
+ * Thrown rather than swallowed so that no write can follow: the bytes on the
+ * device are the only copy, and carrying on with a blank database would save
+ * over them at the same key.
+ */
+export class DatabaseUnavailable extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "DatabaseUnavailable";
+    this.cause = cause;
+  }
+}
+
 let db: Database | null = null;
 let dbPromise: Promise<Database> | null = null;
+/** Set once the ledger is known to be unreachable, so screens can say so. */
+let openFailure: DatabaseUnavailable | null = null;
 let lastSavedAt = new Date().toISOString();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -66,13 +87,13 @@ async function idbRead(): Promise<Uint8Array | null> {
   }
 }
 
-async function idbWrite(bytes: Uint8Array): Promise<void> {
+async function idbWrite(bytes: Uint8Array, key: string = IDB_KEY): Promise<void> {
   const idb = await openIdb();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = idb.transaction(IDB_STORE, "readwrite");
       // Store a plain copy: the sql.js buffer is reused between exports.
-      tx.objectStore(IDB_STORE).put(bytes.slice(), IDB_KEY);
+      tx.objectStore(IDB_STORE).put(bytes.slice(), key);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
@@ -139,21 +160,55 @@ function seedEssentials(target: Database): void {
 async function initDatabase(): Promise<Database> {
   const SQL = await initSqlJs({ locateFile: () => wasmUrl });
 
+  /*
+    A failed read is not an empty gatherer of nothing.
+
+    This used to fall through to a blank database, and a blank database looks
+    exactly like a new install — the app asks for a first user, every account
+    and statement appears deleted. Worse, the first thing typed into it saved
+    over the one copy of the real data, at the same key. One unlucky read then
+    meant permanent loss.
+
+    So a read that fails stops here. The app says so instead of pretending to
+    be empty, and nothing is written until someone decides what to do.
+  */
   let stored: Uint8Array | null = null;
   try {
     stored = await idbRead();
   } catch (error) {
     console.error("[DB] 저장된 데이터베이스를 읽지 못했습니다:", error);
+    throw new DatabaseUnavailable(
+      "기기에 저장된 가계부를 읽지 못했습니다. 브라우저를 다시 열어 보시고, 그래도 같으면 데이터를 덮어쓰지 않도록 이 창을 닫아 주세요.",
+      error
+    );
   }
 
   if (stored) {
     try {
       db = new SQL.Database(stored);
     } catch (error) {
-      console.error("[DB] 저장된 파일이 손상되어 새 데이터베이스를 만듭니다:", error);
-      db = new SQL.Database();
+      console.error("[DB] 저장된 파일을 열지 못했습니다:", error);
+
+      /*
+        Unopenable is not the same as worthless: the bytes are the only copy
+        of the user's ledger, and a later version of sql.js — or a repair by
+        hand — may still get them open. They are moved aside under their own
+        key before anything else claims the main one.
+      */
+      try {
+        await idbWrite(stored, IDB_QUARANTINE);
+        console.warn(`[DB] 원본 바이트를 '${IDB_QUARANTINE}' 로 보관했습니다.`);
+      } catch (saveError) {
+        console.error("[DB] 원본 바이트를 보관하지 못했습니다:", saveError);
+      }
+
+      throw new DatabaseUnavailable(
+        "기기에 저장된 가계부 파일을 열지 못했습니다. 원본은 지우지 않고 따로 보관해 두었습니다.",
+        error
+      );
     }
   } else {
+    // Nothing stored at all — a genuine first run on this origin
     db = new SQL.Database();
   }
 
@@ -185,14 +240,32 @@ async function initDatabase(): Promise<Database> {
 /** Memoised so every caller shares one database instance. */
 export function getDatabase(): Promise<Database> {
   if (!dbPromise) {
-    dbPromise = initDatabase();
+    dbPromise = initDatabase().catch((error) => {
+      openFailure =
+        error instanceof DatabaseUnavailable
+          ? error
+          : new DatabaseUnavailable("기기 내 데이터베이스를 열지 못했습니다.", error);
+      throw error;
+    });
   }
   return dbPromise;
 }
 
+/**
+ * Whether the stored ledger could not be reached, and why.
+ *
+ * Told apart from "there is nothing here yet" on purpose: the screens react to
+ * the two in opposite ways, and reading them the same way is how a device with
+ * data intact came to show a first-run setup screen.
+ */
+export function databaseFailure(): DatabaseUnavailable | null {
+  return openFailure;
+}
+
 /** Writes the current database bytes to IndexedDB. */
 export async function persist(): Promise<void> {
-  if (!db) return;
+  // Never write over a ledger that could not be read — it is still the only copy
+  if (!db || openFailure) return;
   try {
     await idbWrite(db.export());
     lastSavedAt = new Date().toISOString();

@@ -208,7 +208,45 @@ const MainContent: React.FC = () => {
 
 const AppGuard: React.FC = () => {
   const { isLoading, currentUserId } = useAuth();
-  const { isDbReady } = useFinance();
+  const { isDbReady, dbError } = useFinance();
+
+  /*
+    An unreachable ledger is not an empty one.
+
+    This screen used to be reached only on the way in, so a failure to open the
+    database fell through to the ordinary first-run setup — a device whose two
+    users and every statement were sitting safely in storage was asked to
+    register its first user, and the first thing typed would have saved over
+    them. Saying it plainly, and offering nothing that writes, is the whole
+    point of this branch.
+  */
+  if (dbError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white">
+        <div className="w-full max-w-sm bg-slate-800 rounded-2xl p-5 space-y-3 border border-rose-500/30">
+          <h1 className="text-sm font-bold text-rose-300">가계부를 열지 못했습니다</h1>
+          <p className="text-[11px] text-slate-300 leading-relaxed">{dbError}</p>
+          <div className="rounded-xl bg-slate-900/70 p-3 text-[10px] text-slate-400 leading-relaxed space-y-1.5">
+            <p className="font-bold text-slate-300">저장된 내역은 지우지 않았습니다.</p>
+            <p>
+              브라우저 주소가 평소 쓰시던 것과 같은지 확인해 주세요. 주소나 포트가 다르면
+              브라우저가 다른 저장소를 엽니다.
+            </p>
+            <p>
+              이 화면에서는 아무것도 저장하지 않습니다. 새 내역을 입력하면 기존 데이터를
+              덮어쓸 수 있어, 원인을 확인할 때까지 쓰기를 멈춰 두었습니다.
+            </p>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 text-xs transition"
+          >
+            다시 시도
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // The on-device database has to be open before any screen can render
   if (isLoading || !isDbReady) {

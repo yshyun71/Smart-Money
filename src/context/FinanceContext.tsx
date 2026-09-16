@@ -22,6 +22,7 @@ import {
 import {
   exportDatabaseBytes,
   getDatabase,
+  databaseFailure,
   getDbStats,
   importDatabaseBytes,
 } from "../db/database";
@@ -87,6 +88,11 @@ interface FinanceContextType {
 
   // On-device database
   isDbReady: boolean;
+  /**
+   * Set when the stored ledger could not be opened. Distinct from "no data":
+   * an empty screen and an unreachable one mean opposite things.
+   */
+  dbError: string | null;
   dbStats: DBStatsInfo | null;
   refreshDbData: () => Promise<void>;
   resetToClean: () => Promise<void>;
@@ -217,6 +223,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const { currentUserId } = useAuth();
   const [isDbReady, setIsDbReady] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categoryRules, setCategoryRules] = useState<CategoryRule[]>([]);
@@ -293,8 +300,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     (async () => {
       try {
         await refreshDbData();
+        if (!cancelled) setDbError(null);
       } catch (error) {
         console.error("기기 내 데이터베이스를 여는 데 실패했습니다:", error);
+        /*
+          Swallowing this left the app showing a perfectly ordinary empty
+          ledger, which is how a device with its data intact came to display
+          the first-run setup screen. It is said out loud now.
+        */
+        if (!cancelled) {
+          setDbError(
+            databaseFailure()?.message ||
+              (error instanceof Error
+                ? error.message
+                : "기기 내 가계부를 여는 데 실패했습니다.")
+          );
+        }
       } finally {
         if (!cancelled) setIsDbReady(true);
       }
@@ -1173,6 +1194,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         viewMode,
         setViewMode,
         isDbReady,
+        dbError,
         dbStats,
         refreshDbData,
         resetToClean,
