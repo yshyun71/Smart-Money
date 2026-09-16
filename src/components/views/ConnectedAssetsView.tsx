@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import { useAuth } from "../../context/AuthContext";
 import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
@@ -101,6 +102,9 @@ export const ConnectedAssetsView: React.FC<{
     addAccount,
     deleteAccount,
   } = useFinance();
+
+  // 복원은 이 기기의 사용자 전체를 갈아치우므로, 무엇이 사라지는지 말하려면 명단이 필요합니다
+  const { users, currentUserId, logout } = useAuth();
 
   // Add Account / Card Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -645,16 +649,41 @@ export const ConnectedAssetsView: React.FC<{
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (!file) return;
-                if (
-                  !confirm(
-                    "이 기기의 현재 가계부를 백업 파일 내용으로 덮어씁니다. 계속할까요?"
-                  )
-                ) {
-                  return;
-                }
+
+                /*
+                  백업은 사용자별이 아니라 데이터베이스 파일 전체입니다. 그래서
+                  복원은 이 기기의 **모든 사용자**를 파일에 든 사용자들로
+                  바꿉니다 — "현재 가계부를 덮어씁니다"로는 다른 사람의 가계부가
+                  함께 사라진다는 말이 되지 않습니다.
+                */
+                const others = users
+                  .filter((u: { id: string }) => u.id !== currentUserId)
+                  .map((u: { name: string }) => u.name);
+
+                const warning = [
+                  "백업 파일에 들어 있는 내용으로 이 기기의 가계부를 통째로 바꿉니다.",
+                  "",
+                  others.length > 0
+                    ? `이 기기의 사용자 ${users.length}명(${users
+                        .map((u: { name: string }) => u.name)
+                        .join(", ")})의 가계부가 모두 사라지고, 백업에 들어 있던 사용자만 남습니다.`
+                    : "지금 기기에 있는 가계부는 사라지고, 백업에 들어 있던 사용자만 남습니다.",
+                  "",
+                  "복원 후에는 로그인이 풀리고 사용자 선택 화면으로 돌아갑니다.",
+                  "계속할까요?",
+                ].join("\n");
+
+                if (!confirm(warning)) return;
+
                 try {
                   await importDatabaseFile(file);
-                  alert("백업을 복원했습니다.");
+                  /*
+                    지금 로그인한 id가 복원된 파일에 없을 수 있습니다. 그대로
+                    두면 모든 조회가 "없는 사용자"로 나가 0건이 되고, 화면은
+                    데이터가 사라진 것처럼 보입니다(4.5와 같은 함정).
+                  */
+                  logout();
+                  alert("백업을 복원했습니다. 복원된 사용자로 다시 로그인해주세요.");
                 } catch (error) {
                   console.error(error);
                   alert("백업 파일을 읽지 못했습니다. 올바른 .db 파일인지 확인해주세요.");

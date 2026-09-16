@@ -94,7 +94,7 @@ const SignInFlow: React.FC = () => {
         </div>
 
         <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-          사용자 추가는 로그인 후 상단 톱니바퀴 &gt; <strong>사용자 추가</strong>에서 할 수 있습니다.
+          사용자 추가는 로그인 후 상단 톱니바퀴 &gt; <strong>사용자 관리</strong>에서 할 수 있습니다.
         </p>
       </Shell>
     );

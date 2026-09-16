@@ -7,13 +7,14 @@ import {
   Users,
   UserPlus,
   Trash2,
+  Pencil,
   X,
   CheckCircle,
   ShieldAlert,
   ArrowLeft,
 } from "lucide-react";
 
-type Mode = "LIST" | "ADD" | "ADDED" | "DELETE";
+type Mode = "LIST" | "ADD" | "ADDED" | "EDIT" | "DELETE";
 
 /**
  * Adding and removing users. Each user owns a separate ledger, so removing one
@@ -29,6 +30,7 @@ export const UserManageModal: React.FC<{
     currentUserId,
     addUser,
     removeUser,
+    editUser,
     isBusy,
     authError,
     clearAuthError,
@@ -37,11 +39,18 @@ export const UserManageModal: React.FC<{
   const [mode, setMode] = useState<Mode>("LIST");
   const [target, setTarget] = useState<UserSummary | null>(null);
 
+  /** 수정 화면의 입력값. PIN은 비워 두면 그대로 둡니다. */
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editPin, setEditPin] = useState("");
+  const [askPin, setAskPin] = useState(false);
+
   useEffect(() => {
     if (!isOpen) return;
 
     setMode("LIST");
     setTarget(null);
+    setAskPin(false);
     clearAuthError();
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -65,6 +74,7 @@ export const UserManageModal: React.FC<{
     LIST: { title: "사용자 관리", sub: `이 기기에 등록된 사용자 ${users.length}명` },
     ADD: { title: "새 사용자", sub: "정보와 간편 비밀번호를 등록합니다" },
     ADDED: { title: "추가 완료", sub: "새 사용자가 등록되었습니다" },
+    EDIT: { title: "사용자 수정", sub: "이름·연락처·간편 비밀번호를 바꿉니다" },
     DELETE: { title: "사용자 삭제", sub: "내 간편 비밀번호로 확인합니다" },
   };
 
@@ -145,6 +155,24 @@ export const UserManageModal: React.FC<{
                       </div>
                     </div>
 
+                    <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      title="이름·연락처·비밀번호 수정"
+                      onClick={() => {
+                        clearAuthError();
+                        setTarget(user);
+                        setEditName(user.name);
+                        setEditPhone(user.phone || "");
+                        setEditPin("");
+                        setAskPin(false);
+                        setMode("EDIT");
+                      }}
+                      className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition cursor-pointer"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+
                     <button
                       type="button"
                       disabled={users.length <= 1}
@@ -162,6 +190,7 @@ export const UserManageModal: React.FC<{
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
+                    </div>
                   </div>
                 );
               })}
@@ -220,6 +249,120 @@ export const UserManageModal: React.FC<{
               사용자 목록으로
             </button>
           </div>
+        )}
+
+        {mode === "EDIT" && target && (
+          <>
+            {/*
+              등록 때 받는 것과 같은 항목입니다. 다른 점은 비밀번호로, 비워 두면
+              쓰지 않습니다 — 이름만 고치려고 남의 비밀번호를 새로 정하게 할
+              이유가 없습니다.
+            */}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">이름</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => {
+                    clearAuthError();
+                    setEditName(e.target.value);
+                  }}
+                  placeholder="홍길동"
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">연락처</label>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={editPhone}
+                  onChange={(e) => {
+                    clearAuthError();
+                    setEditPhone(e.target.value);
+                  }}
+                  placeholder="010-0000-0000"
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  새 간편 비밀번호 <span className="font-normal text-slate-400">(선택)</span>
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={editPin}
+                  onChange={(e) => {
+                    clearAuthError();
+                    setEditPin(e.target.value.replace(/[^0-9]/g, ""));
+                  }}
+                  placeholder="바꾸지 않으려면 비워 두세요"
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-900 tracking-[0.3em] focus:border-emerald-500 focus:outline-hidden"
+                />
+                <p className="mt-1 text-[10px] text-slate-400 leading-relaxed">
+                  숫자 6자리. 비워 두면 {target.name} 님의 비밀번호는 그대로 둡니다.
+                </p>
+              </div>
+            </div>
+
+            {authError && !askPin && (
+              <p className="text-[11px] font-bold text-rose-600">{authError}</p>
+            )}
+
+            {askPin ? (
+              <PinPad
+                title="내 간편 비밀번호 6자리"
+                description={`${target.name} 님의 정보를 바꾸기 위해 로그인한 사용자의 비밀번호를 입력합니다.`}
+                error={authError}
+                isBusy={isBusy}
+                onComplete={async (pin) => {
+                  const ok = await editUser(
+                    target.id,
+                    {
+                      name: editName,
+                      phone: editPhone,
+                      newPin: editPin || undefined,
+                    },
+                    pin
+                  );
+                  if (!ok) return false;
+                  setTarget(null);
+                  setAskPin(false);
+                  setMode("LIST");
+                }}
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearAuthError();
+                    setTarget(null);
+                    setMode("LIST");
+                  }}
+                  className="py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={!editName.trim() || (editPin !== "" && editPin.length !== 6)}
+                  onClick={() => {
+                    clearAuthError();
+                    setAskPin(true);
+                  }}
+                  className="py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-40"
+                >
+                  변경 확인
+                </button>
+              </div>
+            )}
+          </>
         )}
 
         {mode === "DELETE" && target && (

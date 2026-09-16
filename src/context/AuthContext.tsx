@@ -3,6 +3,7 @@ import { getDatabase } from "../db/database";
 import * as repo from "../db/repository";
 import type { UserSummary } from "../db/repository";
 import { checkPin, hashPin, isValidPinFormat } from "../services/pinCrypto";
+import { setAiUser, clearAiSettingsFor } from "../services/ai/settings";
 
 export type { UserSummary };
 
@@ -28,6 +29,18 @@ export interface AuthContextType {
   addUser: (details: { name: string; phone: string; pin: string }) => Promise<boolean>;
   /** Removes a user and their whole ledger, authorised by the signed-in user's PIN. */
   removeUser: (targetId: string, authorizingPin: string) => Promise<boolean>;
+  /**
+   * Changes any user's details, and their PIN when a new one is given.
+   *
+   * Everything a registration asks for can be corrected here — a name typed
+   * wrong, a number that changed, a PIN someone else watched being entered.
+   * Only the id is fixed, because the whole ledger hangs off it.
+   */
+  editUser: (
+    targetId: string,
+    details: { name: string; phone: string; newPin?: string },
+    authorizingPin: string
+  ) => Promise<boolean>;
   changePin: (details: { currentPin: string; newPin: string }) => Promise<boolean>;
   saveProfile: (details: { name: string; phone: string }) => boolean;
   logout: () => void;
@@ -73,6 +86,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       cancelled = true;
     };
   }, []);
+
+  /*
+    AI 키는 등록한 사람의 것입니다. 로그인·로그아웃에 맞춰 어느 사용자의 키를
+    읽고 쓸지 알려 줍니다 — settings 쪽이 DB를 직접 보지 않도록(3절 계층 규칙)
+    이쪽에서 밀어 넣습니다.
+  */
+  useEffect(() => {
+    setAiUser(currentUserId);
+  }, [currentUserId]);
 
   const clearAuthError = () => setAuthError(null);
 
@@ -172,6 +194,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const editUser = async (
+    targetId: string,
+    details: { name: string; phone: string; newPin?: string },
+    authorizingPin: string
+  ): Promise<boolean> => {
+    setAuthError(null);
+
+    if (!currentUserId) {
+      setAuthError("로그인 상태에서만 수정할 수 있습니다.");
+      return false;
+    }
+    if (!details.name.trim()) {
+      setAuthError("이름을 입력해주세요.");
+      return false;
+    }
+    if (details.phone.replace(/[^0-9]/g, "").length < 10) {
+      setAuthError("연락처를 정확히 입력해주세요.");
+      return false;
+    }
+    if (repo.isNameTaken(details.name, targetId)) {
+      setAuthError("이미 같은 이름의 사용자가 있습니다.");
+      return false;
+    }
+    if (details.newPin && !isValidPinFormat(details.newPin)) {
+      setAuthError("새 비밀번호는 숫자 6자리로 설정해주세요.");
+      return false;
+    }
+
+    /*
+      The signed-in user's PIN, the same as deleting asks for — changing
+      someone's name or PIN on this device is as consequential, and the target
+      user is not here to approve it.
+    */
+    const stored = repo.readStoredPin(currentUserId);
+    if (!stored) {
+      setAuthError("본인 확인에 필요한 비밀번호를 찾을 수 없습니다.");
+      return false;
+    }
+
+    setIsBusy(true);
+    try {
+      if (!(await checkPin(authorizingPin, stored))) {
+        setAuthError("내 비밀번호가 일치하지 않습니다.");
+        return false;
+      }
+
+      repo.updateProfile(targetId, { name: details.name, phone: details.phone });
+      if (details.newPin) {
+        repo.savePinHash(targetId, await hashPin(details.newPin));
+      }
+
+      refreshUsers();
+      return true;
+    } catch (error) {
+      console.error("사용자 정보를 수정하지 못했습니다:", error);
+      setAuthError(describe(error, "수정 중 오류가 발생했습니다."));
+      return false;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const removeUser = async (
     targetId: string,
     authorizingPin: string
@@ -201,6 +285,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       repo.deleteUser(targetId);
+      // The key was registered by that person and billed to them
+      clearAiSettingsFor(targetId);
 
       // Deleting yourself ends the session
       if (targetId === currentUserId) {
@@ -303,6 +389,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         registerFirstUser,
         addUser,
         removeUser,
+        editUser,
         changePin,
         saveProfile,
         logout,

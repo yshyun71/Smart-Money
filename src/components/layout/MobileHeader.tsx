@@ -135,8 +135,9 @@ export const MobileHeader: React.FC<{
     },
     {
       icon: UserPlus,
-      label: "사용자 추가",
-      description: `사용자별 가계부 관리 · 현재 ${users.length}명`,
+      // 추가만이 아니라 수정·삭제까지 하는 화면입니다
+      label: "사용자 관리",
+      description: `사용자 추가·수정·삭제 · 현재 ${users.length}명`,
       badge: undefined,
       danger: false,
       onSelect: () => setShowUserModal(true),
