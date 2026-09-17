@@ -20,6 +20,11 @@ import {
   ValueSource,
 } from "../types/finance";
 import {
+  encryptBackup,
+  decryptBackup,
+  isEncryptedBackup,
+} from "../services/backupCrypto";
+import {
   exportDatabaseBytes,
   getDatabase,
   databaseFailure,
@@ -98,8 +103,10 @@ interface FinanceContextType {
   refreshDbData: () => Promise<void>;
   resetToClean: () => Promise<void>;
   resetToSample: () => Promise<void>;
-  exportDatabaseFile: () => void;
-  importDatabaseFile: (file: File) => Promise<void>;
+  /** Writes a backup out; a passphrase locks it, nothing leaves it plain as before. */
+  exportDatabaseFile: (passphrase?: string) => Promise<void>;
+  /** Restores a backup. A locked one needs the passphrase it was written with. */
+  importDatabaseFile: (file: File, passphrase?: string) => Promise<void>;
 
   // Actions
   addTransaction: (tx: Omit<Transaction, "id">) => void;
@@ -1161,29 +1168,54 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     setDismissedAlertIds([]);
   };
 
-  const exportDatabaseFile = () => {
+  /**
+   * Writes a backup out, locked with a passphrase when one is given.
+   *
+   * The file is the only thing that leaves the device, so it is the only place
+   * a lock helps. An empty passphrase means the plain .db as before — there
+   * are backups already written that way, and refusing to make another would
+   * be deciding for the user.
+   */
+  const exportDatabaseFile = async (passphrase?: string) => {
     try {
-      const bytes = exportDatabaseBytes();
-      const blob = new Blob([bytes.slice().buffer as ArrayBuffer], {
-        type: "application/x-sqlite3",
+      const plain = exportDatabaseBytes();
+      const locked = passphrase ? await encryptBackup(plain, passphrase) : plain;
+
+      const blob = new Blob([locked.slice().buffer as ArrayBuffer], {
+        type: passphrase ? "application/octet-stream" : "application/x-sqlite3",
       });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       const stamp = new Date().toISOString().slice(0, 10);
       link.href = url;
-      link.download = `smartmoney-${stamp}.db`;
+      // A different extension, so a locked file is never taken for a database
+      link.download = `smartmoney-${stamp}.${passphrase ? "smbk" : "db"}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error("백업 파일을 만들지 못했습니다:", error);
+      throw error;
     }
   };
 
-  const importDatabaseFile = async (file: File) => {
+  /**
+   * Restores a backup, unlocking it first when it is one of the locked ones.
+   *
+   * The passphrase is wrong or the file is damaged — AES-GCM cannot tell those
+   * apart, and both mean the same thing here: nothing is written. Handing a
+   * failed decryption to the database reader would open rubbish as a ledger.
+   */
+  const importDatabaseFile = async (file: File, passphrase?: string) => {
     const buffer = await file.arrayBuffer();
-    await importDatabaseBytes(new Uint8Array(buffer));
+    const bytes = new Uint8Array(buffer);
+
+    const plain = isEncryptedBackup(bytes)
+      ? await decryptBackup(bytes, passphrase || "")
+      : bytes;
+
+    await importDatabaseBytes(plain);
     await refreshDbData();
     setDismissedAlertIds([]);
   };

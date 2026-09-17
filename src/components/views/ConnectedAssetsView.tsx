@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { useAuth } from "../../context/AuthContext";
+import { BackupPassphraseModal } from "../modals/BackupPassphraseModal";
+import { isEncryptedBackup } from "../../services/backupCrypto";
 import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
@@ -104,7 +106,19 @@ export const ConnectedAssetsView: React.FC<{
   } = useFinance();
 
   // 복원은 이 기기의 사용자 전체를 갈아치우므로, 무엇이 사라지는지 말하려면 명단이 필요합니다
-  const { users, currentUserId, logout } = useAuth();
+  const { users, logout } = useAuth();
+
+  /*
+    백업 파일의 암호를 묻는 창. 내보낼 때(LOCK)와 복원할 때(UNLOCK) 같은 창을
+    쓰고, 복원은 고른 파일을 들고 있어야 하므로 함께 담아 둡니다.
+  */
+  const [backupAsk, setBackupAsk] = useState<
+    | { mode: "LOCK" }
+    | { mode: "UNLOCK"; file: File }
+    | null
+  >(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
 
   // Add Account / Card Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -174,6 +188,57 @@ export const ConnectedAssetsView: React.FC<{
     (sum, a) => sum + billOf(a.id).amount,
     0
   );
+
+  /**
+   * 복원이 무엇을 지우는지 이름으로 말합니다.
+   *
+   * 백업은 사용자별이 아니라 데이터베이스 파일 전체이므로, 복원은 이 기기의
+   * 모든 사용자를 파일에 든 사용자들로 바꿉니다.
+   */
+  const confirmRestore = (): boolean => {
+    const names = users.map((u: { name: string }) => u.name);
+    return confirm(
+      [
+        "백업 파일에 들어 있는 내용으로 이 기기의 가계부를 통째로 바꿉니다.",
+        "",
+        names.length > 1
+          ? `이 기기의 사용자 ${names.length}명(${names.join(
+              ", "
+            )})의 가계부가 모두 사라지고, 백업에 들어 있던 사용자만 남습니다.`
+          : "지금 기기에 있는 가계부는 사라지고, 백업에 들어 있던 사용자만 남습니다.",
+        "",
+        "복원 후에는 로그인이 풀리고 사용자 선택 화면으로 돌아갑니다.",
+        "계속할까요?",
+      ].join("\n")
+    );
+  };
+
+  /** 복원을 실제로 수행합니다. 암호가 필요한 파일이면 passphrase 를 받습니다. */
+  const runRestore = async (file: File, passphrase?: string): Promise<boolean> => {
+    setBackupBusy(true);
+    setBackupError(null);
+    try {
+      await importDatabaseFile(file, passphrase);
+      /*
+        지금 로그인한 id가 복원된 파일에 없을 수 있습니다. 그대로 두면 모든
+        조회가 "없는 사용자"로 나가 0건이 되고, 화면은 데이터가 사라진 것처럼
+        보입니다(4.6과 같은 함정).
+      */
+      logout();
+      alert("백업을 복원했습니다. 복원된 사용자로 다시 로그인해주세요.");
+      return true;
+    } catch (error) {
+      console.error(error);
+      setBackupError(
+        error instanceof Error
+          ? error.message
+          : "백업 파일을 읽지 못했습니다."
+      );
+      return false;
+    } finally {
+      setBackupBusy(false);
+    }
+  };
 
   const handleOpenAddModal = (defaultType: "BANK" | "CARD" = "CARD") => {
     setAccType(defaultType);
@@ -631,7 +696,10 @@ export const ConnectedAssetsView: React.FC<{
         {/* Database Actions */}
         <div className="flex flex-wrap gap-2 pt-1">
           <button
-            onClick={exportDatabaseFile}
+            onClick={() => {
+              setBackupError(null);
+              setBackupAsk({ mode: "LOCK" });
+            }}
             className="flex-1 min-w-[120px] py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 shadow-2xs"
           >
             <Download className="w-3.5 h-3.5" />
@@ -643,51 +711,27 @@ export const ConnectedAssetsView: React.FC<{
             <span>백업 복원</span>
             <input
               type="file"
-              accept=".db,.sqlite,application/x-sqlite3"
+              accept=".db,.sqlite,.smbk,application/x-sqlite3,application/octet-stream"
               className="hidden"
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (!file) return;
 
+                if (!confirmRestore()) return;
+
                 /*
-                  백업은 사용자별이 아니라 데이터베이스 파일 전체입니다. 그래서
-                  복원은 이 기기의 **모든 사용자**를 파일에 든 사용자들로
-                  바꿉니다 — "현재 가계부를 덮어씁니다"로는 다른 사람의 가계부가
-                  함께 사라진다는 말이 되지 않습니다.
+                  암호가 걸린 파일인지는 내용이 말해 줍니다 — 확장자가 아니라
+                  머리의 표식으로 봅니다. 이름은 얼마든지 바뀔 수 있습니다.
                 */
-                const others = users
-                  .filter((u: { id: string }) => u.id !== currentUserId)
-                  .map((u: { name: string }) => u.name);
-
-                const warning = [
-                  "백업 파일에 들어 있는 내용으로 이 기기의 가계부를 통째로 바꿉니다.",
-                  "",
-                  others.length > 0
-                    ? `이 기기의 사용자 ${users.length}명(${users
-                        .map((u: { name: string }) => u.name)
-                        .join(", ")})의 가계부가 모두 사라지고, 백업에 들어 있던 사용자만 남습니다.`
-                    : "지금 기기에 있는 가계부는 사라지고, 백업에 들어 있던 사용자만 남습니다.",
-                  "",
-                  "복원 후에는 로그인이 풀리고 사용자 선택 화면으로 돌아갑니다.",
-                  "계속할까요?",
-                ].join("\n");
-
-                if (!confirm(warning)) return;
-
-                try {
-                  await importDatabaseFile(file);
-                  /*
-                    지금 로그인한 id가 복원된 파일에 없을 수 있습니다. 그대로
-                    두면 모든 조회가 "없는 사용자"로 나가 0건이 되고, 화면은
-                    데이터가 사라진 것처럼 보입니다(4.5와 같은 함정).
-                  */
-                  logout();
-                  alert("백업을 복원했습니다. 복원된 사용자로 다시 로그인해주세요.");
-                } catch (error) {
-                  console.error(error);
-                  alert("백업 파일을 읽지 못했습니다. 올바른 .db 파일인지 확인해주세요.");
+                const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+                if (isEncryptedBackup(head)) {
+                  setBackupError(null);
+                  setBackupAsk({ mode: "UNLOCK", file });
+                  return;
                 }
+
+                await runRestore(file);
               }}
             />
           </label>
@@ -1046,6 +1090,39 @@ export const ConnectedAssetsView: React.FC<{
         editing={txModal.editing}
         defaultAccountId={txModal.accountId}
         onClose={() => setTxModal({ open: false, editing: null })}
+      />
+
+      {/* 백업 파일 암호 — 내려받을 때 잠그고, 복원할 때 엽니다 */}
+      <BackupPassphraseModal
+        isOpen={backupAsk !== null}
+        mode={backupAsk?.mode ?? "LOCK"}
+        isBusy={backupBusy}
+        error={backupError}
+        onClose={() => {
+          setBackupAsk(null);
+          setBackupError(null);
+        }}
+        onSubmit={async (passphrase) => {
+          if (!backupAsk) return;
+
+          if (backupAsk.mode === "LOCK") {
+            setBackupBusy(true);
+            setBackupError(null);
+            try {
+              await exportDatabaseFile(passphrase);
+              setBackupAsk(null);
+            } catch {
+              setBackupError("백업 파일을 만들지 못했습니다.");
+            } finally {
+              setBackupBusy(false);
+            }
+            return;
+          }
+
+          // 암호가 틀리면 창을 닫지 않습니다 — 파일을 다시 고르게 할 이유가 없습니다
+          const ok = await runRestore(backupAsk.file, passphrase);
+          if (ok) setBackupAsk(null);
+        }}
       />
 
       {/* Statement import */}
