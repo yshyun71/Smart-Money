@@ -310,6 +310,53 @@ section("차감은 그 달 청구액에서 빠진다");
 }
 
 // ---------------------------------------------------------------------------
+section("낸 대금은 낸 것으로 보입니다");
+// ---------------------------------------------------------------------------
+{
+  /*
+    대금을 내고 그 뒤로 쓴 것이 없으면 청구예정은 0원이 됩니다. 그것만 보이면
+    쓰지 않은 카드처럼 읽히지, 정산된 카드로 읽히지 않습니다 — 얼마를 어느 달에
+    냈는지가 더 쓸모 있는 사실입니다.
+  */
+  const august = [use("kb", "2026-08", 120_000), use("kb", "2026-08", 80_000)];
+  const paid = pay(200_000, "2026-09-25", { linkedAccountId: "kb", billingMonth: "2026-08" });
+
+  const settled = pendingBill("kb", [...august, paid]);
+  check("청구예정은 0원", settled.amount === 0, settled);
+  check("정산된 달을 알려 줌", settled.settledMonth === "2026-08", settled);
+  check("낸 금액도 알려 줌", settled.settledAmount === 200_000, settled);
+
+  // 낸 뒤에 또 썼다면 그 금액은 아직 낼 돈입니다
+  const after = pendingBill("kb", [...august, paid, use("kb", "2026-09", 59_290)]);
+  check("이후 이용분은 청구예정", after.amount === 59_290, after);
+  check("그래도 정산 사실은 유지", after.settledMonth === "2026-08", after);
+
+  // 아직 아무것도 내지 않았으면 정산 정보가 없습니다
+  const unpaid = pendingBill("kb", august);
+  check("낸 적 없으면 null", unpaid.settledMonth === null, unpaid);
+  check("낸 금액도 0", unpaid.settledAmount === 0, unpaid);
+  check("명세서 기준으로 청구예정", unpaid.amount === 200_000, unpaid);
+
+  // 명세서가 두 달 밀렸어도 마지막으로 낸 달은 사실입니다
+  const behind = pendingBill("kb", [
+    ...august,
+    paid,
+    use("kb", "2026-09", 50_000),
+    use("kb", "2026-10", 70_000),
+  ]);
+  check("밀린 경우도 정산 달을 알려 줌", behind.settledMonth === "2026-08", behind);
+  check("보여 주는 금액은 최신 명세서", behind.basis === "LATEST_STATEMENT", behind);
+
+  // 환불은 그 달 합계에서 빠지므로, 정산 금액도 순액입니다
+  const refunded = pendingBill("kb", [
+    use("kb", "2026-08", 120_000),
+    { ...use("kb", "2026-08", 20_000), type: "INCOME" },
+    pay(100_000, "2026-09-25", { linkedAccountId: "kb", billingMonth: "2026-08" }),
+  ]);
+  check("환불을 뺀 금액으로 정산", refunded.settledAmount === 100_000, refunded);
+}
+
+// ---------------------------------------------------------------------------
 if (failures.length > 0) {
   console.log(`\n${failures.join("\n")}`);
   console.log(`\n${failures.length}개 실패 · ${passed}개 확인`);

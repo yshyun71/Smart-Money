@@ -10,7 +10,14 @@ import { CsvImportModal } from "../modals/CsvImportModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
 import { accountTone } from "../../utils/accountTone";
 import { pendingBill, type PendingBill } from "../../services/cardLink";
-import { asOfFromParts, asOfLabel, asOfParts, formatAmountInput, parseAmountInput } from "../../utils/format";
+import {
+  asOfFromParts,
+  asOfLabel,
+  asOfParts,
+  formatAmountInput,
+  parseAmountInput,
+  withCommas,
+} from "../../utils/format";
 import {
   CreditCard,
   Building,
@@ -170,18 +177,46 @@ export const ConnectedAssetsView: React.FC<{
   }, [accounts, allTransactions]);
 
   const billOf = (id: string): PendingBill =>
-    pendingBills.get(id) ?? { count: 0, amount: 0, basis: "THIS_MONTH", from: "" };
+    pendingBills.get(id) ?? {
+      count: 0,
+      amount: 0,
+      basis: "THIS_MONTH",
+      from: "",
+      settledMonth: null,
+      settledAmount: 0,
+    };
 
-  /** Says which period the figure covers, since the three differ. */
-  const billPeriodLabel = (bill: PendingBill): string => {
+  /**
+   * 그 카드가 지금 무엇을 보여 줘야 하는가.
+   *
+   * 대금을 이미 냈고 그 뒤로 쓴 것이 없으면 `0원 이번 달 청구예정`이 됩니다 —
+   * 쓰지 않은 카드처럼 읽히지, 정산된 카드로 읽히지 않습니다. 그럴 때는 낸
+   * 금액과 `결재완료`를 보여 주는 편이 사실에 가깝습니다.
+   *
+   * 낸 뒤에 또 쓴 것이 있으면(삼성카드처럼) 그 금액은 아직 낼 돈이므로
+   * `청구예정`이 맞습니다.
+   */
+  const billDisplay = (
+    bill: PendingBill
+  ): { amount: number; headline: string; detail: string } => {
     const month = (key: string) => `${Number(key.slice(5, 7))}월`;
-    if (bill.basis === "AFTER_PAYMENT") {
-      return `${month(bill.from)} 결제 이후 이용분`;
+
+    if (bill.settledMonth && bill.amount === 0) {
+      return {
+        amount: bill.settledAmount,
+        headline: `${month(bill.settledMonth)} 결재완료`,
+        detail: "이후 이용 내역 없음",
+      };
     }
-    if (bill.basis === "LATEST_STATEMENT") {
-      return `${month(bill.from)} 명세서 기준`;
-    }
-    return `${month(bill.from)} 1일부터 이용분`;
+
+    const detail =
+      bill.basis === "AFTER_PAYMENT"
+        ? `${month(bill.from)} 결제 이후 이용분`
+        : bill.basis === "LATEST_STATEMENT"
+          ? `${month(bill.from)} 명세서 기준`
+          : `${month(bill.from)} 1일부터 이용분`;
+
+    return { amount: bill.amount, headline: "이번 달 청구예정", detail };
   };
 
   const totalCardBilled = cardAccounts.reduce(
@@ -598,9 +633,16 @@ export const ConnectedAssetsView: React.FC<{
                       <span className="text-xs font-bold text-slate-900">
                         {acc.name}
                       </span>
-                      <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md font-semibold">
-                        {billOf(acc.id).count}건
-                      </span>
+                      {/*
+                        건수는 "결제 이후 이용분"의 건수입니다. 정산이 끝난
+                        카드에서는 0건이 되어, 낸 금액 옆에 붙으면 오히려
+                        헷갈립니다 — 그때는 아래 설명 줄이 대신 말합니다.
+                      */}
+                      {billOf(acc.id).count > 0 && (
+                        <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md font-semibold">
+                          {billOf(acc.id).count}건
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-slate-400 mt-0.5">
                       {acc.institution} • {acc.identifier}
@@ -609,15 +651,29 @@ export const ConnectedAssetsView: React.FC<{
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <div className="text-right min-w-0">
-                    <div className="text-sm font-black text-slate-900">
-                      {billOf(acc.id).amount.toLocaleString()}원
-                    </div>
-                    <div className="text-[10px] text-slate-400">이번 달 청구예정</div>
-                    <div className="text-[9px] text-slate-300">
-                      {billPeriodLabel(billOf(acc.id))}
-                    </div>
-                  </div>
+                  {(() => {
+                    const shown = billDisplay(billOf(acc.id));
+                    const paid = shown.headline.endsWith("결재완료");
+                    return (
+                      <div className="text-right min-w-0">
+                        <div
+                          className={`text-sm font-black ${
+                            paid ? "text-emerald-700" : "text-slate-900"
+                          }`}
+                        >
+                          {withCommas(shown.amount)}원
+                        </div>
+                        <div
+                          className={`text-[10px] ${
+                            paid ? "font-bold text-emerald-600" : "text-slate-400"
+                          }`}
+                        >
+                          {shown.headline}
+                        </div>
+                        <div className="text-[9px] text-slate-300">{shown.detail}</div>
+                      </div>
+                    );
+                  })()}
 
                   <button
                     onClick={(e) => {

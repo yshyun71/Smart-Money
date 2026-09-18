@@ -198,6 +198,16 @@ export interface PendingBill {
   basis: "AFTER_PAYMENT" | "LATEST_STATEMENT" | "THIS_MONTH";
   /** The month or day the period starts at, for saying so on screen. */
   from: string;
+  /**
+   * The newest statement a withdrawal has actually settled, if any.
+   *
+   * Without this the screen could only ever promise: a card whose bill was
+   * paid and has had no use since showed "0원 이번 달 청구예정", which reads
+   * as a dormant card rather than a settled one. What was paid, and for which
+   * month, is the more useful thing to say.
+   */
+  settledMonth: string | null;
+  settledAmount: number;
 }
 
 /**
@@ -253,9 +263,24 @@ export function pendingBill(cardId: string, transactions: Transaction[]): Pendin
     // More than one unpaid statement means the payments are behind, and
     // adding them together would not be "이번 달" anything
     if (months.size <= 1) {
-      return { ...sum(since), basis: "AFTER_PAYMENT", from: lastSettled };
+      return {
+        ...sum(since),
+        basis: "AFTER_PAYMENT",
+        from: lastSettled,
+        settledMonth: lastSettled,
+        settledAmount: Math.round(totals.get(lastSettled) ?? 0),
+      };
     }
   }
+
+  /*
+    결제가 두 달 이상 밀린 경우에도 마지막으로 낸 달은 알려 줍니다 — 아래
+    분기가 보여 주는 금액은 아직 낸 돈이 아니지만, 무엇까지 냈는지는 여전히
+    사실입니다.
+  */
+  const paid = lastSettled
+    ? { settledMonth: lastSettled, settledAmount: Math.round(totals.get(lastSettled) ?? 0) }
+    : { settledMonth: null, settledAmount: 0 };
 
   // (1) The newest statement on file, which says what it bills
   const billed = entries.filter((tx) => tx.billingMonth);
@@ -265,6 +290,7 @@ export function pendingBill(cardId: string, transactions: Transaction[]): Pendin
       ...sum(entries.filter((tx) => tx.billingMonth === latest)),
       basis: "LATEST_STATEMENT",
       from: latest,
+      ...paid,
     };
   }
 
@@ -275,6 +301,7 @@ export function pendingBill(cardId: string, transactions: Transaction[]): Pendin
     ...sum(entries.filter((tx) => tx.date >= start)),
     basis: "THIS_MONTH",
     from: start,
+    ...paid,
   };
 }
 
