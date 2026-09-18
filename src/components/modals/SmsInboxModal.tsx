@@ -9,6 +9,7 @@ import {
   CheckSquare,
   Square,
   Share2,
+  ClipboardPaste,
   Trash2,
   AlertTriangle,
   CheckCircle2,
@@ -31,10 +32,16 @@ type Filter = "ALL" | "NEW" | "CHECK" | "DUPLICATE";
  * 같은 금액**이면 그 줄을 알아보고 덮어씁니다(7.6·7.8).
  *
  * 문자함을 앱이 직접 읽을 수는 없습니다 — 브라우저에 그런 API 가 없고,
- * Android 의 READ_SMS 는 네이티브 앱 권한이며 iOS 에는 아예 없습니다. 문자
- * 앱에서 **공유 → 스마트 머니**로 보내거나 붙여넣는 것이 표준 안에서 할 수
- * 있는 가장 가까운 방법이고, 무엇을 고르느냐가 곧 기간과 대상을 정하는 일이라
- * 기간 선택 칸을 따로 두지 않습니다.
+ * Android 의 READ_SMS 는 네이티브 앱 권한이며 iOS 에는 아예 없습니다. 무엇을
+ * 골라 넘기느냐가 곧 기간과 대상을 정하는 일이라, 기간 선택 칸도 두지 않습니다.
+ *
+ * 넘기는 길은 셋이고, **클립보드가 실제로 가장 짧습니다.**
+ *
+ * 1. `텍스트 복사` → [복사한 문자 담기]. 삼성 메시지의 말풍선 메뉴에는 공유가
+ *    없고(`전달`은 문자 앱 안에서만) 복사만 있어, 이 길이 기본입니다.
+ * 2. 붙여넣기 — 클립보드 권한이 막혔거나 https 가 아닐 때.
+ * 3. 공유(`share_target`) — 앱을 설치했고, `텍스트 선택` 후 선택 도구에 공유가
+ *    있을 때. 매니페스트가 바뀌었으니 **다시 설치**해야 목록에 나타납니다.
  */
 export const SmsInboxModal: React.FC<{
   isOpen: boolean;
@@ -160,7 +167,7 @@ export const SmsInboxModal: React.FC<{
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-900">결제 문자 등록</h3>
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                문자 앱에서 <strong>공유 → 스마트 머니</strong>로 보내면 여기에 쌓입니다
+                문자 앱에서 <strong>복사</strong>하거나 <strong>공유</strong>해서 담습니다
               </p>
             </div>
           </div>
@@ -174,41 +181,96 @@ export const SmsInboxModal: React.FC<{
           </button>
         </div>
 
-        {/* 붙여넣기 — 공유가 안 되는 브라우저를 위한 길 */}
-        <details className="rounded-2xl border border-slate-200 bg-slate-50/70">
-          <summary className="px-3 py-2.5 text-[11px] font-bold text-slate-600 cursor-pointer flex items-center gap-1.5">
-            <Share2 className="w-3.5 h-3.5 text-slate-400" />
-            직접 붙여넣기
-            <ChevronDown className="w-3 h-3 text-slate-400 ml-auto" />
-          </summary>
-          <div className="px-3 pb-3 space-y-2">
-            <textarea
-              rows={3}
-              value={pasted}
-              onChange={(e) => setPasted(e.target.value)}
-              placeholder="문자를 그대로 붙여넣으세요. 여러 건을 한 번에 넣어도 됩니다."
-              className="w-full rounded-xl border border-slate-200 p-2.5 text-[11px] text-slate-900 font-mono leading-relaxed focus:border-emerald-500 focus:outline-hidden"
-            />
-            <button
-              type="button"
-              disabled={!pasted.trim()}
-              onClick={() => {
-                const { added, skipped } = receiveSmsText(pasted);
-                setPasted("");
+        {/*
+          문자 앱에서 앱으로 넘기는 두 가지 길.
+
+          삼성 메시지의 말풍선 길게 누르기 메뉴에는 **공유가 없습니다** — `전달`
+          (문자 앱 안에서만)과 `텍스트 복사`뿐이고, 안드로이드 공유 시트를
+          띄우지 않습니다. 그래서 `텍스트 복사` → 클립보드에서 담기가 실제로
+          가장 짧은 길이고, 이것을 기본으로 둡니다. 공유는 `텍스트 선택` 후
+          선택 도구에 공유가 있는 경우에만 쓸 수 있습니다.
+        */}
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-2">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const text = await navigator.clipboard.readText();
+                if (!text.trim()) {
+                  setNotice("클립보드가 비어 있습니다. 문자 앱에서 [텍스트 복사]를 먼저 누르세요.");
+                  return;
+                }
+                const { added, skipped } = receiveSmsText(text);
                 setNotice(
                   added > 0
-                    ? `${added}건을 읽어 대기함에 담았습니다.${skipped > 0 ? ` (중복 ${skipped}건 제외)` : ""}`
+                    ? `클립보드에서 ${added}건을 담았습니다.${skipped > 0 ? ` (중복 ${skipped}건 제외)` : ""}`
                     : skipped > 0
                       ? "이미 담겨 있는 문자입니다."
-                      : "거래 내역을 찾지 못했습니다. 금액이 적힌 문자인지 확인해주세요."
+                      : "거래 내역을 찾지 못했습니다. 아래 칸에 붙여넣어 확인해보세요."
                 );
-              }}
-              className="w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] transition disabled:opacity-40"
-            >
-              읽어서 담기
-            </button>
-          </div>
-        </details>
+              } catch {
+                /*
+                  권한을 막았거나 https 가 아니면 클립보드를 읽을 수 없습니다.
+                  그럴 때는 아래 칸이 있으니 길이 끊기지는 않습니다.
+                */
+                setNotice(
+                  "클립보드를 읽지 못했습니다. 아래 칸에 직접 붙여넣어 주세요."
+                );
+              }
+            }}
+            className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
+          >
+            <ClipboardPaste className="w-3.5 h-3.5" />
+            <span>복사한 문자 담기</span>
+          </button>
+
+          <p className="text-[10px] text-slate-500 leading-relaxed">
+            문자 앱에서 말풍선을 길게 눌러 <strong>[텍스트 복사]</strong> → 여기서 위
+            버튼. 여러 건은 문자 앱에서 <strong>여러 개 선택 후 복사</strong>하면 한 번에
+            담깁니다.
+          </p>
+
+          <details>
+            <summary className="text-[10px] font-bold text-slate-500 cursor-pointer flex items-center gap-1">
+              <Share2 className="w-3 h-3 text-slate-400" />
+              직접 붙여넣기 / 공유로 보내기
+              <ChevronDown className="w-3 h-3 text-slate-400 ml-auto" />
+            </summary>
+            <div className="pt-2 space-y-2">
+              <textarea
+                rows={3}
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+                placeholder="문자를 그대로 붙여넣으세요. 여러 건을 한 번에 넣어도 됩니다."
+                className="w-full rounded-xl border border-slate-200 p-2.5 text-[11px] text-slate-900 font-mono leading-relaxed focus:border-emerald-500 focus:outline-hidden"
+              />
+              <button
+                type="button"
+                disabled={!pasted.trim()}
+                onClick={() => {
+                  const { added, skipped } = receiveSmsText(pasted);
+                  setPasted("");
+                  setNotice(
+                    added > 0
+                      ? `${added}건을 읽어 대기함에 담았습니다.${skipped > 0 ? ` (중복 ${skipped}건 제외)` : ""}`
+                      : skipped > 0
+                        ? "이미 담겨 있는 문자입니다."
+                        : "거래 내역을 찾지 못했습니다. 금액이 적힌 문자인지 확인해주세요."
+                  );
+                }}
+                className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition disabled:opacity-40"
+              >
+                읽어서 담기
+              </button>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                <strong>공유</strong>로 보내려면 앱을 홈 화면에 설치한 뒤(설정 → 스마트폰
+                앱 설치), 문자 앱에서 <strong>[텍스트 선택]</strong> → 글을 고르고 → 선택
+                도구의 공유를 쓰세요. 말풍선을 길게 눌렀을 때 나오는 메뉴에는 공유가
+                없습니다 — 삼성 메시지는 거기서 공유 시트를 띄우지 않습니다.
+              </p>
+            </div>
+          </details>
+        </div>
 
         {notice && (
           <p className="text-[11px] font-bold text-slate-600 bg-slate-50 border border-slate-200/70 rounded-xl px-2.5 py-2 leading-relaxed">
@@ -221,11 +283,13 @@ export const SmsInboxModal: React.FC<{
             <MessageSquareText className="w-8 h-8 mx-auto text-slate-300" />
             <p className="text-xs font-bold text-slate-500">대기 중인 문자가 없습니다</p>
             <p className="text-[11px] text-slate-400 leading-relaxed px-4">
-              문자 앱에서 결제 문자를 고르고 <strong>공유 → 스마트 머니</strong>를
-              누르세요. 여러 건을 한 번에 고를 수 있습니다.
+              문자 앱에서 결제 문자를 <strong>복사</strong>하고 위의{" "}
+              <strong>[복사한 문자 담기]</strong>를 누르세요. 여러 건을 함께 복사하면 한
+              번에 담깁니다.
               <br />
               <span className="text-slate-300">
-                앱이 문자함을 직접 읽을 수는 없습니다 — 브라우저에 그런 기능이 없습니다.
+                앱이 문자함을 직접 읽을 수는 없습니다 — 브라우저에 그런 기능이 없고,
+                문자 읽기 권한은 네이티브 앱에만 있습니다.
               </span>
             </p>
           </div>
