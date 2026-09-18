@@ -1,6 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useFinance } from "../../context/FinanceContext";
-import { formatAmountInput, parseAmountInput, withCommas } from "../../utils/format";
+import { formatAmountInput, parseAmountInput, withCommas, won } from "../../utils/format";
+import {
+  actualRows,
+  budgetWording,
+  monthPhase,
+  sumActuals,
+  type ActualKind,
+} from "../../services/actuals";
 import { BudgetPolicyModal } from "../modals/BudgetPolicyModal";
 import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { spareOf } from "../../services/budgetPolicy";
@@ -45,6 +52,8 @@ export const BudgetManagementView: React.FC<{
     applyBudgetPolicy,
     fixedBaselineList,
     underFixedList,
+    allTransactions,
+    accounts,
   } = useFinance();
 
   /** 0 은 "아직 안 정했다"는 뜻이라 비워 둡니다 — 자리표시자가 보여야 적을 곳임을 압니다. */
@@ -116,7 +125,44 @@ export const BudgetManagementView: React.FC<{
 
   /** 선택한 달을 사람이 읽는 말로. */
   const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
-  const isThisMonth = selectedMonth === new Date().toISOString().slice(0, 7);
+
+  /*
+    지난 달인가, 이번 달인가.
+
+    이것이 **낱말을 결정합니다.** 지난 달의 수입은 예상이 아니라 실적이고, 지난
+    달의 저축은 목표가 아니라 실제로 떼어 둔 돈입니다. 같은 이름을 달아 두면
+    8월을 보면서 `월 예상 총 수입` 이라고 읽게 됩니다.
+  */
+  const phase = monthPhase(selectedMonth);
+  const isThisMonth = phase === "CURRENT";
+  const wording = budgetWording(phase, monthName);
+
+  /*
+    지금 이 달의 실적. 저장된 값과 **나란히** 보여 주려고 셈합니다.
+
+    저장된 값은 그때의 스냅샷이라 나중에 명세서를 더 가져오면 실적과 어긋나고,
+    실적 목록에서 뺀 항목이 있으면 애초에 다릅니다. 그 사실을 화면이 말하지
+    않으면 "이 금액이 어떤 기준인가요"라는 질문이 남습니다.
+  */
+  const liveActuals = useMemo(() => {
+    const of = (kind: ActualKind, excluded?: string[]) =>
+      sumActuals(
+        actualRows(allTransactions, { month: selectedMonth, kind, accounts }),
+        excluded
+      );
+    return {
+      income: of("INCOME", budgetConfig.incomeExcluded),
+      fixed: of("FIXED", budgetConfig.fixedExcluded),
+      savings: of("SAVINGS", budgetConfig.savingsExcluded),
+    };
+  }, [
+    allTransactions,
+    accounts,
+    selectedMonth,
+    budgetConfig.incomeExcluded,
+    budgetConfig.fixedExcluded,
+    budgetConfig.savingsExcluded,
+  ]);
 
   /*
     입력칸의 값과 저장된 값이 다른가. 저장 버튼을 누르지 않고 떠나면 사라지므로,
@@ -161,6 +207,10 @@ export const BudgetManagementView: React.FC<{
       incomeSource: "ACTUALS",
       fixedSource: "ACTUALS",
       savingsSource: "ACTUALS",
+      // 전부 채우는 것이므로 빼 두었던 항목도 함께 풉니다
+      incomeExcluded: [],
+      fixedExcluded: [],
+      savingsExcluded: [],
     });
     setIncomeTouched(false);
     setFixedTouched(false);
@@ -360,18 +410,27 @@ export const BudgetManagementView: React.FC<{
             </span>
             <div className="min-w-0">
               <h3 className="text-xs font-bold text-slate-900">
-                {monthName} 수입 &amp; 고정비 입력
+                {phase === "PAST"
+                  ? `${monthName} 실제 수입 & 고정비`
+                  : `${monthName} 수입 & 고정비 입력`}
               </h3>
               {/* 읽기 전용 카드로 보여 아무도 누르지 않던 칸들입니다 */}
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                세 칸은 직접 적는 값입니다. 적은 뒤 [기본 정보 저장]을 누르세요.
+                {phase === "PAST"
+                  ? `${monthName}은 이미 지난 달입니다. 세 칸은 실제로 들어오고 나간 금액이며, [${monthName} 실적 채우기]로 한 번에 채울 수 있습니다.`
+                  : "세 칸은 직접 적는 값입니다. 적은 뒤 [기본 정보 저장]을 누르세요."}
               </p>
             </div>
           </div>
 
           <button
             onClick={handleSyncActuals}
-            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center gap-1 transition"
+            /*
+              전환 중에는 잠급니다 — 그 순간 `budgetConfig` 는 아직 이전 달의
+              것이고, 쓰면 이전 달 행에 이 달 숫자가 들어갑니다.
+            */
+            disabled={settling}
+            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center gap-1 transition disabled:opacity-40"
           >
             <RefreshCw className="w-3 h-3 shrink-0" />
             <span>{monthName} 실적 채우기</span>
@@ -400,9 +459,10 @@ export const BudgetManagementView: React.FC<{
           {([
             {
               key: "income",
-              label: "월 예상 총 수입",
-              hint: `${monthName}에 들어올 것으로 보는 급여 + 기타 수입`,
+              label: wording.income.label,
+              hint: wording.income.hint,
               icon: <DollarSign className="w-3.5 h-3.5 text-emerald-600" />,
+              actual: liveActuals.income,
               value: incomeInput,
               onChange: (next: string) => {
                 setIncomeTouched(true);
@@ -414,9 +474,10 @@ export const BudgetManagementView: React.FC<{
             },
             {
               key: "fixed",
-              label: "월간 고정 지출",
-              hint: "월세·관리비·통신비·보험처럼 매달 나가는 돈",
+              label: wording.fixed.label,
+              hint: wording.fixed.hint,
               icon: <Lock className="w-3.5 h-3.5 text-indigo-600" />,
+              actual: liveActuals.fixed,
               value: fixedInput,
               onChange: (next: string) => {
                 setFixedTouched(true);
@@ -428,9 +489,10 @@ export const BudgetManagementView: React.FC<{
             },
             {
               key: "savings",
-              label: "목표 저축액",
-              hint: "먼저 떼어 둘 금액. 계좌의 [저축] 카테고리 실적에서 채울 수 있습니다",
+              label: wording.savings.label,
+              hint: wording.savings.hint,
               icon: <PiggyBank className="w-3.5 h-3.5 text-rose-500" />,
+              actual: liveActuals.savings,
               value: savingsInput,
               onChange: (next: string) => {
                 setSavingsTouched(true);
@@ -452,11 +514,27 @@ export const BudgetManagementView: React.FC<{
               거짓말이 됩니다.
             */
             const dirty = !settling && parseAmountInput(field.value) !== field.saved;
+
+            /*
+              저장된 값과 지금 실적의 관계를 한 줄로 밝힙니다.
+
+              칸에 3,052,140원이 적혀 있는데 목록을 열면 8,314,074원이 보이던
+              일이 있었습니다 — 예전에 수입 17건 중 급여 2건만 남기고 적용한
+              결과였는데, 무엇을 뺐는지 기억하지 않아 설명할 방법이 없었습니다.
+              이제 뺀 항목을 저장하므로(v16) 그 사실을 여기서 말합니다.
+            */
+            const kind: ActualKind =
+              field.key === "income" ? "INCOME" : field.key === "fixed" ? "FIXED" : "SAVINGS";
+            const actual = field.actual;
+            const hasRows = actual.rows > 0;
+            const drifted = !settling && !dirty && hasRows && actual.total !== field.saved;
+
             return (
               <div
                 key={field.key}
-                className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60 flex items-center gap-3"
+                className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60 space-y-2"
               >
+                <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="flex items-center gap-1 text-[11px] font-bold text-slate-600">
@@ -475,15 +553,7 @@ export const BudgetManagementView: React.FC<{
                     {(
                       <button
                         type="button"
-                        onClick={() =>
-                          setPicking(
-                            field.key === "income"
-                              ? "INCOME"
-                              : field.key === "fixed"
-                                ? "FIXED"
-                                : "SAVINGS"
-                          )
-                        }
+                        onClick={() => !settling && setPicking(kind)}
                         title={`${monthName} 내역 열어 보기`}
                         className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full transition cursor-pointer hover:brightness-95 ${
                           dirty
@@ -514,6 +584,49 @@ export const BudgetManagementView: React.FC<{
                   />
                   <span className="text-xs font-bold text-slate-500">원</span>
                 </div>
+                </div>
+
+                {/* 뺀 항목이 있으면 그 사실이 이 칸의 금액을 설명합니다 */}
+                {!settling && actual.excludedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPicking(kind)}
+                    className="w-full text-left text-[10px] text-slate-500 bg-white border border-slate-200/70 rounded-xl px-2.5 py-1.5 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    {monthName} 실적 {actual.rows}건 중{" "}
+                    <strong className="text-slate-700">{actual.counted}건</strong>만 반영 ·
+                    뺀 {actual.excludedCount}건 {won(actual.excludedAmount)}
+                    <ChevronRight className="w-2.5 h-2.5 inline -mt-0.5 ml-0.5" />
+                  </button>
+                )}
+
+                {/*
+                  저장된 값은 그때의 스냅샷입니다. 나중에 명세서를 더 가져오면
+                  실적이 늘어나는데 칸은 그대로라, 그 차이를 말해 주지 않으면
+                  틀린 기준으로 예산을 세우게 됩니다.
+                */}
+                {drifted && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      field.onChange(asInput(actual.total));
+                      updateBudgetConfig(
+                        field.key === "income"
+                          ? { monthlyIncome: actual.total, incomeSource: "ACTUALS" }
+                          : field.key === "fixed"
+                            ? { fixedExpenses: actual.total, fixedSource: "ACTUALS" }
+                            : { savingsTarget: actual.total, savingsSource: "ACTUALS" }
+                      );
+                      triggerToast(
+                        `${field.label}을(를) ${monthName} 실적 ${withCommas(actual.total)}원으로 맞췄습니다.`
+                      );
+                    }}
+                    className="w-full text-left text-[10px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-2.5 py-1.5 hover:bg-amber-100 transition cursor-pointer"
+                  >
+                    지금 {monthName} 실적은 <strong>{won(actual.total)}</strong>입니다 ·
+                    이 값으로 맞추기
+                  </button>
+                )}
               </div>
             );
           })}
@@ -918,25 +1031,45 @@ export const BudgetManagementView: React.FC<{
         isOpen={picking !== null}
         kind={picking ?? "INCOME"}
         month={selectedMonth}
+        /* 지난번에 뺀 항목을 그대로 다시 엽니다 */
+        excludedIds={
+          picking === "FIXED"
+            ? budgetConfig.fixedExcluded
+            : picking === "SAVINGS"
+              ? budgetConfig.savingsExcluded
+              : budgetConfig.incomeExcluded
+        }
         onClose={() => setPicking(null)}
-        onApply={(total, counted) => {
+        onApply={(total, counted, excludedIds) => {
           if (picking === "INCOME") {
             setIncomeInput(asInput(total));
             setIncomeTouched(false);
-            updateBudgetConfig({ monthlyIncome: total, incomeSource: "ACTUALS" });
+            updateBudgetConfig({
+              monthlyIncome: total,
+              incomeSource: "ACTUALS",
+              incomeExcluded: excludedIds,
+            });
           } else if (picking === "FIXED") {
             setFixedInput(asInput(total));
             setFixedTouched(false);
-            updateBudgetConfig({ fixedExpenses: total, fixedSource: "ACTUALS" });
+            updateBudgetConfig({
+              fixedExpenses: total,
+              fixedSource: "ACTUALS",
+              fixedExcluded: excludedIds,
+            });
           } else {
             setSavingsInput(asInput(total));
             setSavingsTouched(false);
-            updateBudgetConfig({ savingsTarget: total, savingsSource: "ACTUALS" });
+            updateBudgetConfig({
+              savingsTarget: total,
+              savingsSource: "ACTUALS",
+              savingsExcluded: excludedIds,
+            });
           }
           triggerToast(
             `${counted}건을 더한 ${withCommas(total)}원을 ${
               picking === "INCOME" ? "수입" : picking === "FIXED" ? "고정비" : "저축"
-            }에 반영했습니다.`
+            }에 반영했습니다.${excludedIds.length > 0 ? ` (뺀 ${excludedIds.length}건은 기억해 둡니다)` : ""}`
           );
         }}
       />

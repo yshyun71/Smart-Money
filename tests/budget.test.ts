@@ -16,6 +16,12 @@ import {
   emptyPolicy,
   type BudgetPolicy,
 } from "../src/services/budgetPolicy";
+import {
+  actualRows,
+  sumActuals,
+  monthPhase,
+  budgetWording,
+} from "../src/services/actuals";
 
 let passed = 0;
 const failures: string[] = [];
@@ -339,6 +345,124 @@ section("저축은 카테고리 예산에서 빠집니다");
     { spare: 600_000, upTo: "2026-07" }
   );
   check("카드대금도 빠짐", !("카드대금" in withBoth.budgets), withBoth.budgets);
+}
+
+// ---------------------------------------------------------------------------
+section("실적 — 세 칸이 무엇을 세는가");
+// ---------------------------------------------------------------------------
+{
+  const accounts: any = [
+    { id: "bank", name: "통장", type: "BANK" },
+    { id: "card", name: "카드", type: "CARD" },
+  ];
+
+  const income = (amount: number, id: string): any => ({
+    id,
+    accountId: "bank",
+    date: "2026-08-10",
+    time: "12:00",
+    type: "INCOME",
+    expenseType: "INCOME",
+    category: "급여",
+    merchant: "급여",
+    amount,
+    paymentMethod: "계좌입금",
+  });
+
+  const rows: any[] = [
+    income(2_052_140, "i1"),
+    income(1_000_000, "i2"),
+    { ...income(5_261_934, "i3"), category: "기타수입", merchant: "펌뱅킹 이체" },
+    fixedTx("주거", "2026-08", 500_000),
+    fixedTx("저축", "2026-08", 300_000),
+    { ...varTx("저축", "2026-08", 100_000), id: "card-savings", accountId: "card" },
+    varTx("식비", "2026-08", 200_000),
+    income(9_999, "other-month"),
+  ];
+  rows[rows.length - 1].date = "2026-07-10";
+
+  const inc = actualRows(rows, { month: "2026-08", kind: "INCOME", accounts });
+  check("수입은 그 달의 수입 전부", sumActuals(inc).total === 8_314_074, sumActuals(inc));
+  check("다른 달은 세지 않음", inc.length === 3, inc.length);
+
+  /*
+    고정비에서 저축을 뺍니다. 가용 변동비가 `수입 − 고정비 − 저축`이라 양쪽에
+    세면 같은 돈이 두 번 깎입니다.
+  */
+  const fixed = actualRows(rows, { month: "2026-08", kind: "FIXED", accounts });
+  check("고정비에 저축이 없음", sumActuals(fixed).total === 500_000, sumActuals(fixed));
+
+  /*
+    저축은 계좌에서 나간 것만. 카드로 적금을 넣지는 않으므로 카드에 붙은 저축은
+    잘못 분류된 것이고, 더하면 저축액이 부풀려집니다.
+  */
+  const savings = actualRows(rows, { month: "2026-08", kind: "SAVINGS", accounts });
+  check("저축은 계좌에서만", sumActuals(savings).total === 300_000, sumActuals(savings));
+  check("카드의 저축은 빠짐", !savings.some((tx: any) => tx.accountId === "card"), savings);
+
+  // 계좌 목록을 주지 않으면 저축을 셀 수 없습니다 — 지어내지 않고 비웁니다
+  check(
+    "계좌를 모르면 저축은 0건",
+    actualRows(rows, { month: "2026-08", kind: "SAVINGS" }).length === 0
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("실적에서 뺀 항목");
+// ---------------------------------------------------------------------------
+{
+  const rows: any[] = [
+    { id: "a", date: "2026-08-01", type: "INCOME", amount: 2_052_140, category: "급여" },
+    { id: "b", date: "2026-08-02", type: "INCOME", amount: 1_000_000, category: "급여" },
+    { id: "c", date: "2026-08-03", type: "INCOME", amount: 5_261_934, category: "기타수입" },
+  ];
+
+  const kept = sumActuals(rows, ["c"]);
+  check("뺀 금액은 합계에서 빠짐", kept.total === 3_052_140, kept);
+  check("전체는 그대로 알 수 있음", kept.full === 8_314_074, kept);
+  check("건수", kept.counted === 2 && kept.rows === 3, kept);
+  check("뺀 건수와 금액", kept.excludedCount === 1 && kept.excludedAmount === 5_261_934, kept);
+
+  /*
+    제외해 둔 거래가 나중에 지워질 수 있습니다. 그때 오류를 내거나 합계를
+    비우면 예산이 통째로 어긋나므로, 모르는 id 는 조용히 무시합니다.
+  */
+  const ghost = sumActuals(rows, ["없는-id"]);
+  check("모르는 id 는 무시", ghost.total === 8_314_074 && ghost.excludedCount === 0, ghost);
+  check("빈 목록·null 도 안전", sumActuals(rows, null).total === 8_314_074);
+}
+
+// ---------------------------------------------------------------------------
+section("지난 달은 예상이 아니라 실적입니다");
+// ---------------------------------------------------------------------------
+{
+  const today = new Date("2026-09-18T09:00:00");
+  check("지난 달", monthPhase("2026-08", today) === "PAST");
+  check("이번 달", monthPhase("2026-09", today) === "CURRENT");
+  check("다음 달", monthPhase("2026-10", today) === "FUTURE");
+  check("해를 넘겨도", monthPhase("2025-12", today) === "PAST");
+
+  const past = budgetWording("PAST", "8월");
+  check("지난 달 수입에 '예상'이 없음", past.income.label === "8월 총 수입", past.income);
+  check("지난 달 저축은 '목표'가 아님", past.savings.label === "8월 저축액", past.savings);
+  check("지난 달 고정비", past.fixed.label === "8월 고정 지출", past.fixed);
+  check(
+    "설명도 실제로 들어온 돈이라고 말함",
+    past.income.hint.includes("실제로"),
+    past.income.hint
+  );
+
+  const now = budgetWording("CURRENT", "9월");
+  check("이번 달은 예상", now.income.label === "9월 예상 총 수입", now.income);
+  check("이번 달 저축은 목표", now.savings.label === "9월 목표 저축액", now.savings);
+
+  // 어느 달의 값인지 이름만 봐도 알 수 있어야 합니다
+  check(
+    "세 칸 모두 달 이름을 달고 있음",
+    [past, now].every((w) =>
+      [w.income.label, w.fixed.label, w.savings.label].every((label) => /^\d+월/.test(label))
+    )
+  );
 }
 
 // ---------------------------------------------------------------------------

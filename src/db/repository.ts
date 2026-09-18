@@ -693,6 +693,9 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
       incomeSource: "USER",
       fixedSource: "USER",
       savingsSource: "USER",
+      incomeExcluded: [],
+      fixedExcluded: [],
+      savingsExcluded: [],
     };
   }
 
@@ -707,7 +710,26 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
     incomeSource: configRow.income_source === "ACTUALS" ? "ACTUALS" : "USER",
     fixedSource: configRow.fixed_source === "ACTUALS" ? "ACTUALS" : "USER",
     savingsSource: configRow.savings_source === "ACTUALS" ? "ACTUALS" : "USER",
+    incomeExcluded: readIdList(configRow.income_excluded),
+    fixedExcluded: readIdList(configRow.fixed_excluded),
+    savingsExcluded: readIdList(configRow.savings_excluded),
   };
+}
+
+/**
+ * 제외 목록을 읽습니다 — 깨진 값은 빈 목록으로.
+ *
+ * 이 칸이 비거나 옛 기기에서 없을 수 있고(v16 이전), 그때 예외를 던지면 예산
+ * 화면 전체가 열리지 않습니다. 제외 목록을 잃는 것이 화면을 잃는 것보다 낫습니다.
+ */
+function readIdList(value: unknown): string[] {
+  if (typeof value !== "string" || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -852,8 +874,8 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
   runBatch([
     {
       sql: `INSERT OR REPLACE INTO budget_configs
-              (user_id, month, monthly_income, fixed_expenses, savings_target, alert_threshold_percent, enable_push_alerts, income_source, fixed_source, savings_source, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (user_id, month, monthly_income, fixed_expenses, savings_target, alert_threshold_percent, enable_push_alerts, income_source, fixed_source, savings_source, income_excluded, fixed_excluded, savings_excluded, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         userId,
         config.month,
@@ -865,6 +887,9 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
         config.incomeSource === "ACTUALS" ? "ACTUALS" : "USER",
         config.fixedSource === "ACTUALS" ? "ACTUALS" : "USER",
         config.savingsSource === "ACTUALS" ? "ACTUALS" : "USER",
+        JSON.stringify(config.incomeExcluded || []),
+        JSON.stringify(config.fixedExcluded || []),
+        JSON.stringify(config.savingsExcluded || []),
         new Date().toISOString(),
       ],
     },

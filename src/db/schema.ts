@@ -21,7 +21,7 @@ import {
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 export interface Migration {
   version: number;
@@ -75,6 +75,9 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "budget_configs", column: "income_source", type: "TEXT" },
   { table: "budget_configs", column: "fixed_source", type: "TEXT" },
   { table: "budget_configs", column: "savings_source", type: "TEXT" },
+  { table: "budget_configs", column: "income_excluded", type: "TEXT" },
+  { table: "budget_configs", column: "fixed_excluded", type: "TEXT" },
+  { table: "budget_configs", column: "savings_excluded", type: "TEXT" },
 ];
 
 /**
@@ -608,6 +611,27 @@ export const MIGRATIONS: Migration[] = [
           WHERE origin IS NULL AND memo LIKE '%문자 자동 인식%'`
       );
       db.run("UPDATE transactions SET origin = 'STATEMENT' WHERE origin IS NULL");
+    },
+  },
+  {
+    version: 16,
+    /*
+      실적에서 빼기로 한 항목을 기억합니다.
+
+      실적 목록에서 체크를 풀고 [선택한 금액 적용]을 누르면 합계만 남고 **무엇을
+      뺐는지는 사라졌습니다.** 그래서 8월 수입 칸에 3,052,140원(급여 2건)이
+      적혀 있는데 목록을 열면 전부 선택된 8,314,074원(17건)이 보였고, 그 차이가
+      어디서 왔는지 알 방법이 없었습니다 — 사용자가 "이 금액이 어떤 기준인가요"
+      라고 물은 것이 이것입니다.
+
+      숫자만 남기면 출처를 알 수 없다는 것은 잔액(§8)과 값의 출처(§11.4)에서
+      이미 겪은 일이고, 답도 같습니다: 판단의 근거를 함께 저장합니다.
+    */
+    description: "실적에서 제외한 항목 기억 (수입·고정비·저축)",
+    up: (db) => {
+      addColumn(db, "budget_configs", "income_excluded", "TEXT");
+      addColumn(db, "budget_configs", "fixed_excluded", "TEXT");
+      addColumn(db, "budget_configs", "savings_excluded", "TEXT");
     },
   },
 ];

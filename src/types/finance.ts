@@ -192,6 +192,20 @@ export interface MonthlyBudgetConfig {
    * 이라 양쪽에 세면 같은 돈이 두 번 깎입니다.
    */
   savingsSource?: "USER" | "ACTUALS";
+  /**
+   * 실적에서 빼기로 한 거래의 id.
+   *
+   * 한 번뿐인 상여금이나 계좌 사이의 이체는 다음 달에 또 들어오지 않으므로
+   * 예산의 기준이 될 수 없습니다. 그래서 실적 목록에서 뺄 수 있는데, **무엇을
+   * 뺐는지도 함께 남겨야** 나중에 그 금액이 어떤 기준인지 알 수 있습니다 —
+   * 합계만 저장하니 목록을 열 때마다 전부 선택된 상태로 보여, 저장된 값과
+   * 목록의 합계가 다른 이유를 설명할 방법이 없었습니다.
+   *
+   * 지워진 거래의 id 가 남아 있어도 무해합니다(`sumActuals`가 무시합니다).
+   */
+  incomeExcluded?: string[];
+  fixedExcluded?: string[];
+  savingsExcluded?: string[];
 }
 
 export interface CategoryBudgetStatus {

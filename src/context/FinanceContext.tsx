@@ -52,12 +52,12 @@ import {
   planCardLinks,
   settlesFromBank,
 } from "../services/cardLink";
+import { actualRows, sumActuals } from "../services/actuals";
 import {
   BUDGET_EXCLUDED_CATEGORIES,
   BUILT_IN_CATEGORIES,
   CARD_PAYMENT_CATEGORY,
   FIXED_BUDGET_CATEGORIES,
-  SAVINGS_CATEGORY,
 } from "../constants/categories";
 
 interface MonthlyHistoricalItem {
@@ -464,6 +464,27 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [refreshDbData]);
 
+  /*
+    달을 옮기면 그 달의 예산 설정을 **곧바로** 다시 읽습니다.
+
+    `refreshDbData` 는 `getDatabase()` 를 기다리는 비동기 함수라, 달이 바뀐 뒤
+    몇 프레임 동안 `budgetConfig` 가 이전 달의 것으로 남아 있었습니다. 예산
+    화면은 그 틈에 이전 달 숫자를 칸에 실었고(§14.7), 그동안 쓰기를 막아야 해서
+    화면에 `값을 읽는 중` 이 보였습니다.
+
+    DB 는 이미 열려 있으므로 여기서는 동기적으로 읽으면 됩니다 — 같은 렌더
+    다음에 바로 도착하므로 그 틈이 사라집니다. 전체 새로고침은 그대로 두어,
+    실패하더라도 여기서 조용히 넘어갑니다.
+  */
+  useEffect(() => {
+    if (!isDbReady || !currentUserId) return;
+    try {
+      setBudgetConfig(repo.getBudgetConfig(selectedMonth));
+    } catch (error) {
+      console.error("그 달의 예산 설정을 읽지 못했습니다:", error);
+    }
+  }, [selectedMonth, isDbReady, currentUserId]);
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_DISMISSED_ALERTS, JSON.stringify(dismissedAlertIds));
   }, [dismissedAlertIds]);
@@ -485,12 +506,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     [transactions, selectedMonth]
   );
 
+  /*
+    수입·고정비·저축 실적은 `services/actuals.ts` 의 정의를 씁니다.
+
+    같은 정의가 이 요약과, 그 숫자를 만든 내역 목록(`ActualsPickerModal`),
+    그리고 "저장된 값이 지금 실적과 다르다"는 안내에 함께 쓰입니다. 세 곳이
+    각자 걸러 내면 서로 다른 금액을 말하게 되고, 그러면 어느 쪽이 맞는지
+    알 수 없습니다.
+  */
   const totalIncome = useMemo(
     () =>
-      monthlyTransactions
-        .filter((tx) => tx.type === "INCOME")
-        .reduce((acc, cur) => acc + cur.amount, 0),
-    [monthlyTransactions]
+      sumActuals(actualRows(transactions, { month: selectedMonth, kind: "INCOME" })).total,
+    [transactions, selectedMonth]
   );
 
   const totalExpense = useMemo(
@@ -511,15 +538,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   */
   const fixedExpenseTotal = useMemo(
     () =>
-      monthlyTransactions
-        .filter(
-          (tx) =>
-            tx.type === "EXPENSE" &&
-            tx.expenseType === "FIXED" &&
-            tx.category !== SAVINGS_CATEGORY
-        )
-        .reduce((acc, cur) => acc + cur.amount, 0),
-    [monthlyTransactions]
+      sumActuals(actualRows(transactions, { month: selectedMonth, kind: "FIXED" })).total,
+    [transactions, selectedMonth]
   );
 
   /**
@@ -529,20 +549,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
    * 카테고리가 붙어 있다면 잘못 분류된 것이고 여기에 넣으면 숫자가 부풀려
    * 집니다. 고정비/변동비 구분과는 무관하게 카테고리로만 봅니다.
    */
-  const savingsActualTotal = useMemo(() => {
-    const bankIds = new Set(
-      accounts.filter((account) => account.type === "BANK").map((account) => account.id)
-    );
-
-    return monthlyTransactions
-      .filter(
-        (tx) =>
-          tx.type === "EXPENSE" &&
-          tx.category === SAVINGS_CATEGORY &&
-          bankIds.has(tx.accountId)
-      )
-      .reduce((acc, cur) => acc + cur.amount, 0);
-  }, [monthlyTransactions, accounts]);
+  const savingsActualTotal = useMemo(
+    () =>
+      sumActuals(
+        actualRows(transactions, { month: selectedMonth, kind: "SAVINGS", accounts })
+      ).total,
+    [transactions, selectedMonth, accounts]
+  );
 
   const variableExpenseTotal = useMemo(
     () =>

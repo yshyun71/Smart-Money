@@ -3,9 +3,11 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { won } from "../../utils/format";
 import type { Transaction } from "../../types/finance";
+import { actualRows, sumActuals, type ActualKind } from "../../services/actuals";
 import {
   DollarSign,
   Lock,
+  PiggyBank,
   X,
   CheckSquare,
   Square,
@@ -20,37 +22,43 @@ import {
  * 그 합계로 세운 예산은 처음부터 틀립니다. 그래서 줄 단위로 보여 주고 체크로
  * 빼게 합니다.
  *
- * 제외한 항목은 기억하지 않습니다 — 여기서 정하는 것은 예산에 쓸 **한 숫자**
- * 이고, 거래 자체는 아무것도 바뀌지 않습니다. 다시 열면 전부 선택된 상태에서
- * 시작하므로, 무엇을 뺐는지는 이 화면에서 그때그때 확인합니다.
+ * **제외한 항목은 기억합니다.** 예전에는 합계만 남겼는데, 그러면 다시 열 때
+ * 전부 선택된 상태로 보여 저장된 값과 목록의 합계가 다른 이유를 알 수 없었습니다
+ * — 8월 수입 칸의 3,052,140원(급여 2건)과 목록의 8,314,074원(17건)이 그것입니다.
+ * 이제 `budget_configs` 에 제외한 id 를 함께 저장해(v16) 다시 열면 그 상태로
+ * 시작합니다. 거래 내역 자체는 여전히 아무것도 바뀌지 않습니다.
  */
 export const ActualsPickerModal: React.FC<{
   isOpen: boolean;
-  /** 수입을 고르는지, 고정비를 고르는지. */
-  kind: "INCOME" | "FIXED";
+  /** 수입·고정비·저축 중 어느 칸을 고르는지. */
+  kind: ActualKind;
   /** 어느 달의 내역인지 (YYYY-MM). */
   month: string;
+  /** 지난번에 빼 둔 거래의 id — 그 상태로 다시 엽니다. */
+  excludedIds?: string[];
   onClose: () => void;
-  onApply: (total: number, counted: number) => void;
-}> = ({ isOpen, kind, month, onClose, onApply }) => {
-  const { allTransactions } = useFinance();
+  onApply: (total: number, counted: number, excludedIds: string[]) => void;
+}> = ({ isOpen, kind, month, excludedIds, onClose, onApply }) => {
+  const { allTransactions, accounts } = useFinance();
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
-  const rows: Transaction[] = useMemo(() => {
-    return allTransactions
-      .filter((tx: Transaction) => {
-        if (!tx.date.startsWith(month)) return false;
-        return kind === "INCOME"
-          ? tx.type === "INCOME"
-          : tx.type === "EXPENSE" && tx.expenseType === "FIXED";
-      })
-      .slice()
-      .sort((a: Transaction, b: Transaction) => b.amount - a.amount);
-  }, [allTransactions, month, kind]);
+  /*
+    목록의 정의는 `services/actuals.ts` 하나에서 옵니다. 예전에는 이 화면이
+    직접 걸렀는데, 그래서 `저축` 을 고르면 **고정비 목록**이 나왔고(저축 분기가
+    없었습니다) 고정비 목록에는 요약에서 빠지는 저축이 섞여 있었습니다.
+  */
+  const rows: Transaction[] = useMemo(
+    () =>
+      actualRows(allTransactions, { month, kind, accounts })
+        .slice()
+        .sort((a: Transaction, b: Transaction) => b.amount - a.amount),
+    [allTransactions, accounts, month, kind]
+  );
 
   useEffect(() => {
     if (!isOpen) return;
-    setExcluded(new Set());
+    setExcluded(new Set(excludedIds || []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, month, kind]);
 
   useEffect(() => {
@@ -65,9 +73,8 @@ export const ActualsPickerModal: React.FC<{
   if (!isOpen) return null;
 
   const kept = rows.filter((tx) => !excluded.has(tx.id));
-  const total = kept.reduce((sum, tx) => sum + tx.amount, 0);
-  const full = rows.reduce((sum, tx) => sum + tx.amount, 0);
-  const allChosen = excluded.size === 0;
+  const { total, full, excludedCount } = sumActuals(rows, Array.from(excluded));
+  const allChosen = excludedCount === 0;
 
   const toggle = (id: string) =>
     setExcluded((prev) => {
@@ -77,7 +84,7 @@ export const ActualsPickerModal: React.FC<{
       return next;
     });
 
-  const label = kind === "INCOME" ? "수입" : "고정비";
+  const label = kind === "INCOME" ? "수입" : kind === "FIXED" ? "고정비" : "저축";
   const monthName = `${Number(month.slice(5, 7)) || ""}월`;
 
   const content = (
@@ -95,13 +102,17 @@ export const ActualsPickerModal: React.FC<{
               className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
                 kind === "INCOME"
                   ? "bg-emerald-50 text-emerald-600"
-                  : "bg-indigo-50 text-indigo-600"
+                  : kind === "FIXED"
+                    ? "bg-indigo-50 text-indigo-600"
+                    : "bg-rose-50 text-rose-500"
               }`}
             >
               {kind === "INCOME" ? (
                 <DollarSign className="w-4 h-4" />
-              ) : (
+              ) : kind === "FIXED" ? (
                 <Lock className="w-4 h-4" />
+              ) : (
+                <PiggyBank className="w-4 h-4" />
               )}
             </div>
             <div className="min-w-0">
@@ -132,7 +143,9 @@ export const ActualsPickerModal: React.FC<{
             <p className="text-[11px] text-slate-400 leading-relaxed">
               {kind === "FIXED"
                 ? "고정비 판정은 서로 다른 3개월 이상 반복될 때 붙습니다. 계좌·카드 내역에서 [AI 자동 분류]를 먼저 돌려보세요."
-                : "계좌 내역을 먼저 가져오면 이 목록이 채워집니다."}
+                : kind === "SAVINGS"
+                  ? "계좌에서 [저축] 카테고리로 나간 내역만 셉니다. 적금·예금·청약이 다른 카테고리로 되어 있으면 먼저 [저축]으로 바꿔주세요."
+                  : "계좌 내역을 먼저 가져오면 이 목록이 채워집니다."}
             </p>
           </div>
         ) : (
@@ -206,16 +219,17 @@ export const ActualsPickerModal: React.FC<{
                 <span className="text-[11px] font-bold text-emerald-800">선택한 금액</span>
                 <span className="text-sm font-black text-emerald-900">{won(total)}</span>
               </div>
-              {excluded.size > 0 && (
+              {excludedCount > 0 && (
                 <p className="text-[10px] text-emerald-700 mt-0.5">
-                  {excluded.size}건 제외 · 전체는 {won(full)}이었습니다
+                  {excludedCount}건 제외 · 전체는 {won(full)}이었습니다
                 </p>
               )}
             </div>
 
             <p className="text-[10px] text-slate-400 leading-relaxed">
               거래 내역 자체는 바뀌지 않습니다. 여기서 정한 금액이 예산 화면의{" "}
-              {label} 칸에만 들어갑니다.
+              {label} 칸에만 들어갑니다. <strong>뺀 항목은 기억해 두므로</strong> 다시
+              열면 이 상태로 시작합니다.
             </p>
           </>
         )}
@@ -232,7 +246,11 @@ export const ActualsPickerModal: React.FC<{
             type="button"
             disabled={rows.length === 0}
             onClick={() => {
-              onApply(total, kept.length);
+              /*
+                무엇을 뺐는지 함께 넘깁니다 — 합계만 넘기면 다시 열 때 전부
+                선택된 상태가 되어, 저장된 값과 목록이 다른 이유를 알 수 없습니다.
+              */
+              onApply(total, kept.length, Array.from(excluded));
               onClose();
             }}
             className="py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-40"
