@@ -20,6 +20,35 @@ import {
 type Filter = "ALL" | "NEW" | "CHECK" | "DUPLICATE";
 
 /**
+ * 담은 결과를 한 줄로.
+ *
+ * **빠진 건수를 반드시 말합니다.** 광고·청구 통지·출금예정 안내는 금액이 적혀
+ * 있어도 거래가 아니라 자동으로 빠지는데, 그 사실을 말하지 않으면 있어야 할
+ * 건이 없을 때 사용자가 알아차릴 방법이 없습니다.
+ */
+function describeIntake(
+  result: { added: number; skipped: number; ignored: number },
+  what: string
+): string {
+  const { added, skipped, ignored } = result;
+  const aside = [
+    skipped > 0 ? `이미 담긴 ${skipped}건` : "",
+    ignored > 0 ? `거래가 아닌 ${ignored}건` : "",
+  ].filter(Boolean);
+
+  if (added > 0) {
+    return `${what}에서 ${added}건을 담았습니다.${
+      aside.length > 0 ? ` (${aside.join(" · ")} 제외)` : ""
+    }`;
+  }
+  if (skipped > 0) return "이미 대기함에 담겨 있는 문자입니다.";
+  if (ignored > 0) {
+    return `거래 문자가 아니어서 ${ignored}건 모두 빠졌습니다. 광고·청구금액 안내·출금예정 알림은 담지 않습니다.`;
+  }
+  return "거래 내역을 찾지 못했습니다. 금액이 적힌 결제 문자인지 확인해주세요.";
+}
+
+/**
  * 결제 문자로 들어온 내역을 확인하고 등록하는 화면.
  *
  * 이 기능의 자리를 분명히 해 둘 필요가 있습니다. 문자는 명세서를 **대신하지
@@ -81,15 +110,7 @@ export const SmsInboxModal: React.FC<{
   */
   useEffect(() => {
     if (!isOpen || !sharedText || !sharedText.trim()) return;
-
-    const { added, skipped } = receiveSmsText(sharedText);
-    setNotice(
-      added > 0
-        ? `공유된 문자에서 ${added}건을 읽었습니다.${skipped > 0 ? ` (이미 담긴 ${skipped}건 제외)` : ""}`
-        : skipped > 0
-          ? "이미 대기함에 담겨 있는 문자입니다."
-          : "문자에서 거래 내역을 찾지 못했습니다. 원문을 그대로 공유해 주세요."
-    );
+    setNotice(describeIntake(receiveSmsText(sharedText), "공유된 문자"));
     onSharedConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, sharedText]);
@@ -200,14 +221,7 @@ export const SmsInboxModal: React.FC<{
                   setNotice("클립보드가 비어 있습니다. 문자 앱에서 [텍스트 복사]를 먼저 누르세요.");
                   return;
                 }
-                const { added, skipped } = receiveSmsText(text);
-                setNotice(
-                  added > 0
-                    ? `클립보드에서 ${added}건을 담았습니다.${skipped > 0 ? ` (중복 ${skipped}건 제외)` : ""}`
-                    : skipped > 0
-                      ? "이미 담겨 있는 문자입니다."
-                      : "거래 내역을 찾지 못했습니다. 아래 칸에 붙여넣어 확인해보세요."
-                );
+                setNotice(describeIntake(receiveSmsText(text), "클립보드"));
               } catch {
                 /*
                   권한을 막았거나 https 가 아니면 클립보드를 읽을 수 없습니다.
@@ -227,7 +241,8 @@ export const SmsInboxModal: React.FC<{
           <p className="text-[10px] text-slate-500 leading-relaxed">
             문자 앱에서 말풍선을 길게 눌러 <strong>[텍스트 복사]</strong> → 여기서 위
             버튼. 여러 건은 문자 앱에서 <strong>여러 개 선택 후 복사</strong>하면 한 번에
-            담깁니다.
+            담깁니다. 광고·청구금액 안내·출금예정 알림은 <strong>자동으로 빠지고</strong>{" "}
+            몇 건이 빠졌는지 알려 드립니다.
           </p>
 
           <details>
@@ -248,15 +263,9 @@ export const SmsInboxModal: React.FC<{
                 type="button"
                 disabled={!pasted.trim()}
                 onClick={() => {
-                  const { added, skipped } = receiveSmsText(pasted);
+                  const result = receiveSmsText(pasted);
                   setPasted("");
-                  setNotice(
-                    added > 0
-                      ? `${added}건을 읽어 대기함에 담았습니다.${skipped > 0 ? ` (중복 ${skipped}건 제외)` : ""}`
-                      : skipped > 0
-                        ? "이미 담겨 있는 문자입니다."
-                        : "거래 내역을 찾지 못했습니다. 금액이 적힌 문자인지 확인해주세요."
-                  );
+                  setNotice(describeIntake(result, "붙여넣은 글"));
                 }}
                 className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition disabled:opacity-40"
               >

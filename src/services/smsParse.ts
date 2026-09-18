@@ -43,6 +43,58 @@ const NOT_AMOUNT = ["누적", "잔액", "한도", "포인트", "적립", "잔여
 const INCOME_WORDS = ["입금", "이체입금", "급여", "환불", "취소", "반환", "지급"];
 const EXPENSE_WORDS = ["승인", "결제", "출금", "이체", "지출", "납부", "인출"];
 
+/**
+ * 가맹점 자리에 남지만 가맹점이 아닌 말들.
+ *
+ * 카드사는 문자 머리에 `이용안내`·`확인된 발신번호` 같은 상투구를 답니다.
+ * 이것을 남겨 두면 진짜 가맹점보다 길어서 그쪽이 이름으로 뽑힙니다 — 실제
+ * 우리카드 문자에서 `이용안내`가 가맹점으로 잡혔습니다.
+ *
+ * 조각 전체가 이 말과 같을 때만 버립니다. 부분 일치로 지우면 `안내상회`처럼
+ * 이 말을 품은 진짜 이름이 깎입니다.
+ */
+const BOILERPLATE = [
+  "안내",
+  "이용안내",
+  "확인된발신번호",
+  "발신번호",
+  "승인내역",
+  "이용내역",
+  "결제내역",
+  "사용내역",
+  "알림",
+  "님",
+];
+
+/**
+ * 거래가 아니라 **알림**인 문자.
+ *
+ * 금액이 없는 문자는 이미 걸러지지만, 금액이 적힌 알림이 있습니다 — 청구금액
+ * 통지, 자동이체 예정, 할인 광고. 그것을 거래로 넣으면 그 달 합계가 엉뚱하게
+ * 불어나고, 특히 청구금액 통지는 한 달치 금액이라 피해가 큽니다.
+ *
+ * `안내`라는 말만으로는 가릴 수 없습니다 — 실제 우리카드 승인 문자에도
+ * `이용안내`가 들어 있습니다. 그래서 **광고 표시**, **예정/예상**, **청구
+ * 통지**라는 세 가지 분명한 신호만 봅니다.
+ */
+export function looksLikeNotice(text: string): boolean {
+  const flat = (text || "").replace(/\s+/g, "");
+
+  // 광고는 법으로 표시가 붙습니다
+  if (/\(광고\)|\[광고\]|광고|무료수신거부|수신거부/.test(flat)) return true;
+
+  // 아직 일어나지 않은 돈 — 출금예정·결제예정·이체예정
+  if (/(출금|결제|이체|납부|인출|승인)(예정|예상)/.test(flat)) return true;
+
+  // 한 달치 청구 통지. 거래 한 건이 아닙니다
+  if (/청구금액|청구예정금액|이용대금|대금명세서|명세서발행/.test(flat)) return true;
+
+  // 인증번호는 금액이 없어 대개 걸러지지만, 있어도 거래가 아닙니다
+  if (/인증번호|인증코드|OTP/.test(flat)) return true;
+
+  return false;
+}
+
 const pad = (value: number) => String(value).padStart(2, "0");
 
 /** 문자에서 말이 아닌 껍데기를 벗깁니다. */
@@ -177,10 +229,20 @@ export function parseSmsMerchant(text: string): string {
     남은 조각 중 가장 긴 것을 씁니다. 줄바꿈으로 가맹점을 따로 적는 카드사가
     있고, 그런 경우 그 줄이 가장 긴 조각입니다.
   */
+  /*
+    카드사는 줄머리에 ● ✅ ※ ▶ 같은 기호를 답니다. 가맹점 이름의 끝이 그런
+    기호일 수는 없으므로 앞뒤에서 떼어 냅니다 — 떼지 않으면 `✅확인된 발신번호`
+    가 상투구 목록과 글자로 달라 그대로 가맹점이 됩니다.
+  */
+  const trimSymbols = (piece: string) =>
+    piece.replace(/^[^가-힣A-Za-z0-9(]+/, "").replace(/[^가-힣A-Za-z0-9)]+$/, "");
+
   const pieces = stripped
     .split(/[\n\t]+|\s{2,}/)
-    .map((piece) => piece.replace(/\s+/g, " ").trim())
-    .filter((piece) => piece.length >= 2 && /[가-힣A-Za-z]/.test(piece));
+    .map((piece) => trimSymbols(piece.replace(/\s+/g, " ").trim()))
+    .filter((piece) => piece.length >= 2 && /[가-힣A-Za-z]/.test(piece))
+    // 상투구는 조각 전체가 그 말일 때만 버립니다
+    .filter((piece) => !BOILERPLATE.includes(piece.replace(/\s+/g, "")));
 
   if (pieces.length === 0) return "";
 
@@ -201,6 +263,9 @@ export function parseSmsIssuer(text: string): string {
 export function parseSms(raw: string, now: Date = new Date()): ParsedSms | null {
   const text = clean(raw);
   if (!text) return null;
+
+  // 광고·청구 통지·예정 안내는 거래가 아닙니다
+  if (looksLikeNotice(text)) return null;
 
   const { amount, balance } = parseSmsAmounts(text);
   if (amount <= 0) return null;

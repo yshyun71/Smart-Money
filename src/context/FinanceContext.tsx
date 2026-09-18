@@ -225,8 +225,19 @@ interface FinanceContextType {
    * 가계부에 들어갑니다.
    */
   smsInbox: SmsInboxItem[];
-  /** 공유·붙여넣은 글을 읽어 대기함에 넣습니다. 새로 담긴 건수를 돌려줍니다. */
-  receiveSmsText: (rawText: string) => { added: number; skipped: number };
+  /**
+   * 공유·붙여넣은 글을 읽어 대기함에 넣습니다.
+   *
+   * `added` 담긴 건수, `skipped` 이미 담겨 있던 건수, `ignored` 거래가 아니라
+   * 빠진 건수 — 광고·청구 통지·출금예정 안내·인증번호처럼 금액이 적혀 있어도
+   * 거래가 아닌 것들입니다. 몇 건이 왜 빠졌는지 화면이 말해야, 있어야 할 건이
+   * 없을 때 사용자가 알아차립니다.
+   */
+  receiveSmsText: (rawText: string) => {
+    added: number;
+    skipped: number;
+    ignored: number;
+  };
   /** 대기함의 한 건을 고쳐 둡니다 (가맹점·금액·카테고리 등). */
   reviseSmsItem: (id: string, parsed: ParsedSms & { accountId?: string; category?: string }) => void;
   /** 고른 건을 그 계좌의 거래로 등록합니다. */
@@ -841,9 +852,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     문자가 공유나 붙여넣기로 들어옵니다. 고르는 행위 자체가 기간과 대상을
     정하는 일이라, 기간 선택 칸을 따로 두지 않습니다.
   */
-  const receiveSmsText = (rawText: string): { added: number; skipped: number } => {
+  const receiveSmsText = (
+    rawText: string
+  ): { added: number; skipped: number; ignored: number } => {
     const found = parseSmsBatch(rawText);
-    if (found.length === 0) return { added: 0, skipped: 0 };
+
+    /*
+      빠진 건수를 셉니다. 덩어리를 어떻게 쪼갰는지는 파서가 알고 우리는
+      모르므로, 머리말(`[…]`)의 수를 문자 건수로 봅니다 — 카드사 문자는 예외
+      없이 머리말로 시작합니다. 머리말이 없으면 한 건으로 봅니다.
+    */
+    const blocks = Math.max(
+      1,
+      (rawText.match(/\[(?!Web발신|국외발신|국제발신)[^\]]*\]/g) || []).length
+    );
+    const ignored = Math.max(0, blocks - found.length);
+
+    if (found.length === 0) return { added: 0, skipped: 0, ignored };
 
     const now = new Date().toISOString();
     const rows: { id: string; receivedAt: string; rawText: string; parsed: unknown }[] = [];
@@ -884,15 +909,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       });
     }
 
-    if (rows.length === 0) return { added: 0, skipped };
+    if (rows.length === 0) return { added: 0, skipped, ignored };
 
     try {
       repo.addSmsInbox(rows);
       setSmsInbox(readSmsInbox());
-      return { added: rows.length, skipped };
+      return { added: rows.length, skipped, ignored };
     } catch (error) {
       console.error("문자를 대기함에 담지 못했습니다:", error);
-      return { added: 0, skipped };
+      return { added: 0, skipped, ignored };
     }
   };
 
