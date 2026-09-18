@@ -21,6 +21,7 @@ export const BUILT_IN_CATEGORIES: BuiltInCategory[] = [
   "보험",
   "대출",
   "기타 금융",
+  "저축",
   "카드대금",
   "급여",
   "기타수입",
@@ -29,6 +30,28 @@ export const BUILT_IN_CATEGORIES: BuiltInCategory[] = [
 
 /** Card bills settled from a bank account. */
 export const CARD_PAYMENT_CATEGORY: BuiltInCategory = "카드대금";
+
+/**
+ * 저축으로 빠져나간 돈.
+ *
+ * 계좌에서만 의미가 있습니다 — 카드로는 저축하지 않습니다. 예산 화면의
+ * `목표 저축액`과 짝을 이루고, **고정비 합계에서는 빠집니다**: 적금이 매달
+ * 같은 날 같은 금액으로 나가 고정비로 판정되더라도, 고정비에 한 번 세고
+ * 저축에 또 세면 가용 변동비가 그만큼 두 번 깎입니다.
+ */
+export const SAVINGS_CATEGORY: BuiltInCategory = "저축";
+
+/**
+ * 카테고리 예산에서 빼는 항목들.
+ *
+ * 둘 다 다른 자리에서 이미 셈해지는 돈입니다 — 카드대금은 그 카드의 명세서로,
+ * 저축은 `목표 저축액`으로. 가용 변동비(`수입 − 고정비 − 저축`)가 이미 저축을
+ * 뺀 금액이라, 저축에 다시 예산을 주면 없는 돈을 배분하게 됩니다.
+ */
+export const BUDGET_EXCLUDED_CATEGORIES: BuiltInCategory[] = [
+  CARD_PAYMENT_CATEGORY,
+  SAVINGS_CATEGORY,
+];
 
 /** What one 금융/보험 category was split into. */
 export const FINANCE_CATEGORIES: BuiltInCategory[] = ["보험", "대출", "기타 금융"];
@@ -72,22 +95,31 @@ export const FINANCE_KEYWORDS: { category: BuiltInCategory; words: string[] }[] 
     ],
   },
   {
-    category: "기타 금융",
-    words: [
-      "적금",
-      "예금",
-      "펀드",
-      "연금",
-      "증권",
-      "저축",
-      "청약",
-      "ISA",
-      "CMA",
-      "IRP",
-      "신탁",
-      "투자",
-    ],
+    /*
+      모아 두는 돈. 굴리는 돈(펀드·증권·투자)은 기타 금융에 남겨 둡니다 —
+      "저축"이라는 말로 가장 흔히 뜻하는 것은 적금·예금·청약이고, 예산 화면의
+      `목표 저축액`과 짝을 이루는 것도 그쪽입니다.
+
+      기타 금융보다 **먼저** 검사되어야 합니다(6.3 — 더 좁은 것이 먼저).
+    */
+    category: "저축",
+    words: ["적금", "예금", "저축", "청약", "ISA", "CMA", "IRP"],
   },
+  {
+    category: "기타 금융",
+    words: ["펀드", "연금", "증권", "신탁", "투자"],
+  },
+];
+
+/** `저축`으로 옮겨 간 말들 — 마이그레이션이 과거 내역을 다시 세울 때 씁니다. */
+export const SAVINGS_KEYWORDS: string[] = [
+  "적금",
+  "예금",
+  "저축",
+  "청약",
+  "ISA",
+  "CMA",
+  "IRP",
 ];
 
 /** Rent, utilities and the like, as against what the phone line costs. */
@@ -209,4 +241,6 @@ export const FIXED_BUDGET_CATEGORIES: BuiltInCategory[] = [
   "보험",
   "대출",
   "기타 금융",
+  // 저축은 쓰기로 정해 둔 돈이 아니라 떼어 두는 돈입니다
+  "저축",
 ];

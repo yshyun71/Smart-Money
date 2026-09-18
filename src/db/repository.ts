@@ -687,6 +687,7 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
       categoryBudgets,
       incomeSource: "USER",
       fixedSource: "USER",
+      savingsSource: "USER",
     };
   }
 
@@ -700,6 +701,7 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
     categoryBudgets,
     incomeSource: configRow.income_source === "ACTUALS" ? "ACTUALS" : "USER",
     fixedSource: configRow.fixed_source === "ACTUALS" ? "ACTUALS" : "USER",
+    savingsSource: configRow.savings_source === "ACTUALS" ? "ACTUALS" : "USER",
   };
 }
 
@@ -747,8 +749,8 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
   runBatch([
     {
       sql: `INSERT OR REPLACE INTO budget_configs
-              (user_id, month, monthly_income, fixed_expenses, savings_target, alert_threshold_percent, enable_push_alerts, income_source, fixed_source, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (user_id, month, monthly_income, fixed_expenses, savings_target, alert_threshold_percent, enable_push_alerts, income_source, fixed_source, savings_source, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         userId,
         config.month,
@@ -759,6 +761,7 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
         config.enablePushAlerts ? 1 : 0,
         config.incomeSource === "ACTUALS" ? "ACTUALS" : "USER",
         config.fixedSource === "ACTUALS" ? "ACTUALS" : "USER",
+        config.savingsSource === "ACTUALS" ? "ACTUALS" : "USER",
         new Date().toISOString(),
       ],
     },

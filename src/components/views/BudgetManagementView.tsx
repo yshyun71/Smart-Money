@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput, withCommas } from "../../utils/format";
 import { BudgetPolicyModal } from "../modals/BudgetPolicyModal";
+import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { spareOf } from "../../services/budgetPolicy";
 import {
   Sliders,
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   HelpCircle,
   TrendingDown,
+  ChevronRight,
   X,
 } from "lucide-react";
 
@@ -35,6 +37,7 @@ export const BudgetManagementView: React.FC<{
     markAllAlertsAsRead,
     totalIncome,
     fixedExpenseTotal,
+    savingsActualTotal,
     disposableIncome,
     totalBudgeted,
     selectedMonth,
@@ -59,6 +62,9 @@ export const BudgetManagementView: React.FC<{
   const [incomeTouched, setIncomeTouched] = useState(false);
   const [fixedTouched, setFixedTouched] = useState(false);
   const [showPolicy, setShowPolicy] = useState(false);
+  /** 실적 내역을 열어 볼 칸. 무엇이 그 합계를 만들었는지 보고 뺄 수 있습니다. */
+  const [picking, setPicking] = useState<"INCOME" | "FIXED" | "SAVINGS" | null>(null);
+  const [savingsTouched, setSavingsTouched] = useState(false);
   /*
     지금 고치는 중인 카테고리 한도. 누를 때마다 저장하면 "4"만 눌러도 4원이
     되어 버리므로, 칸을 떠날 때(또는 Enter) 한 번 저장합니다.
@@ -90,6 +96,7 @@ export const BudgetManagementView: React.FC<{
     setSavingsInput(asInput(budgetConfig.savingsTarget));
     setIncomeTouched(false);
     setFixedTouched(false);
+    setSavingsTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth]);
 
@@ -119,9 +126,11 @@ export const BudgetManagementView: React.FC<{
       // 손대지 않은 칸은 원래의 출처를 유지합니다
       incomeSource: incomeTouched ? "USER" : budgetConfig.incomeSource,
       fixedSource: fixedTouched ? "USER" : budgetConfig.fixedSource,
+      savingsSource: savingsTouched ? "USER" : budgetConfig.savingsSource,
     });
     setIncomeTouched(false);
     setFixedTouched(false);
+    setSavingsTouched(false);
     triggerToast("월 수입 및 고정비 설정이 업데이트되었습니다.");
   };
 
@@ -129,14 +138,18 @@ export const BudgetManagementView: React.FC<{
   const handleSyncActuals = () => {
     setIncomeInput(asInput(totalIncome));
     setFixedInput(asInput(fixedExpenseTotal));
+    setSavingsInput(asInput(savingsActualTotal));
     updateBudgetConfig({
       monthlyIncome: totalIncome,
       fixedExpenses: fixedExpenseTotal,
+      savingsTarget: savingsActualTotal,
       incomeSource: "ACTUALS",
       fixedSource: "ACTUALS",
+      savingsSource: "ACTUALS",
     });
     setIncomeTouched(false);
     setFixedTouched(false);
+    setSavingsTouched(false);
     triggerToast(
       isThisMonth
         ? `${monthName} 실제 내역을 채웠습니다. 아직 달이 끝나지 않아 실제보다 적을 수 있습니다.`
@@ -144,14 +157,24 @@ export const BudgetManagementView: React.FC<{
     );
   };
 
-  // Run AI auto-allocation
-  const handleAutoAllocate = () => {
-    const inc = parseInt(incomeInput.replace(/[^0-9]/g, "")) || budgetConfig.monthlyIncome;
-    const fix = parseInt(fixedInput.replace(/[^0-9]/g, "")) || budgetConfig.fixedExpenses;
-    const sav = parseInt(savingsInput.replace(/[^0-9]/g, "")) || budgetConfig.savingsTarget;
+  /*
+    지난 내역대로 배분합니다.
 
-    autoAllocateBudgets(inc, fix, sav);
-    triggerToast("✨ 50/30/20 규칙 기반으로 카테고리별 최적 예산이 자동 배분되었습니다!");
+    예전에는 코드에 박힌 여덟 개 비율을 곱하고 "50/30/20 규칙"이라고 말했는데,
+    둘 다 사실이 아니었고 사용자가 만든 카테고리는 한 푼도 받지 못했습니다.
+  */
+  const handleAutoAllocate = () => {
+    const inc = parseAmountInput(incomeInput) || budgetConfig.monthlyIncome;
+    const fix = parseAmountInput(fixedInput) || budgetConfig.fixedExpenses;
+    const sav = parseAmountInput(savingsInput) || budgetConfig.savingsTarget;
+
+    const { changed, months } = autoAllocateBudgets(inc, fix, sav);
+
+    triggerToast(
+      months === 0
+        ? "배분할 근거가 없습니다. 지난 달 내역을 먼저 가져오거나 [예산 기준 설정]에서 직접 정해주세요."
+        : `최근 ${months}개월 내역대로 ${changed}개 카테고리에 배분했습니다.`
+    );
   };
 
   const triggerToast = (msg: string) => {
@@ -373,14 +396,21 @@ export const BudgetManagementView: React.FC<{
             {
               key: "savings",
               label: "목표 저축액",
-              hint: "먼저 떼어 둘 금액. 가용 변동비에서 빠집니다",
+              hint: "먼저 떼어 둘 금액. 계좌의 [저축] 카테고리 실적에서 채울 수 있습니다",
               icon: <PiggyBank className="w-3.5 h-3.5 text-rose-500" />,
               value: savingsInput,
-              onChange: setSavingsInput,
+              onChange: (next: string) => {
+                setSavingsTouched(true);
+                setSavingsInput(next);
+              },
               placeholder: "600,000",
               saved: budgetConfig.savingsTarget,
-              // 저축은 실적에서 나올 값이 아니라 늘 사람이 정합니다
-              source: "USER" as const,
+              /*
+                저축도 실적이 있습니다 — 계좌에서 `저축` 카테고리로 나간 돈.
+                고정비 합계에서는 빠지므로(적금이 고정비로 판정되더라도) 두 번
+                세지 않습니다.
+              */
+              source: savingsTouched ? ("USER" as const) : budgetConfig.savingsSource,
             },
           ]).map((field) => {
             const dirty = parseAmountInput(field.value) !== field.saved;
@@ -399,17 +429,36 @@ export const BudgetManagementView: React.FC<{
                       실적에서 불러온 값과 사람이 적은 값은 신뢰도가 다릅니다.
                       잔액의 USER/AUTO 표시와 같은 취지입니다(8절).
                     */}
-                    <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                        dirty
-                          ? "bg-amber-100 text-amber-700"
-                          : field.source === "ACTUALS"
-                            ? "bg-indigo-100 text-indigo-700"
-                            : "bg-slate-200/80 text-slate-600"
-                      }`}
-                    >
-                      {dirty ? "수정 중" : field.source === "ACTUALS" ? "실적 반영" : "직접 입력"}
-                    </span>
+                    {/*
+                      합계만 보여 주면 무엇이 들어갔는지 알 수 없습니다. 한 번뿐인
+                      상여금이나 이사 비용이 섞이면 그 합계로 세운 예산은 처음부터
+                      틀리므로, 눌러서 줄 단위로 확인하고 뺄 수 있게 합니다.
+                    */}
+                    {(
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPicking(
+                            field.key === "income"
+                              ? "INCOME"
+                              : field.key === "fixed"
+                                ? "FIXED"
+                                : "SAVINGS"
+                          )
+                        }
+                        title={`${monthName} 내역 열어 보기`}
+                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full transition cursor-pointer hover:brightness-95 ${
+                          dirty
+                            ? "bg-amber-100 text-amber-700"
+                            : field.source === "ACTUALS"
+                              ? "bg-indigo-100 text-indigo-700"
+                              : "bg-slate-200/80 text-slate-600"
+                        }`}
+                      >
+                        {dirty ? "수정 중" : field.source === "ACTUALS" ? "실적 반영" : "직접 입력"}
+                        <ChevronRight className="w-2.5 h-2.5 inline -mt-0.5" />
+                      </button>
+                    )}
                   </div>
                   <span className="text-[10px] text-slate-400 mt-0.5 block leading-relaxed">
                     {field.hint}
@@ -466,8 +515,12 @@ export const BudgetManagementView: React.FC<{
             onClick={handleAutoAllocate}
             className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs hover:opacity-95 transition active:scale-98 flex items-center justify-center gap-1 shadow-xs"
           >
+            {/*
+              "AI"도 "50/30/20"도 아니었습니다 — 코드에 박힌 여덟 개 비율이었고,
+              이제는 그 사람의 지난 내역입니다. 이름이 하는 일을 말해야 합니다.
+            */}
             <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-            <span>AI 스마트 예산 자동 분배</span>
+            <span>지난 내역대로 자동 배분</span>
           </button>
         </div>
       </div>
@@ -814,6 +867,34 @@ export const BudgetManagementView: React.FC<{
       </div>
       {/* 카테고리별 예산 기준 — 달에 매이지 않는 한도 규칙 */}
       <BudgetPolicyModal isOpen={showPolicy} onClose={() => setShowPolicy(false)} />
+
+      {/* 그 합계를 만든 내역을 열어 보고, 뺄 것을 빼는 화면 */}
+      <ActualsPickerModal
+        isOpen={picking !== null}
+        kind={picking ?? "INCOME"}
+        month={selectedMonth}
+        onClose={() => setPicking(null)}
+        onApply={(total, counted) => {
+          if (picking === "INCOME") {
+            setIncomeInput(asInput(total));
+            setIncomeTouched(false);
+            updateBudgetConfig({ monthlyIncome: total, incomeSource: "ACTUALS" });
+          } else if (picking === "FIXED") {
+            setFixedInput(asInput(total));
+            setFixedTouched(false);
+            updateBudgetConfig({ fixedExpenses: total, fixedSource: "ACTUALS" });
+          } else {
+            setSavingsInput(asInput(total));
+            setSavingsTouched(false);
+            updateBudgetConfig({ savingsTarget: total, savingsSource: "ACTUALS" });
+          }
+          triggerToast(
+            `${counted}건을 더한 ${withCommas(total)}원을 ${
+              picking === "INCOME" ? "수입" : picking === "FIXED" ? "고정비" : "저축"
+            }에 반영했습니다.`
+          );
+        }}
+      />
     </div>
   );
 };

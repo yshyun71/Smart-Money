@@ -12,6 +12,7 @@ import {
   fixedBaselines,
   rulesFromBaselines,
   belowBaseline,
+  historyAllocate,
   emptyPolicy,
   type BudgetPolicy,
 } from "../src/services/budgetPolicy";
@@ -212,6 +213,132 @@ section("고정비보다 낮은 예산은 시작부터 초과입니다");
 
   const enough = belowBaseline({ 주거: 600_000, 통신: 70_000 }, lines);
   check("충분하면 비어 있음", enough.length === 0, enough);
+}
+
+// ---------------------------------------------------------------------------
+section("내역 기반 배분 — 코드에 박힌 비율이 아니라 그 사람이 쓴 대로");
+// ---------------------------------------------------------------------------
+{
+  const rows = [
+    // 주거: 전부 고정비, 매달 50만
+    fixedTx("주거", "2026-05", 500_000),
+    fixedTx("주거", "2026-06", 500_000),
+    // 식비: 전부 변동비, 매달 40만
+    varTx("식비", "2026-05", 400_000),
+    varTx("식비", "2026-06", 400_000),
+    // 교통: 변동비 10만
+    varTx("교통", "2026-05", 100_000),
+    varTx("교통", "2026-06", 100_000),
+  ];
+
+  const out = historyAllocate(rows, { spare: 1_000_000, upTo: "2026-07" });
+  const of = (category: string) => out.shares.find((row) => row.category === category);
+
+  check("두 달을 셈", out.months === 2, out.months);
+
+  /*
+    고정비는 그대로 주고, 변동비는 비중대로 가용을 나눕니다.
+    식비:교통 = 40만:10만 = 4:1 → 80만 / 20만
+  */
+  check("주거 = 고정비 평균", of("주거")?.budget === 500_000, of("주거"));
+  check("식비 = 변동 비중 80%", of("식비")?.budget === 800_000, of("식비"));
+  check("교통 = 변동 비중 20%", of("교통")?.budget === 200_000, of("교통"));
+  check("고정비와 변동비를 나눠 봄", of("주거")?.fixed === 500_000 && of("주거")?.variable === 0, of("주거"));
+  check("큰 금액 순", out.shares[0]?.category === "식비", out.shares.map((r) => r.category));
+  check("바로 저장할 수 있는 형태", out.budgets["식비"] === 800_000, out.budgets);
+
+  // 한 달만 쓴 항목이 매달 그 금액이 되면 안 됩니다
+  const once = historyAllocate(
+    [...rows, varTx("문화/여가", "2026-06", 600_000)],
+    { spare: 1_000_000, upTo: "2026-07" }
+  );
+  const spike = once.shares.find((row) => row.category === "문화/여가");
+  check("어쩌다 한 번은 달 수로 나눠 희석", (spike?.variable ?? 0) === 300_000, spike);
+  check("그 달만 나왔다고 기록", spike?.months === 1, spike);
+
+  // 사용자가 만든 카테고리도 배분받습니다 — 고정 비율 방식이 못 하던 것
+  const custom = historyAllocate(
+    [varTx("반려동물", "2026-05", 200_000), varTx("반려동물", "2026-06", 200_000)],
+    { spare: 500_000, upTo: "2026-07" }
+  );
+  check("사용자 카테고리도 배분", custom.budgets["반려동물"] === 500_000, custom.budgets);
+
+  // 카드대금은 카드 명세서와 겹쳐 두 번 세게 됩니다
+  const withBill = historyAllocate(
+    [...rows, varTx("카드대금", "2026-06", 900_000)],
+    { spare: 1_000_000, upTo: "2026-07" }
+  );
+  check("카드대금은 제외", !("카드대금" in withBill.budgets), withBill.budgets);
+
+  // 진행 중인 달은 평균에서 뺍니다
+  const partial = historyAllocate([...rows, varTx("식비", "2026-07", 10_000)], {
+    spare: 1_000_000,
+    upTo: "2026-07",
+  });
+  check("이번 달은 세지 않음", partial.shares.find((r) => r.category === "식비")?.budget === 800_000, partial.shares);
+
+  // 기록이 없으면 배분할 근거가 없습니다
+  const empty = historyAllocate([], { spare: 1_000_000, upTo: "2026-07" });
+  check("기록이 없으면 빈 결과", empty.shares.length === 0 && empty.months === 0, empty);
+
+  // 전부 고정비면 나눌 변동비가 없어 고정비만 줍니다
+  const allFixed = historyAllocate(
+    [fixedTx("주거", "2026-05", 500_000), fixedTx("주거", "2026-06", 500_000)],
+    { spare: 1_000_000, upTo: "2026-07" }
+  );
+  check("변동비가 없으면 고정비만", allFixed.budgets["주거"] === 500_000, allFixed.budgets);
+
+  // 가용이 0이어도 고정비 몫은 남습니다 — 줄일 수 없는 돈이기 때문
+  const noSpare = historyAllocate(rows, { spare: 0, upTo: "2026-07" });
+  check("가용 0이어도 고정비는 유지", noSpare.budgets["주거"] === 500_000, noSpare.budgets);
+  check("변동비 카테고리는 0이 되어 빠짐", !("식비" in noSpare.budgets), noSpare.budgets);
+
+  // 특정 카테고리만 배분할 수도 있습니다
+  const only = historyAllocate(rows, { spare: 1_000_000, upTo: "2026-07", only: ["식비"] });
+  check("고른 카테고리만", Object.keys(only.budgets).join() === "식비", only.budgets);
+  check("그 안에서 가용을 다 씀", only.budgets["식비"] === 1_000_000, only.budgets);
+}
+
+// ---------------------------------------------------------------------------
+section("저축은 카테고리 예산에서 빠집니다");
+// ---------------------------------------------------------------------------
+{
+  /*
+    적금은 매달 같은 날 같은 금액으로 나가 §10의 판정으로 고정비가 됩니다.
+    그런데 가용 변동비가 `수입 − 고정비 − 저축`이라, 고정비 가이드에도 세고
+    저축에도 세면 같은 돈이 두 번 깎입니다.
+  */
+  const rows = [
+    fixedTx("저축", "2026-05", 500_000),
+    fixedTx("저축", "2026-06", 500_000),
+    fixedTx("주거", "2026-05", 400_000),
+    fixedTx("주거", "2026-06", 400_000),
+    varTx("식비", "2026-05", 300_000),
+    varTx("식비", "2026-06", 300_000),
+  ];
+
+  const guide = fixedBaselines(rows, { upTo: "2026-07" });
+  check(
+    "고정비 가이드에 저축이 없음",
+    !guide.some((line) => line.category === "저축"),
+    guide.map((l) => l.category)
+  );
+  check("주거는 그대로 있음", guide.some((line) => line.category === "주거"), guide);
+
+  const plan = historyAllocate(rows, { spare: 600_000, upTo: "2026-07" });
+  check("배분에도 저축이 없음", !("저축" in plan.budgets), plan.budgets);
+  check("나머지는 정상 배분", plan.budgets["식비"] === 600_000, plan.budgets);
+  check("주거는 고정비 그대로", plan.budgets["주거"] === 400_000, plan.budgets);
+
+  const short = belowBaseline({ 저축: 0, 주거: 400_000 }, guide);
+  check("저축은 '모자란 한도'로도 잡히지 않음", !short.some((r) => r.category === "저축"), short);
+
+  // 카드대금도 같은 이유로 빠집니다
+  const withBoth = historyAllocate(
+    [...rows, varTx("카드대금", "2026-06", 900_000)],
+    { spare: 600_000, upTo: "2026-07" }
+  );
+  check("카드대금도 빠짐", !("카드대금" in withBoth.budgets), withBoth.budgets);
 }
 
 // ---------------------------------------------------------------------------

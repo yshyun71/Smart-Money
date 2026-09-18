@@ -17,6 +17,7 @@ export type BuiltInCategory =
   | "보험"
   | "대출"
   | "기타 금융"
+  | "저축"
   | "카드대금"
   | "급여"
   | "기타수입"
@@ -172,6 +173,14 @@ export interface MonthlyBudgetConfig {
    */
   incomeSource?: "USER" | "ACTUALS";
   fixedSource?: "USER" | "ACTUALS";
+  /**
+   * 저축도 실적을 가질 수 있습니다 — 계좌에서 `저축` 카테고리로 나간 돈.
+   *
+   * 고정비 합계에서는 빠지므로 두 번 세지 않습니다: 적금이 매달 같은 날 같은
+   * 금액으로 나가 고정비로 판정되더라도, 가용 변동비가 `수입 − 고정비 − 저축`
+   * 이라 양쪽에 세면 같은 돈이 두 번 깎입니다.
+   */
+  savingsSource?: "USER" | "ACTUALS";
 }
 
 export interface CategoryBudgetStatus {

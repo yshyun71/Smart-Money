@@ -1,4 +1,15 @@
 import type { Transaction } from "../types/finance";
+import { BUDGET_EXCLUDED_CATEGORIES } from "../constants/categories";
+
+/**
+ * 카테고리 예산에서 빼는 항목 — 카드대금과 저축.
+ *
+ * 둘 다 다른 자리에서 이미 셈해지는 돈입니다. 카드대금은 그 카드의 명세서와
+ * 겹치고, 저축은 `목표 저축액`으로 가용 변동비에서 이미 빠져 있어, 여기에
+ * 다시 예산을 주면 없는 돈을 배분하게 됩니다.
+ */
+const excluded = (category: string) =>
+  BUDGET_EXCLUDED_CATEGORIES.includes(category as never);
 
 /**
  * A standing rule for how much each category gets, so a budget is not retyped
@@ -143,6 +154,8 @@ export function fixedBaselines(
 
   for (const tx of transactions) {
     if (tx.type !== "EXPENSE" || tx.expenseType !== "FIXED") continue;
+    // 적금은 매달 같은 날 나가 고정비로 판정되지만, 저축으로 따로 셉니다
+    if (excluded(tx.category)) continue;
 
     const month = (tx.date || "").slice(0, 7);
     if (!month) continue;
@@ -225,4 +238,157 @@ export function belowBaseline(
   }
 
   return out.sort((a, b) => b.average - a.average);
+}
+
+// ---------------------------------------------------------------------------
+// 내역 기반 배분
+// ---------------------------------------------------------------------------
+
+export interface HistoryShare {
+  category: string;
+  /** 고정비 월평균 — 줄일 수 없는 부분. */
+  fixed: number;
+  /** 변동비 월평균 — 줄일 수 있는 부분. */
+  variable: number;
+  /** 배분된 한도 = fixed + (variable 비중 × 가용 변동비). */
+  budget: number;
+  /** 이 카테고리를 셈한 달의 수. */
+  months: number;
+}
+
+export interface HistoryAllocation {
+  shares: HistoryShare[];
+  /** 카테고리 → 한도. 바로 저장할 수 있는 형태. */
+  budgets: Record<string, number>;
+  /** 변동비 기록이 있는 달의 수. 0이면 배분의 근거가 없습니다. */
+  months: number;
+  /** 고정비 평균의 합 — 카테고리 한도에 이미 포함돼 있습니다. */
+  fixedTotal: number;
+  /** 가용 변동비 중 실제로 나눠 준 금액. */
+  variableTotal: number;
+}
+
+/**
+ * 지난 내역으로 이번 달 카테고리 한도를 정합니다.
+ *
+ * 코드에 박힌 비율(식비 40%, 쇼핑 18% …)은 누구의 삶도 설명하지 못하고,
+ * 사용자가 만든 카테고리는 한 푼도 받지 못했습니다. 실제로 어디에 얼마를 써
+ * 왔는지가 그 사람에게 맞는 유일한 근거입니다.
+ *
+ * 한 카테고리의 한도는 두 조각으로 만듭니다.
+ *
+ *   한도 = 고정비 월평균 + (그 카테고리의 변동비 비중 × 가용 변동비)
+ *
+ * 고정비를 더하는 이유: 카테고리의 소진율은 **고정비까지 포함한** 그 달의 지출
+ * 전체로 계산됩니다(`budgetStatusList`). 고정비를 빼놓고 한도를 주면 주거·통신
+ * 처럼 고정비가 대부분인 카테고리가 달 시작부터 초과로 표시됩니다.
+ *
+ * 변동비만 비중으로 나누는 이유: 가용 변동비가 이미 `수입 − 고정비 − 저축`이라
+ * 고정비를 두 번 세지 않기 위함입니다.
+ *
+ * 진행 중인 달은 평균에서 뺍니다(`upTo`). 반 달치를 한 달치로 세면 한도가
+ * 실제보다 낮게 잡힙니다.
+ */
+export function historyAllocate(
+  transactions: Transaction[],
+  options: {
+    spare: number;
+    months?: number;
+    upTo?: string;
+    /** 이 목록에 있는 카테고리만 배분합니다. 비우면 내역에 나온 것 전부. */
+    only?: string[];
+  }
+): HistoryAllocation {
+  const window = options.months ?? 6;
+  const allowed = options.only && options.only.length > 0 ? new Set(options.only) : null;
+
+  /** 카테고리 → 달 → { fixed, variable } */
+  const seen = new Map<string, Map<string, { fixed: number; variable: number }>>();
+  const monthsSeen = new Set<string>();
+
+  for (const tx of transactions) {
+    if (tx.type !== "EXPENSE") continue;
+    if (excluded(tx.category)) continue;
+    if (allowed && !allowed.has(tx.category)) continue;
+
+    const month = (tx.date || "").slice(0, 7);
+    if (!month) continue;
+    if (options.upTo && month >= options.upTo) continue;
+
+    if (!seen.has(tx.category)) seen.set(tx.category, new Map());
+    const byMonth = seen.get(tx.category)!;
+    const cell = byMonth.get(month) || { fixed: 0, variable: 0 };
+    if (tx.expenseType === "FIXED") cell.fixed += tx.amount;
+    else cell.variable += tx.amount;
+    byMonth.set(month, cell);
+  }
+
+  // 창 안의 달만 — 최근 것부터 window 개월
+  const allMonths = Array.from(
+    new Set(Array.from(seen.values()).flatMap((byMonth) => Array.from(byMonth.keys())))
+  )
+    .sort()
+    .slice(-window);
+  for (const month of allMonths) monthsSeen.add(month);
+
+  const rows: { category: string; fixed: number; variable: number; months: number }[] = [];
+
+  for (const [category, byMonth] of seen) {
+    let fixedSum = 0;
+    let variableSum = 0;
+    let count = 0;
+
+    for (const month of allMonths) {
+      const cell = byMonth.get(month);
+      if (!cell) continue;
+      fixedSum += cell.fixed;
+      variableSum += cell.variable;
+      count++;
+    }
+
+    if (count === 0) continue;
+
+    /*
+      나눌 때 쓰는 것은 "그 카테고리가 나온 달"이 아니라 "창 안의 달 전체"
+      입니다. 6개월 중 한 달만 쓴 항목을 그 달 금액 그대로 매달 주면, 어쩌다
+      한 번 산 것이 고정 지출이 됩니다.
+    */
+    const span = allMonths.length || 1;
+    rows.push({
+      category,
+      fixed: Math.round(fixedSum / span),
+      variable: Math.round(variableSum / span),
+      months: count,
+    });
+  }
+
+  const variableSum = rows.reduce((sum, row) => sum + row.variable, 0);
+  const spare = Math.max(0, options.spare);
+
+  const shares: HistoryShare[] = rows
+    .map((row) => {
+      /*
+        변동비 비중대로 가용 변동비를 나눕니다. 지난 달들의 변동비 합이 0이면
+        (전부 고정비였거나 기록이 없으면) 나눌 근거가 없어 고정비만 줍니다.
+      */
+      const portion = variableSum > 0 ? (spare * row.variable) / variableSum : 0;
+      return {
+        category: row.category,
+        fixed: row.fixed,
+        variable: row.variable,
+        months: row.months,
+        // 만원 단위로 떨어뜨립니다 — 예산은 눈으로 읽는 값입니다
+        budget: Math.round((row.fixed + portion) / 10_000) * 10_000,
+      };
+    })
+    .filter((row) => row.budget > 0)
+    .sort((a, b) => b.budget - a.budget);
+
+  return {
+    shares,
+    budgets: Object.fromEntries(shares.map((row) => [row.category, row.budget])),
+    months: allMonths.length,
+    fixedTotal: rows.reduce((sum, row) => sum + row.fixed, 0),
+    variableTotal: Math.min(spare, variableSum > 0 ? spare : 0),
+  };
 }

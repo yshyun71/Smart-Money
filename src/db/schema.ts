@@ -1,6 +1,10 @@
 import type { Database } from "sql.js";
 import type { CategorySplit } from "../constants/categories";
-import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
+import {
+  CATEGORY_SPLITS,
+  FINANCE_KEYWORDS,
+  SAVINGS_KEYWORDS,
+} from "../constants/categories";
 
 /**
  * Schema version of the on-device database.
@@ -17,7 +21,7 @@ import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 14;
 
 export interface Migration {
   version: number;
@@ -69,6 +73,7 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "transactions", column: "note", type: "TEXT" },
   { table: "budget_configs", column: "income_source", type: "TEXT" },
   { table: "budget_configs", column: "fixed_source", type: "TEXT" },
+  { table: "budget_configs", column: "savings_source", type: "TEXT" },
 ];
 
 /**
@@ -515,6 +520,42 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, "budget_configs", "fixed_source", "TEXT");
     },
   },
+  {
+    version: 13,
+    /*
+      저축도 실적에서 채울 수 있게 되어 그 출처가 필요해졌습니다. v12 를 고치지
+      않고 새 마이그레이션을 더합니다 — 이미 배포된 것은 그 기기에서 이미
+      실행됐으므로, 고쳐도 다시 돌지 않습니다(4.1).
+    */
+    description: "저축 금액의 출처 (실적/직접 입력)",
+    up: (db) => {
+      addColumn(db, "budget_configs", "savings_source", "TEXT");
+    },
+  },
+  {
+    version: 14,
+    /*
+      `저축`이 카테고리가 되었으니, 적금·예금·청약처럼 이미 `기타 금융`에
+      들어가 있던 지출을 그쪽으로 옮깁니다 — 새로 가져왔다면 갔을 자리로
+      보내는 것입니다(17.6). 과거와 새 데이터가 달리 분류되면 합계가 맞지
+      않습니다.
+
+      옮기는 것은 **지출뿐**입니다. `예금이자`는 나가는 돈이면 금융이지만
+      들어오는 돈이면 수입이고, 방향만이 그 둘을 가릅니다(6.2).
+
+      `category_rules`는 건드리지 않습니다. 사람이 "적금은 기타 금융"이라고
+      정해 둔 규칙을 앱이 뒤집을 이유가 없습니다(6.4).
+    */
+    description: "적금·예금·청약 지출을 기타 금융에서 저축으로",
+    up: (db) => {
+      const clauses = SAVINGS_KEYWORDS.map(() => "merchant LIKE ?").join(" OR ");
+      db.run(
+        `UPDATE transactions SET category = '저축'
+          WHERE category = '기타 금융' AND type = 'EXPENSE' AND (${clauses})`,
+        SAVINGS_KEYWORDS.map((word) => `%${word}%`)
+      );
+    },
+  },
 ];
 
 /**
@@ -613,6 +654,7 @@ export const DEFAULT_CATEGORIES = [
   { name: "카드대금", type: "VARIABLE", color: "#6366F1" },
   { name: "급여", type: "INCOME", color: "#059669" },
   { name: "기타수입", type: "INCOME", color: "#10B981" },
+  { name: "저축", type: "FIXED", color: "#0EA5E9" },
   { name: "기타지출", type: "VARIABLE", color: "#64748B" },
 ];
 

@@ -24,6 +24,7 @@ import {
   belowBaseline,
   emptyPolicy,
   fixedBaselines,
+  historyAllocate,
   spareOf,
   type BudgetPolicy,
   type FixedBaseline,
@@ -50,9 +51,11 @@ import {
   settlesFromBank,
 } from "../services/cardLink";
 import {
+  BUDGET_EXCLUDED_CATEGORIES,
   BUILT_IN_CATEGORIES,
   CARD_PAYMENT_CATEGORY,
   FIXED_BUDGET_CATEGORIES,
+  SAVINGS_CATEGORY,
 } from "../constants/categories";
 
 interface MonthlyHistoricalItem {
@@ -188,6 +191,8 @@ interface FinanceContextType {
   totalIncome: number;
   totalExpense: number;
   fixedExpenseTotal: number;
+  /** 그 달 계좌에서 저축으로 나간 돈 — `목표 저축액`과 짝을 이룹니다. */
+  savingsActualTotal: number;
   variableExpenseTotal: number;
   netSavings: number;
   fixedRatio: number;
@@ -199,7 +204,17 @@ interface FinanceContextType {
   budgetConfig: MonthlyBudgetConfig;
   updateBudgetConfig: (partial: Partial<MonthlyBudgetConfig>) => void;
   setCategoryBudget: (category: string, amount: number) => void;
-  autoAllocateBudgets: (income: number, fixed: number, savingsTarget: number) => void;
+  /**
+   * 지난 내역대로 카테고리 한도를 채웁니다.
+   *
+   * 채운 카테고리 수와 셈한 달의 수를 돌려줍니다 — 달이 0이면 배분의 근거가
+   * 없었다는 뜻이고, 화면이 그렇게 말해야 합니다.
+   */
+  autoAllocateBudgets: (
+    income: number,
+    fixed: number,
+    savingsTarget: number
+  ) => { changed: number; months: number };
 
   /** 달에 매이지 않는 카테고리별 한도 기준 (11.5). */
   budgetPolicy: BudgetPolicy;
@@ -392,13 +407,48 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     [monthlyTransactions]
   );
 
+  /*
+    고정비 합계에서 저축은 뺍니다.
+
+    적금은 매달 같은 날 같은 금액으로 나가니 §10의 판정으로 고정비가 됩니다.
+    그런데 가용 변동비는 `수입 − 고정비 − 저축`이라, 고정비에 한 번 세고 저축에
+    또 세면 같은 돈이 두 번 깎입니다. 저축은 `savingsActualTotal`로 따로
+    셈해 `목표 저축액`과 짝을 이룹니다(11.4).
+  */
   const fixedExpenseTotal = useMemo(
     () =>
       monthlyTransactions
-        .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "FIXED")
+        .filter(
+          (tx) =>
+            tx.type === "EXPENSE" &&
+            tx.expenseType === "FIXED" &&
+            tx.category !== SAVINGS_CATEGORY
+        )
         .reduce((acc, cur) => acc + cur.amount, 0),
     [monthlyTransactions]
   );
+
+  /**
+   * 그 달에 저축으로 빠져나간 돈.
+   *
+   * **계좌에서만** 셉니다 — 카드로 저축하지는 않으므로, 카드 내역에 저축
+   * 카테고리가 붙어 있다면 잘못 분류된 것이고 여기에 넣으면 숫자가 부풀려
+   * 집니다. 고정비/변동비 구분과는 무관하게 카테고리로만 봅니다.
+   */
+  const savingsActualTotal = useMemo(() => {
+    const bankIds = new Set(
+      accounts.filter((account) => account.type === "BANK").map((account) => account.id)
+    );
+
+    return monthlyTransactions
+      .filter(
+        (tx) =>
+          tx.type === "EXPENSE" &&
+          tx.category === SAVINGS_CATEGORY &&
+          bankIds.has(tx.accountId)
+      )
+      .reduce((acc, cur) => acc + cur.amount, 0);
+  }, [monthlyTransactions, accounts]);
 
   const variableExpenseTotal = useMemo(
     () =>
@@ -542,12 +592,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         categorySpentMap[t.category] = (categorySpentMap[t.category] || 0) + t.amount;
       });
 
+    /*
+      카드대금과 저축은 카테고리 예산에서 빼둡니다 — 카드대금은 그 카드의
+      명세서로, 저축은 `목표 저축액`으로 이미 셈해지는 돈입니다. 가용 변동비가
+      저축을 뺀 금액이라, 저축에 또 예산을 주면 없는 돈을 배분하게 됩니다.
+    */
     const allCategories = Array.from(
       new Set([
         ...Object.keys(budgetConfig.categoryBudgets || {}),
         ...Object.keys(categorySpentMap),
       ])
-    );
+    ).filter((category) => !BUDGET_EXCLUDED_CATEGORIES.includes(category as never));
 
     return allCategories
       .map((category) => {
@@ -711,24 +766,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     });
   };
 
-  const autoAllocateBudgets = (income: number, fixed: number, savingsTarget: number) => {
-    const availableVariable = Math.max(0, income - fixed - savingsTarget);
-
-    const ratios: Record<string, number> = {
-      "식비": 0.4,
-      "카페/간식": 0.08,
-      "쇼핑": 0.18,
-      "교통": 0.12,
-      "문화/여가": 0.1,
-      "생활": 0.04,
-      "의료": 0.03,
-      "기타지출": 0.05,
-    };
-
-    const newBudgets: Record<string, number> = { ...budgetConfig.categoryBudgets };
-    Object.entries(ratios).forEach(([cat, ratio]) => {
-      // Round to nearest 10,000 KRW
-      newBudgets[cat] = Math.round((availableVariable * ratio) / 10000) * 10000;
+  /**
+   * 지난 내역대로 이번 달 카테고리 한도를 정합니다.
+   *
+   * 예전에는 코드에 박힌 여덟 개 비율(식비 40%, 쇼핑 18% …)을 곱했습니다.
+   * 누구의 삶도 설명하지 못하는 숫자였고, 사용자가 만든 카테고리는 한 푼도
+   * 받지 못했으며, 화면은 그것을 "AI 50/30/20"이라고 불렀습니다. 그 사람이
+   * 실제로 어디에 얼마를 써 왔는지가 그 사람에게 맞는 유일한 근거입니다.
+   */
+  const autoAllocateBudgets = (
+    income: number,
+    fixed: number,
+    savingsTarget: number
+  ): { changed: number; months: number } => {
+    const plan = historyAllocate(transactions, {
+      spare: spareOf({ income, fixed, savings: savingsTarget }),
+      months: 6,
+      // 진행 중인 달은 반 달치라 평균을 끌어내립니다
+      upTo: selectedMonth,
     });
 
     const nextConfig: MonthlyBudgetConfig = {
@@ -737,11 +792,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       monthlyIncome: income,
       fixedExpenses: fixed,
       savingsTarget,
-      categoryBudgets: newBudgets,
+      // 배분에 나오지 않은 카테고리는 건드리지 않습니다
+      categoryBudgets: { ...budgetConfig.categoryBudgets, ...plan.budgets },
     };
 
     setBudgetConfig(nextConfig);
     persistBudget(nextConfig);
+
+    return { changed: Object.keys(plan.budgets).length, months: plan.months };
   };
 
   const dismissAlert = (id: string) => {
@@ -1360,6 +1418,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         totalIncome,
         totalExpense,
         fixedExpenseTotal,
+        savingsActualTotal,
         variableExpenseTotal,
         netSavings,
         fixedRatio,
