@@ -158,7 +158,7 @@ const MainContent: React.FC = () => {
         )}
 
         {/* App Header */}
-        <MobileHeader onNavigateTab={setActiveTab} />
+        <MobileHeader onNavigateTab={setActiveTab} activeTab={activeTab} />
 
         {/* Scrollable View Content - Using flex-1 with smooth scrolling */}
         <main

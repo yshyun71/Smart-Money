@@ -27,9 +27,27 @@ import {
   LogOut,
 } from "lucide-react";
 
+/**
+ * 월 이동 바를 감출 탭.
+ *
+ * 카드·계좌 탭만입니다. 그 화면은 **지금의** 잔액과 **앞으로** 낼 청구액을
+ * 보여 주므로 달을 고를 여지가 없고, 실제로 `selectedMonth`를 읽는 곳이 한
+ * 군데도 없습니다. 눌러도 아무 일이 없는 조작기를 남겨 두면 사용자는 자기가
+ * 무엇을 잘못했는지 찾게 됩니다 — 실제로 "이게 하는 역할이 무엇인가요?"라는
+ * 질문을 받았습니다.
+ *
+ * 포함이 아니라 **제외** 목록인 이유: 나머지 탭은 전부 달에 따라 값이 바뀝니다
+ * (컨텍스트가 내주는 `transactions` 자체가 그 달로 걸러진 목록입니다). 새 탭이
+ * 생겼을 때 목록에 넣는 것을 잊어 바를 잃는 쪽보다, 필요 없을 때 빼는 쪽이
+ * 안전합니다.
+ */
+const MONTHLESS_TABS: NavTab[] = ["assets"];
+
 export const MobileHeader: React.FC<{
   onNavigateTab?: (tab: NavTab) => void;
-}> = ({ onNavigateTab }) => {
+  /** 월 이동 바를 띄울지 정하는 데 씁니다. */
+  activeTab?: NavTab;
+}> = ({ onNavigateTab, activeTab }) => {
   const {
     selectedMonth,
     setSelectedMonth,
@@ -331,6 +349,7 @@ export const MobileHeader: React.FC<{
       </div>
 
       {/* Month & Financial Period Navigator Bar */}
+      {!(activeTab && MONTHLESS_TABS.includes(activeTab)) && (
       <div className="mt-2.5 flex items-center justify-between bg-slate-50/90 rounded-2xl px-2.5 py-1.5 border border-slate-200/70">
         <button
           onClick={handlePrevMonth}
@@ -364,6 +383,7 @@ export const MobileHeader: React.FC<{
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
+      )}
 
       {/* User Security Modal */}
       <UserSecurityModal

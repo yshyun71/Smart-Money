@@ -198,7 +198,7 @@ export const ConnectedAssetsView: React.FC<{
    */
   const billDisplay = (
     bill: PendingBill
-  ): { amount: number; headline: string; detail: string } => {
+  ): { amount: number; headline: string; detail: string; count: number } => {
     const month = (key: string) => `${Number(key.slice(5, 7))}월`;
 
     if (bill.settledMonth && bill.amount === 0) {
@@ -206,6 +206,7 @@ export const ConnectedAssetsView: React.FC<{
         amount: bill.settledAmount,
         headline: `${month(bill.settledMonth)} 결재완료`,
         detail: "이후 이용 내역 없음",
+        count: 0,
       };
     }
 
@@ -216,7 +217,12 @@ export const ConnectedAssetsView: React.FC<{
           ? `${month(bill.from)} 명세서 기준`
           : `${month(bill.from)} 1일부터 이용분`;
 
-    return { amount: bill.amount, headline: "이번 달 청구예정", detail };
+    return {
+      amount: bill.amount,
+      headline: "이번 달 청구예정",
+      detail,
+      count: bill.count,
+    };
   };
 
   const totalCardBilled = cardAccounts.reduce(
@@ -633,16 +639,7 @@ export const ConnectedAssetsView: React.FC<{
                       <span className="text-xs font-bold text-slate-900">
                         {acc.name}
                       </span>
-                      {/*
-                        건수는 "결제 이후 이용분"의 건수입니다. 정산이 끝난
-                        카드에서는 0건이 되어, 낸 금액 옆에 붙으면 오히려
-                        헷갈립니다 — 그때는 아래 설명 줄이 대신 말합니다.
-                      */}
-                      {billOf(acc.id).count > 0 && (
-                        <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md font-semibold">
-                          {billOf(acc.id).count}건
-                        </span>
-                      )}
+
                     </div>
                     <div className="text-[11px] text-slate-400 mt-0.5">
                       {acc.institution} • {acc.identifier}
@@ -655,22 +652,31 @@ export const ConnectedAssetsView: React.FC<{
                     const shown = billDisplay(billOf(acc.id));
                     const paid = shown.headline.endsWith("결재완료");
                     return (
-                      <div className="text-right min-w-0">
+                      <div className="text-right shrink-0">
+                        {/*
+                          금액은 한 줄이어야 합니다 — 1,202,440원이 "1,202,440"과
+                          "원"으로 갈려 두 줄이 됐습니다. 건수 태그를 카드 이름
+                          옆에서 이 설명 줄로 내려, 금액이 쓸 폭을 넓힙니다.
+                        */}
                         <div
-                          className={`text-sm font-black ${
+                          className={`text-sm font-black whitespace-nowrap ${
                             paid ? "text-emerald-700" : "text-slate-900"
                           }`}
                         >
                           {withCommas(shown.amount)}원
                         </div>
                         <div
-                          className={`text-[10px] ${
+                          className={`text-[10px] whitespace-nowrap ${
                             paid ? "font-bold text-emerald-600" : "text-slate-400"
                           }`}
                         >
                           {shown.headline}
+                          {/* 정산된 카드의 0건은 낸 금액 옆에서 헷갈리므로 빼둡니다 */}
+                          {!paid && shown.count > 0 && ` (${shown.count}건)`}
                         </div>
-                        <div className="text-[9px] text-slate-300">{shown.detail}</div>
+                        <div className="text-[9px] text-slate-300 whitespace-nowrap">
+                          {shown.detail}
+                        </div>
                       </div>
                     );
                   })()}
