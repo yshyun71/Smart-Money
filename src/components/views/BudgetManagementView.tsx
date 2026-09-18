@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput, withCommas } from "../../utils/format";
 import {
@@ -35,12 +35,46 @@ export const BudgetManagementView: React.FC<{
     fixedExpenseTotal,
     disposableIncome,
     totalBudgeted,
+    selectedMonth,
   } = useFinance();
 
-  const [incomeInput, setIncomeInput] = useState(formatAmountInput(String(budgetConfig.monthlyIncome)));
-  const [fixedInput, setFixedInput] = useState(formatAmountInput(String(budgetConfig.fixedExpenses)));
-  const [savingsInput, setSavingsInput] = useState(formatAmountInput(String(budgetConfig.savingsTarget)));
+  /** 0 은 "아직 안 정했다"는 뜻이라 비워 둡니다 — 자리표시자가 보여야 적을 곳임을 압니다. */
+  const asInput = (value: number) => (value > 0 ? formatAmountInput(String(value)) : "");
+
+  const [incomeInput, setIncomeInput] = useState(() => asInput(budgetConfig.monthlyIncome));
+  const [fixedInput, setFixedInput] = useState(() => asInput(budgetConfig.fixedExpenses));
+  const [savingsInput, setSavingsInput] = useState(() => asInput(budgetConfig.savingsTarget));
   const [showNotificationToast, setShowNotificationToast] = useState<string | null>(null);
+
+  /*
+    달을 옮기면 그 달의 값을 다시 싣습니다.
+
+    예산은 달마다 따로 저장되고(`budget_configs` PK(user_id, month)) 화면의
+    나머지는 선택한 달을 따라가는데, 이 세 칸만 첫 렌더의 값에 머물러 있었습니다
+    — useState 초기식은 한 번만 계산되기 때문입니다(14.7). 그래서 월을 바꿔도
+    아래가 그대로인 것처럼 보였습니다.
+
+    의존성을 달 하나로 좁혀, 입력 중인 값을 저장 전에 지우지 않게 합니다.
+  */
+  useEffect(() => {
+    setIncomeInput(asInput(budgetConfig.monthlyIncome));
+    setFixedInput(asInput(budgetConfig.fixedExpenses));
+    setSavingsInput(asInput(budgetConfig.savingsTarget));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth]);
+
+  /** 선택한 달을 사람이 읽는 말로. */
+  const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
+  const isThisMonth = selectedMonth === new Date().toISOString().slice(0, 7);
+
+  /*
+    입력칸의 값과 저장된 값이 다른가. 저장 버튼을 누르지 않고 떠나면 사라지므로,
+    그 사실이 화면에 보여야 합니다.
+  */
+  const unsaved =
+    parseAmountInput(incomeInput) !== budgetConfig.monthlyIncome ||
+    parseAmountInput(fixedInput) !== budgetConfig.fixedExpenses ||
+    parseAmountInput(savingsInput) !== budgetConfig.savingsTarget;
 
   // Apply income/fixed change
   const handleApplyIncomeFixed = () => {
@@ -58,13 +92,17 @@ export const BudgetManagementView: React.FC<{
 
   // Sync with actual current month data
   const handleSyncActuals = () => {
-    setIncomeInput(formatAmountInput(String(totalIncome)));
-    setFixedInput(formatAmountInput(String(fixedExpenseTotal)));
+    setIncomeInput(asInput(totalIncome));
+    setFixedInput(asInput(fixedExpenseTotal));
     updateBudgetConfig({
       monthlyIncome: totalIncome,
       fixedExpenses: fixedExpenseTotal,
     });
-    triggerToast("9월 실제 수입 및 고정비가 자동 반영되었습니다.");
+    triggerToast(
+      isThisMonth
+        ? `${monthName} 실제 내역을 채웠습니다. 아직 달이 끝나지 않아 실제보다 적을 수 있습니다.`
+        : `${monthName} 실제 수입과 고정비를 채웠습니다.`
+    );
   };
 
   // Run AI auto-allocation
@@ -224,9 +262,15 @@ export const BudgetManagementView: React.FC<{
             <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center">
               1
             </span>
-            <h3 className="text-xs font-bold text-slate-900">
-              월 수입 & 고정비 입력
-            </h3>
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold text-slate-900">
+                {monthName} 수입 &amp; 고정비 입력
+              </h3>
+              {/* 읽기 전용 카드로 보여 아무도 누르지 않던 칸들입니다 */}
+              <p className="text-[10px] text-slate-400">
+                세 칸은 직접 적는 값입니다. 적은 뒤 [기본 정보 저장]을 누르세요.
+              </p>
+            </div>
           </div>
 
           <button
@@ -234,9 +278,22 @@ export const BudgetManagementView: React.FC<{
             className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center gap-1 transition"
           >
             <RefreshCw className="w-3 h-3" />
-            <span>9월 내역 불러오기</span>
+            <span>{monthName} 실제 내역으로 채우기</span>
           </button>
         </div>
+
+        {/*
+          "예상"인데 실적을 채우는 버튼이 옆에 있습니다. 달이 끝나기 전에 누르면
+          아직 안 들어온 급여가 빠진 금액이 들어오므로, 그때는 지난달을 보라고
+          알려 줍니다 — 위쪽 월 이동 화살표를 쓰는 법을 함께 알리는 셈입니다.
+        */}
+        {isThisMonth && (
+          <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-2.5 py-2 leading-relaxed">
+            {monthName}은 아직 끝나지 않았습니다. [{monthName} 실제 내역으로 채우기]를
+            누르면 지금까지 기록된 금액만 들어옵니다. 한 달치 기준을 잡으려면 위쪽
+            <strong> ‹ </strong>로 지난달을 골라 채우는 편이 정확합니다.
+          </p>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           {/* Monthly Income Input */}
@@ -247,18 +304,19 @@ export const BudgetManagementView: React.FC<{
                 월 예상 총 수입
               </span>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center gap-1">
               <input
                 type="text"
+                inputMode="numeric"
                 value={incomeInput}
                 onChange={(e) => setIncomeInput(formatAmountInput(e.target.value))}
                 placeholder="예: 3,482,000"
-                className="w-full bg-transparent text-sm font-black text-slate-900 outline-hidden"
+                className="w-full bg-white rounded-xl border border-slate-200 px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
               />
               <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
             </div>
             <span className="text-[10px] text-slate-400 mt-1 block">
-              급여+기타 수입 합산
+              {monthName}에 들어올 것으로 보는 급여 + 기타 수입
             </span>
           </div>
 
@@ -270,18 +328,19 @@ export const BudgetManagementView: React.FC<{
                 월간 고정 지출
               </span>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center gap-1">
               <input
                 type="text"
+                inputMode="numeric"
                 value={fixedInput}
                 onChange={(e) => setFixedInput(formatAmountInput(e.target.value))}
                 placeholder="예: 995,690"
-                className="w-full bg-transparent text-sm font-black text-slate-900 outline-hidden"
+                className="w-full bg-white rounded-xl border border-slate-200 px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
               />
               <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
             </div>
             <span className="text-[10px] text-slate-400 mt-1 block">
-              월세·관리비·통신비·보험
+              월세·관리비·통신비·보험처럼 매달 나가는 돈
             </span>
           </div>
 
@@ -293,13 +352,14 @@ export const BudgetManagementView: React.FC<{
                 목표 저축액
               </span>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center gap-1">
               <input
                 type="text"
+                inputMode="numeric"
                 value={savingsInput}
                 onChange={(e) => setSavingsInput(formatAmountInput(e.target.value))}
                 placeholder="예: 600,000"
-                className="w-full bg-transparent text-sm font-black text-slate-900 outline-hidden"
+                className="w-full bg-white rounded-xl border border-slate-200 px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
               />
               <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
             </div>
@@ -331,9 +391,13 @@ export const BudgetManagementView: React.FC<{
         <div className="flex items-center gap-2">
           <button
             onClick={handleApplyIncomeFixed}
-            className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition active:scale-98"
+            className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition active:scale-98 ${
+              unsaved
+                ? "bg-amber-500 hover:bg-amber-400 text-white shadow-xs"
+                : "bg-slate-900 hover:bg-slate-800 text-white"
+            }`}
           >
-            기본 정보 저장
+            {unsaved ? "● 저장되지 않음 — 기본 정보 저장" : "기본 정보 저장"}
           </button>
           <button
             onClick={handleAutoAllocate}
