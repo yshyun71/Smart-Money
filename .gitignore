@@ -13,6 +13,14 @@ coverage/
 # Runtime SQLite database (contains personal finance data)
 finance.db
 
+# Backups and exports — real ledgers, never the repository's business.
+# A .db here once reached a public remote; the rule is the whole shape, not
+# one filename, because the next one will be named something else.
+DB Backup/
+*.db
+*.sqlite
+*.smbk
+
 # PWA dev service worker output
 dev-dist/
 
