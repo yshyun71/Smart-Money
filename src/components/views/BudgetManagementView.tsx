@@ -81,14 +81,21 @@ export const BudgetManagementView: React.FC<{
     );
 
   /*
-    달을 옮기면 그 달의 값을 다시 싣습니다.
+    그 달의 값을 다시 싣습니다 — **설정이 도착한 뒤에.**
 
-    예산은 달마다 따로 저장되고(`budget_configs` PK(user_id, month)) 화면의
-    나머지는 선택한 달을 따라가는데, 이 세 칸만 첫 렌더의 값에 머물러 있었습니다
-    — useState 초기식은 한 번만 계산되기 때문입니다(14.7). 그래서 월을 바꿔도
-    아래가 그대로인 것처럼 보였습니다.
+    예산은 달마다 따로 저장되고(`budget_configs` PK(user_id, month)), 이 세 칸은
+    `useState` 로 잡혀 있어 초기식이 한 번만 계산됩니다(14.7). 그래서 처음에는
+    `selectedMonth` 를 의존성으로 두어 다시 실었는데, 그것만으로는 부족했습니다.
 
-    의존성을 달 하나로 좁혀, 입력 중인 값을 저장 전에 지우지 않게 합니다.
+    `selectedMonth` 가 바뀌는 순간 `budgetConfig` 는 **아직 이전 달의 것**입니다
+    — 새 달의 설정은 `refreshDbData` 가 DB 에서 읽어 온 뒤에야 도착합니다. 그
+    사이에 효과가 돌아 칸에 **이전 달 값**을 싣고, 그 뒤 설정이 바뀌어도 효과는
+    다시 돌지 않아 값이 그대로 남았습니다. 8월을 두 번 봤는데 숫자가 다른 이유가
+    이것이고, 세 칸이 모두 `수정 중` 으로 보인 이유도 같습니다.
+
+    그래서 **도착한 설정의 달**(`budgetConfig.month`)을 의존성으로 씁니다. 그
+    값은 다른 달의 설정이 실릴 때만 바뀌므로, 같은 달에서 입력 중인 값을 저장
+    전에 지우지도 않습니다.
   */
   useEffect(() => {
     setIncomeInput(asInput(budgetConfig.monthlyIncome));
@@ -98,7 +105,14 @@ export const BudgetManagementView: React.FC<{
     setFixedTouched(false);
     setSavingsTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth]);
+  }, [budgetConfig.month]);
+
+  /*
+    아직 그 달의 설정이 오지 않은 상태. 이때의 숫자는 이전 달의 것이므로
+    보여 주지 않습니다 — 잘못된 값을 잠깐 보여 주는 것이 비워 두는 것보다
+    나쁩니다(17.1).
+  */
+  const settling = budgetConfig.month !== selectedMonth;
 
   /** 선택한 달을 사람이 읽는 말로. */
   const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
@@ -109,9 +123,10 @@ export const BudgetManagementView: React.FC<{
     그 사실이 화면에 보여야 합니다.
   */
   const unsaved =
-    parseAmountInput(incomeInput) !== budgetConfig.monthlyIncome ||
-    parseAmountInput(fixedInput) !== budgetConfig.fixedExpenses ||
-    parseAmountInput(savingsInput) !== budgetConfig.savingsTarget;
+    !settling &&
+    (parseAmountInput(incomeInput) !== budgetConfig.monthlyIncome ||
+      parseAmountInput(fixedInput) !== budgetConfig.fixedExpenses ||
+      parseAmountInput(savingsInput) !== budgetConfig.savingsTarget);
 
   // Apply income/fixed change
   const handleApplyIncomeFixed = () => {
@@ -205,13 +220,30 @@ export const BudgetManagementView: React.FC<{
     triggerToast("🔔 테스트 예산 경고 푸시 알림이 발송되었습니다.");
   };
 
+  /*
+    초록 카드는 **입력칸에 적힌 값**으로 계산합니다.
+
+    괄호 속 내역은 입력칸에서, 합계는 저장된 설정에서 가져오고 있었습니다.
+    그래서 "(수입 7,021,213원 - 고정비 2,765,376원)" 옆에 "0원"이 찍혔습니다 —
+    한 줄 안에서 두 숫자가 서로 다른 말을 한 것입니다.
+
+    이 칸은 "저장하면 이렇게 된다"를 보여 주는 자리이므로 입력칸을 따릅니다.
+    저장된 값으로 셈하는 것은 2번 블록의 `미배분` 쪽입니다.
+  */
   const availableVariableBudget = spareOf({
+    income: parseAmountInput(incomeInput),
+    fixed: parseAmountInput(fixedInput),
+    savings: parseAmountInput(savingsInput),
+  });
+
+  /** 저장된 값으로 셈한 가용 변동비 — 2번 블록의 배분 비교에 씁니다. */
+  const savedVariableBudget = spareOf({
     income: budgetConfig.monthlyIncome,
     fixed: budgetConfig.fixedExpenses,
     savings: budgetConfig.savingsTarget,
   });
 
-  const budgetDifference = availableVariableBudget - totalBudgeted;
+  const budgetDifference = savedVariableBudget - totalBudgeted;
 
   return (
     <div className="space-y-4 pt-1">
@@ -414,7 +446,12 @@ export const BudgetManagementView: React.FC<{
               source: savingsTouched ? ("USER" as const) : budgetConfig.savingsSource,
             },
           ]).map((field) => {
-            const dirty = parseAmountInput(field.value) !== field.saved;
+            /*
+              아직 그 달의 설정이 오지 않았다면 칸의 값은 이전 달의 것이고,
+              사람이 고친 것이 아닙니다. 그때 `수정 중` 이라고 말하면
+              거짓말이 됩니다.
+            */
+            const dirty = !settling && parseAmountInput(field.value) !== field.saved;
             return (
               <div
                 key={field.key}
@@ -504,13 +541,19 @@ export const BudgetManagementView: React.FC<{
         <div className="flex items-center gap-2">
           <button
             onClick={handleApplyIncomeFixed}
-            className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition active:scale-98 ${
+            // 전환 중에는 잠급니다 — 이전 달 값을 이 달에 저장하게 됩니다
+            disabled={settling}
+            className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition active:scale-98 disabled:opacity-40 ${
               unsaved
                 ? "bg-amber-500 hover:bg-amber-400 text-white shadow-xs"
                 : "bg-slate-900 hover:bg-slate-800 text-white"
             }`}
           >
-            {unsaved ? "● 저장되지 않음 — 기본 정보 저장" : "기본 정보 저장"}
+            {settling
+              ? `${monthName} 값을 읽는 중...`
+              : unsaved
+                ? "● 저장되지 않음 — 기본 정보 저장"
+                : "기본 정보 저장"}
           </button>
           <button
             onClick={handleAutoAllocate}
@@ -594,7 +637,7 @@ export const BudgetManagementView: React.FC<{
           가용 변동비와 실제 배분한 합계의 차이. 1번 블록은 가용을, 2번은 배분
           합계를 따로 보여 주기만 해서 얼마가 남았는지 아무도 알 수 없었습니다.
         */}
-        {availableVariableBudget > 0 && (
+        {savedVariableBudget > 0 && (
           <div
             className={`p-2.5 rounded-xl border text-[11px] flex items-center justify-between gap-2 ${
               budgetDifference < 0
