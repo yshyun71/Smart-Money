@@ -320,9 +320,10 @@ export const BudgetManagementView: React.FC<{
 
       {/* SECTION 1: Income & Fixed Expense Setup */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-3.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center">
+        {/* 버튼이 먼저 자리를 잡고, 설명 문구가 남은 폭에서 접힙니다 */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <span className="w-6 h-6 shrink-0 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center">
               1
             </span>
             <div className="min-w-0">
@@ -330,7 +331,7 @@ export const BudgetManagementView: React.FC<{
                 {monthName} 수입 &amp; 고정비 입력
               </h3>
               {/* 읽기 전용 카드로 보여 아무도 누르지 않던 칸들입니다 */}
-              <p className="text-[10px] text-slate-400">
+              <p className="text-[10px] text-slate-400 leading-relaxed">
                 세 칸은 직접 적는 값입니다. 적은 뒤 [기본 정보 저장]을 누르세요.
               </p>
             </div>
@@ -338,10 +339,10 @@ export const BudgetManagementView: React.FC<{
 
           <button
             onClick={handleSyncActuals}
-            className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center gap-1 transition"
+            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center gap-1 transition"
           >
-            <RefreshCw className="w-3 h-3" />
-            <span>{monthName} 실제 내역으로 채우기</span>
+            <RefreshCw className="w-3 h-3 shrink-0" />
+            <span>{monthName} 실적 채우기</span>
           </button>
         </div>
 
@@ -352,7 +353,7 @@ export const BudgetManagementView: React.FC<{
         */}
         {isThisMonth && (
           <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-2.5 py-2 leading-relaxed">
-            {monthName}은 아직 끝나지 않았습니다. [{monthName} 실제 내역으로 채우기]를
+            {monthName}은 아직 끝나지 않았습니다. [{monthName} 실적 채우기]를
             누르면 지금까지 기록된 금액만 들어옵니다. 한 달치 기준을 잡으려면 위쪽
             <strong> ‹ </strong>로 지난달을 골라 채우는 편이 정확합니다.
           </p>
@@ -527,17 +528,18 @@ export const BudgetManagementView: React.FC<{
 
       {/* SECTION 2: Category Budget Allocations & Live Spending Bars */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-3.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <span className="w-6 h-6 shrink-0 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center">
               2
             </span>
             <h3 className="text-xs font-bold text-slate-900">
-              카테고리별 예산 한도 & 소진율
+              카테고리별 예산 한도 &amp; 소진율
             </h3>
           </div>
 
-          <div className="text-right">
+          {/* 금액은 접을 곳이 없는 값이라 폭을 먼저 잡습니다 */}
+          <div className="text-right shrink-0 whitespace-nowrap">
             <span className="text-[10px] text-slate-400 block">설정 총예산</span>
             <span className="text-xs font-black text-slate-900">
               {withCommas(totalBudgeted)}원

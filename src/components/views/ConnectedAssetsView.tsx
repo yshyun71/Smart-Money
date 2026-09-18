@@ -365,12 +365,17 @@ export const ConnectedAssetsView: React.FC<{
 
       {/* Top Banner with Primary Add Buttons */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
+        {/*
+          버튼이 먼저 자리를 잡고, 설명 문구가 남은 폭에서 접힙니다.
+          둘 다 줄어들 수 있게 두었더니 "새로고침"이 두 글자씩 갈려 두 줄이
+          됐습니다 — 버튼 글자는 접을 곳이 없는 말이고, 문구는 접혀도 읽힙니다.
+        */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-sm font-bold text-slate-900 tracking-tight">
-              연동된 자산 (카드 & 통장)
+              연동된 자산 (카드 &amp; 통장)
             </h2>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-500 leading-relaxed">
               카드·통장 내역을 엑셀·CSV로 가져와 카드별로 관리합니다
             </p>
           </div>
@@ -378,10 +383,10 @@ export const ConnectedAssetsView: React.FC<{
           <button
             onClick={syncAccounts}
             disabled={isSyncing}
-            className="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold transition disabled:opacity-50 active:scale-95"
+            className="shrink-0 whitespace-nowrap flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold transition disabled:opacity-50 active:scale-95"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`}
+              className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? "animate-spin" : ""}`}
             />
             <span>{isSyncing ? "새로고침 중..." : "새로고침"}</span>
           </button>
