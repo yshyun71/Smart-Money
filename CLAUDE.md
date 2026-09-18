@@ -588,6 +588,15 @@ AI 자동 분류는 **사용자 규칙 → 자체 판별 → AI** 순으로 적�
 
 - Cloudflare: Build command `npm run build`, Deploy command `npx wrangler deploy`. 배포 디렉터리는 `wrangler.jsonc`의 `assets.directory`가 결정합니다.
 - GitHub `main`에 푸시하면 Cloudflare가 빌드·배포합니다(1~3분).
+
+### 13.1 무엇이 웹에 올라가는가
+
+**배포되는 것은 `dist/` 뿐입니다.** `vite build`가 만들고, 그 안에 들어가는 것은 번들 결과물과 **`public/`을 그대로 복사한 것**뿐입니다(`publicDir`·`outDir`을 따로 설정하지 않아 기본값입니다). 저장소 루트의 다른 파일은 **서비스되지 않습니다.**
+
+- **`public/`에 둔 것은 그대로 웹에 공개됩니다.** 이것이 이 절의 요점입니다 — 가계부 백업(`.db`·`.smbk`), 명세서 샘플, 메모 따위를 그 안에 두지 마세요. 주소만 알면 누구나 내려받습니다.
+- `.gitignore`가 `*.db`·`*.sqlite`·`*.smbk`를 어디서든 걸러 주므로 **GitHub 경유 배포로는** 새지 않습니다. 다만 로컬에서 `npx wrangler deploy`를 직접 하면 git과 무관하게 **작업 폴더의 `public/`이 그대로 실립니다.** 무시 규칙이 이 경로를 막아 주지 않습니다.
+- 실제로 저장소 루트 `DB Backup/`에 백업 `.db`가 커밋되어 공개 저장소에 올라간 일이 있었습니다. **웹으로는 서비스되지 않았습니다**(루트는 `dist/`에 복사되지 않으므로) — 한 번 겪어 두었으니, 같은 걱정이 생기면 `find dist -iname "*.db"`로 확인하면 됩니다.
+- Cloudflare 빌드 컨테이너는 저장소를 clone하므로 빌드 시점에 그런 파일의 사본을 갖습니다. 일회성 환경이고 산출물에는 포함되지 않습니다.
 - `workbox.globPatterns`에 **`wasm`을 반드시 포함**해야 오프라인에서 DB가 열립니다.
 - 서비스 워커는 HTTPS 또는 localhost에서만 동작합니다.
 - `registerType: 'autoUpdate'`라 **한 번 실행에서 새 버전을 받고 다음 실행에서 화면에 반영**됩니다. 사용자에게는 "두 번 열어보라"고 안내하거나, 새로고침 안내를 띄우세요.
