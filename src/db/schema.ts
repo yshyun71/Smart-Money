@@ -21,7 +21,7 @@ import {
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export interface Migration {
   version: number;
@@ -71,6 +71,7 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "accounts", column: "payment_account_id", type: "TEXT" },
   { table: "accounts", column: "payment_account_label", type: "TEXT" },
   { table: "transactions", column: "note", type: "TEXT" },
+  { table: "transactions", column: "origin", type: "TEXT" },
   { table: "budget_configs", column: "income_source", type: "TEXT" },
   { table: "budget_configs", column: "fixed_source", type: "TEXT" },
   { table: "budget_configs", column: "savings_source", type: "TEXT" },
@@ -107,6 +108,25 @@ const EXPECTED_TABLES: { table: string; ddl: string }[] = [
         updated_at TEXT NOT NULL
       );`,
   },
+  {
+    /*
+      공유·붙여넣은 문자를 파싱해 쌓아 두는 곳. 사용자가 확인하고 고를 때까지
+      거래가 되지 않으므로 `transactions` 와 따로 둡니다 — 확인 전의 추정을
+      가계부에 섞으면 합계가 흔들립니다.
+    */
+    table: "sms_inbox",
+    ddl: `CREATE TABLE IF NOT EXISTS sms_inbox (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        parsed_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sms_inbox_scope
+        ON sms_inbox(user_id, status);`,
+    },
   {
     table: "category_rules",
     ddl: `CREATE TABLE IF NOT EXISTS category_rules (
@@ -554,6 +574,40 @@ export const MIGRATIONS: Migration[] = [
           WHERE category = '기타 금융' AND type = 'EXPENSE' AND (${clauses})`,
         SAVINGS_KEYWORDS.map((word) => `%${word}%`)
       );
+    },
+  },
+  {
+    version: 15,
+    /*
+      문자 대기함과, 각 줄의 출처.
+
+      출처가 필요한 이유는 문자로 넣은 건이 **임시**라는 데 있습니다. 같은
+      거래가 나중에 명세서로 들어오고 그쪽이 더 정확하므로, 그때 문자 건을
+      알아보고 대체해야 같은 돈이 두 번 세지지 않습니다.
+
+      이미 있던 줄은 `STATEMENT` 로 봅니다 — 대부분 명세서에서 온 것이고,
+      문자로 넣었던 옛 건은 메모가 '문자 자동 인식'이라 그것으로 가립니다.
+    */
+    description: "문자 대기함과 거래의 출처",
+    up: (db) => {
+      addColumn(db, "transactions", "origin", "TEXT");
+      db.run(`CREATE TABLE IF NOT EXISTS sms_inbox (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        parsed_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        created_at TEXT NOT NULL
+      );`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_sms_inbox_scope
+        ON sms_inbox(user_id, status);`);
+
+      db.run(
+        `UPDATE transactions SET origin = 'SMS'
+          WHERE origin IS NULL AND memo LIKE '%문자 자동 인식%'`
+      );
+      db.run("UPDATE transactions SET origin = 'STATEMENT' WHERE origin IS NULL");
     },
   },
 ];

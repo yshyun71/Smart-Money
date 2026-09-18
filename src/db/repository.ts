@@ -138,6 +138,7 @@ export function deleteUser(id: string): void {
     { sql: "DELETE FROM category_rules WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM custom_categories WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM budget_policy WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM sms_inbox WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM users WHERE id = ?", params: [id] },
   ]);
 }
@@ -303,7 +304,7 @@ export function listTransactions(month?: string): Transaction[] {
   let sql = `
     SELECT id, date, time, type,
            expense_type as expenseType, category, merchant, amount,
-           payment_method as paymentMethod, account_id as accountId, memo, note,
+           payment_method as paymentMethod, account_id as accountId, memo, note, origin,
            is_fixed_recurring as isFixedRecurring, recurring_day as recurringDay,
            linked_account_id as linkedAccountId, billing_month as billingMonth
     FROM transactions
@@ -322,14 +323,15 @@ export function listTransactions(month?: string): Transaction[] {
     linkedAccountId: row.linkedAccountId || undefined,
     billingMonth: row.billingMonth || undefined,
     note: row.note || undefined,
+    origin: row.origin || undefined,
   }));
 }
 
 function insertStatement(tx: Transaction, userId: string) {
   return {
     sql: `INSERT INTO transactions
-            (id, user_id, date, time, type, expense_type, category, merchant, amount, payment_method, account_id, memo, note, is_fixed_recurring, recurring_day, linked_account_id, billing_month, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, user_id, date, time, type, expense_type, category, merchant, amount, payment_method, account_id, memo, note, origin, is_fixed_recurring, recurring_day, linked_account_id, billing_month, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     params: [
       tx.id,
       userId,
@@ -344,6 +346,7 @@ function insertStatement(tx: Transaction, userId: string) {
       tx.accountId || "",
       tx.memo || "",
       tx.note || null,
+      tx.origin || "MANUAL",
       tx.isFixedRecurring ? 1 : 0,
       tx.recurringDay ?? null,
       tx.linkedAccountId || null,
@@ -438,7 +441,7 @@ export function updateTransaction(tx: Transaction): void {
   run(
     `UPDATE transactions SET
        date = ?, time = ?, type = ?, expense_type = ?, category = ?, merchant = ?,
-       amount = ?, payment_method = ?, account_id = ?, memo = ?, note = ?,
+       amount = ?, payment_method = ?, account_id = ?, memo = ?, note = ?, origin = ?,
        is_fixed_recurring = ?, recurring_day = ?, linked_account_id = ?,
        billing_month = ?
      WHERE id = ? AND user_id = ?`,
@@ -454,6 +457,7 @@ export function updateTransaction(tx: Transaction): void {
       tx.accountId || "",
       tx.memo || "",
       tx.note || null,
+      tx.origin || "MANUAL",
       tx.isFixedRecurring ? 1 : 0,
       tx.recurringDay ?? null,
       tx.linkedAccountId || null,
@@ -479,7 +483,7 @@ export function applyImport(inserts: Transaction[], updates: Transaction[]): voi
     ...updates.map((tx) => ({
       sql: `UPDATE transactions SET
               date = ?, time = ?, type = ?, expense_type = ?, category = ?, merchant = ?,
-              amount = ?, payment_method = ?, account_id = ?, memo = ?, note = ?,
+              amount = ?, payment_method = ?, account_id = ?, memo = ?, note = ?, origin = ?,
               is_fixed_recurring = ?, recurring_day = ?, linked_account_id = ?,
               billing_month = ?
             WHERE id = ? AND user_id = ?`,
@@ -495,6 +499,7 @@ export function applyImport(inserts: Transaction[], updates: Transaction[]): voi
         tx.accountId || "",
         tx.memo || "",
         tx.note || null,
+        tx.origin || "STATEMENT",
         tx.isFixedRecurring ? 1 : 0,
         tx.recurringDay ?? null,
         tx.linkedAccountId || null,
@@ -711,6 +716,104 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
  * 카테고리별 한도를 매달 다시 적지 않으려고 두는 것이라, 사용자당 하나이고
  * 어느 달에든 적용됩니다.
  */
+/**
+ * 공유·붙여넣은 문자를 쌓아 두는 대기함.
+ *
+ * 확인 전의 추정을 `transactions` 에 섞으면 합계가 흔들리므로 따로 둡니다.
+ * 사용자가 고르고 등록한 뒤에야 거래가 됩니다.
+ */
+export interface SmsInboxRow {
+  id: string;
+  receivedAt: string;
+  rawText: string;
+  /** `services/smsParse.ts` 가 읽어 낸 것. 화면에서 고칠 수 있습니다. */
+  parsed: Record<string, unknown>;
+  status: "PENDING" | "REGISTERED" | "DISMISSED";
+}
+
+export function listSmsInbox(status?: SmsInboxRow["status"]): SmsInboxRow[] {
+  const params: any[] = [requireUser()];
+  let sql = `SELECT id, received_at, raw_text, parsed_json, status
+             FROM sms_inbox WHERE user_id = ?`;
+  if (status) {
+    sql += " AND status = ?";
+    params.push(status);
+  }
+  sql += " ORDER BY received_at DESC";
+
+  return queryAll<any>(sql, params).map((row) => {
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(row.parsed_json || "{}");
+    } catch {
+      // 깨진 JSON 은 빈 것으로 봅니다 — 원문이 남아 있어 다시 읽을 수 있습니다
+    }
+    return {
+      id: row.id,
+      receivedAt: row.received_at,
+      rawText: row.raw_text,
+      parsed,
+      status: row.status,
+    };
+  });
+}
+
+/** 같은 문자를 두 번 공유해도 한 줄만 남도록 원문으로 확인합니다. */
+export function smsInboxHasRaw(rawText: string): boolean {
+  const row = queryOne<{ count: number }>(
+    "SELECT COUNT(*) as count FROM sms_inbox WHERE user_id = ? AND raw_text = ?",
+    [requireUser(), rawText]
+  );
+  return Boolean(row && row.count > 0);
+}
+
+export function addSmsInbox(
+  rows: { id: string; receivedAt: string; rawText: string; parsed: unknown }[]
+): void {
+  if (rows.length === 0) return;
+  const userId = requireUser();
+  const now = new Date().toISOString();
+
+  runBatch(
+    rows.map((row) => ({
+      sql: `INSERT OR REPLACE INTO sms_inbox
+              (id, user_id, received_at, raw_text, parsed_json, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`,
+      params: [row.id, userId, row.receivedAt, row.rawText, JSON.stringify(row.parsed), now],
+    }))
+  );
+}
+
+export function setSmsInboxStatus(ids: string[], status: SmsInboxRow["status"]): void {
+  if (ids.length === 0) return;
+  const userId = requireUser();
+  runBatch(
+    ids.map((id) => ({
+      sql: "UPDATE sms_inbox SET status = ? WHERE id = ? AND user_id = ?",
+      params: [status, id, userId],
+    }))
+  );
+}
+
+export function updateSmsInboxParsed(id: string, parsed: unknown): void {
+  run("UPDATE sms_inbox SET parsed_json = ? WHERE id = ? AND user_id = ?", [
+    JSON.stringify(parsed),
+    id,
+    requireUser(),
+  ]);
+}
+
+export function deleteSmsInbox(ids: string[]): void {
+  if (ids.length === 0) return;
+  const userId = requireUser();
+  runBatch(
+    ids.map((id) => ({
+      sql: "DELETE FROM sms_inbox WHERE id = ? AND user_id = ?",
+      params: [id, userId],
+    }))
+  );
+}
+
 export function getBudgetPolicy(): BudgetPolicy {
   const row = queryOne<{ mode: string; rules_json: string }>(
     "SELECT mode, rules_json FROM budget_policy WHERE user_id = ?",

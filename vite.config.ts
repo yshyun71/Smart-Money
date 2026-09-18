@@ -43,6 +43,28 @@ export default defineConfig(() => {
           orientation: 'portrait',
           start_url: '/',
           scope: '/',
+          /*
+            문자 앱에서 '공유 → 스마트 머니'로 보낼 수 있게 합니다.
+
+            브라우저는 문자함을 읽을 수 없습니다 — 그런 API 가 없고, Android
+            의 READ_SMS 는 네이티브 앱 권한이며 iOS 에는 아예 없습니다. 사용자가
+            고른 문자를 넘겨받는 것이 표준 안에서 할 수 있는 가장 가까운
+            방법이고, 고르는 행위 자체가 "어느 기간, 어느 건"을 정하는 일이라
+            기간 선택이 따로 필요하지 않습니다.
+
+            method 를 POST 로 하면 서비스 워커가 요청을 가로채야 합니다. GET 은
+            글이 그냥 쿼리로 들어와 서비스 워커 코드를 더하지 않아도 되고,
+            공유되는 것이 짧은 문자 몇 건이라 길이도 문제가 되지 않습니다.
+          */
+          share_target: {
+            action: '/',
+            method: 'GET',
+            params: {
+              title: 'share_title',
+              text: 'share_text',
+              url: 'share_url',
+            },
+          },
           icons: [
             {
               src: '/pwa-192x192.png',

@@ -1407,3 +1407,65 @@ export function draftToTransaction(
     billingMonth: draft.billingMonth,
   };
 }
+
+/**
+ * 같은 거래를 가리키는 줄 찾기 — 이름이 조금 달라도.
+ *
+ * `duplicateKey`는 내역명이 **같아야** 중복으로 봅니다. 명세서끼리는 그것이
+ * 맞지만, 문자와 명세서 사이에서는 이름이 거의 언제나 다릅니다 —
+ * 문자 `스타벅스 강남R점` / 명세서 `스타벅스강남알`. 그래서 **같은 계좌·같은
+ * 날짜·같은 금액**을 더 센 근거로 보고, 이름은 확신도를 가르는 데만 씁니다.
+ *
+ * - `EXACT`  — 날짜·금액·이름이 모두 같음. 두 번 넣은 것이 거의 확실합니다.
+ * - `LIKELY` — 날짜·금액은 같고 이름이 다름. 같은 건일 수 있고, 같은 날 같은
+ *   금액을 다른 곳에서 쓴 것일 수도 있습니다. **사용자가 정합니다.**
+ *
+ * 금액의 방향(지출/수입)도 같아야 합니다. 28,500원 결제와 28,500원 취소는
+ * 같은 날 같은 금액이지만 서로 다른 사건입니다.
+ */
+export function findSimilarEntry(
+  candidates: {
+    id: string;
+    date: string;
+    merchant: string;
+    amount: number;
+    type: TransactionType;
+    accountId: string;
+    origin?: string;
+  }[],
+  probe: {
+    date: string;
+    merchant: string;
+    amount: number;
+    type: TransactionType;
+    accountId: string;
+  },
+  options: { ignoreIds?: Set<string> } = {}
+): { id: string; kind: "EXACT" | "LIKELY"; origin?: string } | null {
+  const plain = (value: string) => (value || "").replace(/\s+/g, "").toLowerCase();
+  const wanted = plain(probe.merchant);
+
+  let likely: { id: string; kind: "LIKELY"; origin?: string } | null = null;
+
+  for (const row of candidates) {
+    if (options.ignoreIds?.has(row.id)) continue;
+    if (row.accountId !== probe.accountId) continue;
+    if (row.date !== probe.date) continue;
+    if (Math.round(row.amount) !== Math.round(probe.amount)) continue;
+    if (row.type !== probe.type) continue;
+
+    if (wanted && plain(row.merchant) === wanted) {
+      return { id: row.id, kind: "EXACT", origin: row.origin };
+    }
+
+    /*
+      문자로 넣어 둔 줄을 먼저 집습니다. 임시로 넣은 것이 대체되어야 할
+      대상이고, 명세서 줄이 또 있다면 그쪽은 이미 정확한 기록입니다.
+    */
+    if (!likely || (row.origin === "SMS" && likely.origin !== "SMS")) {
+      likely = { id: row.id, kind: "LIKELY", origin: row.origin };
+    }
+  }
+
+  return likely;
+}

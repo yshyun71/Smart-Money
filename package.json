@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dev-dist",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/statements.test.ts && tsx tests/cardlink.test.ts && tsx tests/spread.test.ts && tsx tests/format.test.ts && tsx tests/backup.test.ts && tsx tests/budget.test.ts",
+    "test": "tsx tests/statements.test.ts && tsx tests/cardlink.test.ts && tsx tests/spread.test.ts && tsx tests/format.test.ts && tsx tests/backup.test.ts && tsx tests/budget.test.ts && tsx tests/sms.test.ts",
     "check": "npm run lint && npm test"
   },
   "dependencies": {

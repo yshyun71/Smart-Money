@@ -8,6 +8,7 @@ import {
   chooseMapping,
   draftToTransaction,
   duplicateKey,
+  findSimilarEntry,
   EMPTY_MAPPING,
   instalmentMarker,
   isInstalment,
@@ -411,13 +412,49 @@ export const CsvImportModal: React.FC<{
       */
       const unnumbered =
         isInstalment(draft.memo) && instalmentMarker(draft.memo) === "";
-      const match = unnumbered ? undefined : existingByKey.get(duplicateKey(draft));
+      const exact = unnumbered ? undefined : existingByKey.get(duplicateKey(draft));
 
-      if (match) {
-        dup.push({ draft, existing: match, decision: "SKIP" });
-      } else {
-        fresh.push(draft);
+      if (exact) {
+        dup.push({ draft, existing: exact, decision: "SKIP" });
+        continue;
       }
+
+      /*
+        문자로 넣어 둔 임시 줄을 명세서가 대체합니다.
+
+        `duplicateKey` 는 내역명이 같아야 중복으로 보는데, 문자와 명세서 사이
+        에서는 이름이 거의 언제나 다릅니다 — 문자 `스타벅스 강남R점` / 명세서
+        `스타벅스강남알`. 그대로 두면 같은 결제가 두 줄이 되어 그 달 합계가
+        두 배로 잡히고, 카드대금 자동 연결(9.2)까지 어긋납니다.
+
+        그래서 **같은 계좌·같은 날짜·같은 금액**이면서 그 줄이 문자에서 온
+        것일 때만 같은 건으로 보고, 기본값을 **덮어쓰기**로 둡니다. 명세서가
+        더 정확한 기록이기 때문입니다. 사람이 넣은 줄이나 다른 명세서 줄은
+        건드리지 않습니다 — 같은 날 같은 금액을 다른 곳에서 쓴 것일 수 있고,
+        근거 없이 합치지 않습니다(17.2).
+      */
+      const claimed = new Set(dup.map((item) => item.existing.id));
+      const similar = findSimilarEntry(
+        allTransactions,
+        {
+          date: draft.date,
+          merchant: draft.merchant,
+          amount: draft.amount,
+          type: draft.type,
+          accountId,
+        },
+        { ignoreIds: claimed }
+      );
+
+      if (similar?.origin === "SMS") {
+        const existing = allTransactions.find((tx: Transaction) => tx.id === similar.id);
+        if (existing) {
+          dup.push({ draft, existing, decision: "OVERWRITE" });
+          continue;
+        }
+      }
+
+      fresh.push(draft);
     }
 
     setDuplicates(dup);

@@ -90,6 +90,17 @@ export interface Transaction {
   amount: number;
   paymentMethod: string;
   accountId: string;
+  /**
+   * 이 줄이 어디서 왔는가.
+   *
+   * 문자로 넣은 건은 **임시**입니다 — 같은 거래가 나중에 명세서로 다시 들어오고,
+   * 그쪽이 할부 회차·수수료·차감까지 갖춘 정확한 기록입니다. 그때 문자 건을
+   * 알아보고 **대체**해야 같은 돈이 두 번 세지지 않습니다(7.6).
+   *
+   * 문자에는 회차가 없고 가맹점 이름도 명세서와 다르게 적히므로, 출처를
+   * 모르면 "같은 날 같은 금액인데 이름이 다른 두 줄"을 구분할 근거가 없습니다.
+   */
+  origin?: "SMS" | "STATEMENT" | "MANUAL";
   /** What the statement said: 구분, 할부 회차 — written by the importer. */
   memo?: string;
   /**

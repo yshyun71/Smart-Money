@@ -12,7 +12,7 @@ import { ConnectedAssetsView } from "./components/views/ConnectedAssetsView";
 import { AnalyticsDashboardView } from "./components/views/AnalyticsDashboardView";
 import { BudgetManagementView } from "./components/views/BudgetManagementView";
 import { AddTransactionModal } from "./components/transactions/AddTransactionModal";
-import { SMSParserModal } from "./components/modals/SMSParserModal";
+import { SmsInboxModal } from "./components/modals/SmsInboxModal";
 import { OfflineIndicator } from "./components/pwa/PWAInstallButton";
 import { Wifi, Signal } from "lucide-react";
 
@@ -21,6 +21,28 @@ const MainContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSMSModalOpen, setIsSMSModalOpen] = useState(false);
+  /** 문자 앱에서 공유로 들어온 글. 대기함에 담긴 뒤 비웁니다. */
+  const [sharedText, setSharedText] = useState<string | null>(null);
+
+  /*
+    공유 대상으로 열렸을 때.
+
+    매니페스트의 `share_target` 이 GET 이라, 공유된 글이 주소의 쿼리로
+    들어옵니다. 담자마자 주소를 지우는 이유는 두 가지입니다 — 새로 고치면
+    같은 글이 또 담기고, 결제 문자가 주소창과 방문 기록에 남습니다.
+  */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const text = [params.get("share_text"), params.get("share_title")]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (!text) return;
+
+    window.history.replaceState({}, "", window.location.pathname);
+    setSharedText(text);
+    setIsSMSModalOpen(true);
+  }, []);
 
   const [currentTime, setCurrentTime] = useState(() => {
     const now = new Date();
@@ -194,8 +216,10 @@ const MainContent: React.FC = () => {
           onClose={() => setIsAddModalOpen(false)}
         />
 
-        <SMSParserModal
+        <SmsInboxModal
           isOpen={isSMSModalOpen}
+          sharedText={sharedText}
+          onSharedConsumed={() => setSharedText(null)}
           onClose={() => setIsSMSModalOpen(false)}
         />
 

@@ -45,6 +45,8 @@ import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
 import { analyzeSpending } from "../services/aiClient";
 import { resolveCategory } from "../services/categoryRules";
+import { parseSmsBatch, type ParsedSms } from "../services/smsParse";
+import { findSimilarEntry, guessCategory, guessExpenseType } from "../services/csvImport";
 import {
   matchCardForBill,
   planCardLinks,
@@ -216,6 +218,24 @@ interface FinanceContextType {
     savingsTarget: number
   ) => { changed: number; months: number };
 
+  /**
+   * 공유·붙여넣은 문자를 파싱해 쌓아 둔 대기함 (7.8).
+   *
+   * 확인 전의 추정이라 거래로 치지 않습니다 — 사용자가 고르고 등록해야
+   * 가계부에 들어갑니다.
+   */
+  smsInbox: SmsInboxItem[];
+  /** 공유·붙여넣은 글을 읽어 대기함에 넣습니다. 새로 담긴 건수를 돌려줍니다. */
+  receiveSmsText: (rawText: string) => { added: number; skipped: number };
+  /** 대기함의 한 건을 고쳐 둡니다 (가맹점·금액·카테고리 등). */
+  reviseSmsItem: (id: string, parsed: ParsedSms & { accountId?: string; category?: string }) => void;
+  /** 고른 건을 그 계좌의 거래로 등록합니다. */
+  registerSmsItems: (
+    items: { id: string; accountId: string; replaceId?: string }[]
+  ) => { added: number; replaced: number };
+  dismissSmsItems: (ids: string[]) => void;
+  deleteSmsItems: (ids: string[]) => void;
+
   /** 달에 매이지 않는 카테고리별 한도 기준 (11.5). */
   budgetPolicy: BudgetPolicy;
   saveBudgetPolicy: (policy: BudgetPolicy) => void;
@@ -242,6 +262,42 @@ interface FinanceContextType {
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
 const STORAGE_KEY_DISMISSED_ALERTS = "smart_money_dismissed_alerts_v1";
+
+/**
+ * 대기함의 한 건 — 읽어 낸 값에 화면이 쓰는 것들을 더한 모양.
+ *
+ * `accountId`·`category`는 문자가 말해 주지 않는 것을 사용자가 고른 결과이고,
+ * `match`는 이미 가계부에 같은 거래가 있는지 본 결과입니다.
+ */
+export interface SmsInboxItem {
+  id: string;
+  receivedAt: string;
+  rawText: string;
+  parsed: ParsedSms & { accountId?: string; category?: string };
+  /**
+   * 가계부에 이미 있는 같은 거래.
+   *
+   * `EXACT` 는 날짜·금액·이름이 모두 같은 것, `LIKELY` 는 날짜·금액만 같은
+   * 것입니다. 후자는 같은 건일 수도, 같은 날 같은 금액을 다른 곳에서 쓴
+   * 것일 수도 있어 **사용자가 정합니다**(17.2).
+   */
+  match: { id: string; kind: "EXACT" | "LIKELY"; origin?: string } | null;
+}
+
+function readSmsInbox(): SmsInboxItem[] {
+  try {
+    return repo.listSmsInbox("PENDING").map((row) => ({
+      id: row.id,
+      receivedAt: row.receivedAt,
+      rawText: row.rawText,
+      parsed: row.parsed as unknown as SmsInboxItem["parsed"],
+      match: null,
+    }));
+  } catch {
+    // 로그인 전이거나 DB 가 아직 열리지 않았습니다
+    return [];
+  }
+}
 
 function currentMonthKey(): string {
   const now = new Date();
@@ -273,6 +329,31 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const [aiAnalysis, setAiAnalysis] = useState<AISpendingAnalysis | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
   const [budgetPolicy, setBudgetPolicyState] = useState<BudgetPolicy>(emptyPolicy);
+  const [smsInbox, setSmsInbox] = useState<SmsInboxItem[]>([]);
+
+  /*
+    대기함의 각 건이 가계부에 이미 있는지 붙여서 내보냅니다.
+
+    `transactions`(그 달로 걸러진 것)가 아니라 전체를 봅니다 — 문자는 달이
+    바뀌는 밤에도 오고, 지난달 건을 이제 공유할 수도 있습니다.
+  */
+  const smsInboxWithMatches = useMemo(
+    () =>
+      smsInbox.map((item) => {
+        if (!item.parsed.accountId) return { ...item, match: null };
+        return {
+          ...item,
+          match: findSimilarEntry(transactions, {
+            date: item.parsed.date,
+            merchant: item.parsed.merchant,
+            amount: item.parsed.amount,
+            type: item.parsed.type,
+            accountId: item.parsed.accountId,
+          }),
+        };
+      }),
+    [smsInbox, transactions]
+  );
   const [budgetConfig, setBudgetConfig] = useState<MonthlyBudgetConfig>(() =>
     emptyBudgetConfig(currentMonthKey())
   );
@@ -325,6 +406,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       setCustomCategories([]);
       setBudgetConfig(emptyBudgetConfig(selectedMonth));
       setBudgetPolicyState(emptyPolicy());
+      setSmsInbox([]);
       setAiAnalysis(null);
       setDbStats(null);
       return;
@@ -336,6 +418,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     setCustomCategories(repo.listCustomCategories());
     setBudgetConfig(repo.getBudgetConfig(selectedMonth));
     setBudgetPolicyState(repo.getBudgetPolicy());
+    setSmsInbox(readSmsInbox());
     setAiAnalysis(repo.getAnalysis(selectedMonth));
     setDbStats(readStats());
   }, [selectedMonth, currentUserId, readStats]);
@@ -749,6 +832,176 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     });
 
     return entries.length;
+  };
+
+  /*
+    문자 대기함.
+
+    브라우저는 문자함을 읽을 수 없어(그런 API 가 없습니다) 사용자가 고른
+    문자가 공유나 붙여넣기로 들어옵니다. 고르는 행위 자체가 기간과 대상을
+    정하는 일이라, 기간 선택 칸을 따로 두지 않습니다.
+  */
+  const receiveSmsText = (rawText: string): { added: number; skipped: number } => {
+    const found = parseSmsBatch(rawText);
+    if (found.length === 0) return { added: 0, skipped: 0 };
+
+    const now = new Date().toISOString();
+    const rows: { id: string; receivedAt: string; rawText: string; parsed: unknown }[] = [];
+    let skipped = 0;
+
+    for (const parsed of found) {
+      /*
+        같은 문자를 두 번 공유하는 일은 흔합니다 — 공유 대상으로 열 때마다
+        같은 글이 옵니다. 원문으로 걸러 대기함이 같은 줄로 불어나지 않게
+        합니다.
+      */
+      const raw = rawText.trim();
+      const single = found.length === 1 ? raw : `${parsed.date} ${parsed.amount} ${parsed.merchant}`;
+
+      try {
+        if (repo.smsInboxHasRaw(single)) {
+          skipped++;
+          continue;
+        }
+      } catch {
+        /* DB 가 없으면 아래에서 실패하므로 여기서는 넘어갑니다 */
+      }
+
+      rows.push({
+        id: `sms-${Date.now()}-${rows.length}-${Math.random().toString(36).slice(2, 6)}`,
+        receivedAt: now,
+        rawText: single,
+        parsed: {
+          ...parsed,
+          // 문자가 카드사를 말하고 그 카드가 하나뿐이면 미리 골라 둡니다
+          accountId: matchAccountForIssuer(parsed.issuer),
+          /*
+            카테고리는 **문자 원문**으로 추정합니다. 가맹점만 보면 `급여`처럼
+            방향을 알려 주느라 이름에서 빠진 말이 사라집니다.
+          */
+          category: guessCategory(rawText, parsed.type === "INCOME"),
+        },
+      });
+    }
+
+    if (rows.length === 0) return { added: 0, skipped };
+
+    try {
+      repo.addSmsInbox(rows);
+      setSmsInbox(readSmsInbox());
+      return { added: rows.length, skipped };
+    } catch (error) {
+      console.error("문자를 대기함에 담지 못했습니다:", error);
+      return { added: 0, skipped };
+    }
+  };
+
+  /** 문자가 말한 카드사로 계좌를 찾습니다 — 그 카드사 계좌가 하나뿐일 때만. */
+  const matchAccountForIssuer = (issuer: string): string | undefined => {
+    if (!issuer) return undefined;
+    const plain = (value: string) => (value || "").replace(/\s+/g, "");
+    const wanted = plain(issuer);
+
+    const hits = accounts.filter((account) => {
+      const name = plain(`${account.institution}${account.name}`);
+      return name.includes(wanted) || wanted.includes(plain(account.institution));
+    });
+
+    // 둘 이상이면 고르지 않습니다 — 엉뚱한 계좌에 넣는 것이 비워 두는 것보다 나쁩니다
+    return hits.length === 1 ? hits[0].id : undefined;
+  };
+
+  const reviseSmsItem = (
+    id: string,
+    parsed: ParsedSms & { accountId?: string; category?: string }
+  ) => {
+    try {
+      repo.updateSmsInboxParsed(id, parsed);
+      setSmsInbox((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, parsed } : item))
+      );
+    } catch (error) {
+      console.error("대기함 항목을 고치지 못했습니다:", error);
+    }
+  };
+
+  /**
+   * 고른 건을 거래로 등록합니다.
+   *
+   * `replaceId` 가 있으면 그 줄을 **대체**합니다 — 문자로 넣어 둔 임시 줄을
+   * 명세서가 덮는 것과 같은 방향이고, 같은 돈이 두 줄이 되는 것을 막습니다.
+   */
+  const registerSmsItems = (
+    items: { id: string; accountId: string; replaceId?: string }[]
+  ): { added: number; replaced: number } => {
+    const inserts: Omit<Transaction, "id">[] = [];
+    const updates: Transaction[] = [];
+
+    for (const wanted of items) {
+      const item = smsInbox.find((row) => row.id === wanted.id);
+      if (!item || !wanted.accountId) continue;
+
+      const parsed = item.parsed;
+      const account = accounts.find((row) => row.id === wanted.accountId);
+
+      const payload: Omit<Transaction, "id"> = {
+        date: parsed.date,
+        time: parsed.time || "12:00",
+        type: parsed.type,
+        expenseType:
+          parsed.type === "INCOME"
+            ? "INCOME"
+            : guessExpenseType(`${parsed.merchant} ${parsed.method}`, parsed.type),
+        category:
+          parsed.category || guessCategory(item.rawText, parsed.type === "INCOME"),
+        merchant: parsed.merchant || "문자 내역",
+        amount: parsed.amount,
+        paymentMethod: account?.name || parsed.issuer || "문자",
+        accountId: wanted.accountId,
+        // 문자가 적어 준 결제 구분은 명세서의 memo 와 같은 자리입니다
+        memo: parsed.method || undefined,
+        origin: "SMS",
+      };
+
+      if (wanted.replaceId) {
+        updates.push({ ...payload, id: wanted.replaceId });
+      } else {
+        inserts.push(payload);
+      }
+    }
+
+    if (inserts.length === 0 && updates.length === 0) return { added: 0, replaced: 0 };
+
+    try {
+      importTransactions(inserts, updates);
+      repo.setSmsInboxStatus(
+        items.map((item) => item.id),
+        "REGISTERED"
+      );
+      setSmsInbox(readSmsInbox());
+      return { added: inserts.length, replaced: updates.length };
+    } catch (error) {
+      console.error("문자 내역을 등록하지 못했습니다:", error);
+      return { added: 0, replaced: 0 };
+    }
+  };
+
+  const dismissSmsItems = (ids: string[]) => {
+    try {
+      repo.setSmsInboxStatus(ids, "DISMISSED");
+      setSmsInbox(readSmsInbox());
+    } catch (error) {
+      console.error("대기함 항목을 치우지 못했습니다:", error);
+    }
+  };
+
+  const deleteSmsItems = (ids: string[]) => {
+    try {
+      repo.deleteSmsInbox(ids);
+      setSmsInbox(readSmsInbox());
+    } catch (error) {
+      console.error("대기함 항목을 지우지 못했습니다:", error);
+    }
   };
 
   const setCategoryBudget = (category: string, amount: number) => {
@@ -1429,6 +1682,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         updateBudgetConfig,
         setCategoryBudget,
         autoAllocateBudgets,
+        smsInbox: smsInboxWithMatches,
+        receiveSmsText,
+        reviseSmsItem,
+        registerSmsItems,
+        dismissSmsItems,
+        deleteSmsItems,
         budgetPolicy,
         saveBudgetPolicy,
         applyBudgetPolicy,
