@@ -17,7 +17,7 @@ import { CATEGORY_SPLITS, FINANCE_KEYWORDS } from "../constants/categories";
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export interface Migration {
   version: number;
@@ -67,6 +67,8 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "accounts", column: "payment_account_id", type: "TEXT" },
   { table: "accounts", column: "payment_account_label", type: "TEXT" },
   { table: "transactions", column: "note", type: "TEXT" },
+  { table: "budget_configs", column: "income_source", type: "TEXT" },
+  { table: "budget_configs", column: "fixed_source", type: "TEXT" },
 ];
 
 /**
@@ -85,6 +87,19 @@ const EXPECTED_TABLES: { table: string; ddl: string }[] = [
         type TEXT NOT NULL DEFAULT 'VARIABLE',
         created_at TEXT NOT NULL,
         UNIQUE(user_id, name)
+      );`,
+  },
+  {
+    /*
+      예산 기준은 달에 매이지 않습니다 — 한 번 정해 두고 어느 달에든 적용하는
+      것이 요점이라, 사용자당 한 행입니다.
+    */
+    table: "budget_policy",
+    ddl: `CREATE TABLE IF NOT EXISTS budget_policy (
+        user_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL DEFAULT 'AMOUNT',
+        rules_json TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL
       );`,
   },
   {
@@ -479,6 +494,25 @@ export const MIGRATIONS: Migration[] = [
     description: "사용자가 직접 적는 설명",
     up: (db) => {
       addColumn(db, "transactions", "note", "TEXT");
+    },
+  },
+  {
+    version: 12,
+    /*
+      예산 기준 표와, 세 입력값이 실적에서 온 것인지 사람이 적은 것인지.
+      후자는 잔액의 `balance_source`(USER/AUTO)와 같은 발상입니다 — 숫자만
+      남기면 어디서 온 값인지 나중에 알 수 없습니다.
+    */
+    description: "예산 기준(카테고리별 한도 정책)과 수입·고정비 값의 출처",
+    up: (db) => {
+      db.run(`CREATE TABLE IF NOT EXISTS budget_policy (
+        user_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL DEFAULT 'AMOUNT',
+        rules_json TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL
+      );`);
+      addColumn(db, "budget_configs", "income_source", "TEXT");
+      addColumn(db, "budget_configs", "fixed_source", "TEXT");
     },
   },
 ];

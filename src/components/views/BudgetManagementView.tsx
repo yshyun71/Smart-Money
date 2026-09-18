@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput, withCommas } from "../../utils/format";
+import { BudgetPolicyModal } from "../modals/BudgetPolicyModal";
+import { spareOf } from "../../services/budgetPolicy";
 import {
   Sliders,
   DollarSign,
@@ -36,6 +38,10 @@ export const BudgetManagementView: React.FC<{
     disposableIncome,
     totalBudgeted,
     selectedMonth,
+    budgetPolicy,
+    applyBudgetPolicy,
+    fixedBaselineList,
+    underFixedList,
   } = useFinance();
 
   /** 0 은 "아직 안 정했다"는 뜻이라 비워 둡니다 — 자리표시자가 보여야 적을 곳임을 압니다. */
@@ -45,6 +51,28 @@ export const BudgetManagementView: React.FC<{
   const [fixedInput, setFixedInput] = useState(() => asInput(budgetConfig.fixedExpenses));
   const [savingsInput, setSavingsInput] = useState(() => asInput(budgetConfig.savingsTarget));
   const [showNotificationToast, setShowNotificationToast] = useState<string | null>(null);
+  /*
+    사람이 그 칸을 손으로 고쳤는가. 실적에서 불러온 값과 직접 적은 값은
+    신뢰도가 다르므로 저장할 때 그 사실을 함께 남깁니다(8절의 USER/AUTO와
+    같은 취지).
+  */
+  const [incomeTouched, setIncomeTouched] = useState(false);
+  const [fixedTouched, setFixedTouched] = useState(false);
+  const [showPolicy, setShowPolicy] = useState(false);
+  /*
+    지금 고치는 중인 카테고리 한도. 누를 때마다 저장하면 "4"만 눌러도 4원이
+    되어 버리므로, 칸을 떠날 때(또는 Enter) 한 번 저장합니다.
+  */
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+
+  /** 기준에 값이 들어 있는 카테고리 수. 0이면 적용할 것이 없습니다. */
+  const policyCount = Object.keys(budgetPolicy.rules || {}).length;
+
+  const baselineOf = (category: string) =>
+    fixedBaselineList.find(
+      (line: { category: string }) => line.category === category
+    );
 
   /*
     달을 옮기면 그 달의 값을 다시 싣습니다.
@@ -60,6 +88,8 @@ export const BudgetManagementView: React.FC<{
     setIncomeInput(asInput(budgetConfig.monthlyIncome));
     setFixedInput(asInput(budgetConfig.fixedExpenses));
     setSavingsInput(asInput(budgetConfig.savingsTarget));
+    setIncomeTouched(false);
+    setFixedTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth]);
 
@@ -86,7 +116,12 @@ export const BudgetManagementView: React.FC<{
       monthlyIncome: inc,
       fixedExpenses: fix,
       savingsTarget: sav,
+      // 손대지 않은 칸은 원래의 출처를 유지합니다
+      incomeSource: incomeTouched ? "USER" : budgetConfig.incomeSource,
+      fixedSource: fixedTouched ? "USER" : budgetConfig.fixedSource,
     });
+    setIncomeTouched(false);
+    setFixedTouched(false);
     triggerToast("월 수입 및 고정비 설정이 업데이트되었습니다.");
   };
 
@@ -97,7 +132,11 @@ export const BudgetManagementView: React.FC<{
     updateBudgetConfig({
       monthlyIncome: totalIncome,
       fixedExpenses: fixedExpenseTotal,
+      incomeSource: "ACTUALS",
+      fixedSource: "ACTUALS",
     });
+    setIncomeTouched(false);
+    setFixedTouched(false);
     triggerToast(
       isThisMonth
         ? `${monthName} 실제 내역을 채웠습니다. 아직 달이 끝나지 않아 실제보다 적을 수 있습니다.`
@@ -143,10 +182,11 @@ export const BudgetManagementView: React.FC<{
     triggerToast("🔔 테스트 예산 경고 푸시 알림이 발송되었습니다.");
   };
 
-  const availableVariableBudget = Math.max(
-    0,
-    budgetConfig.monthlyIncome - budgetConfig.fixedExpenses - budgetConfig.savingsTarget
-  );
+  const availableVariableBudget = spareOf({
+    income: budgetConfig.monthlyIncome,
+    fixed: budgetConfig.fixedExpenses,
+    savings: budgetConfig.savingsTarget,
+  });
 
   const budgetDifference = availableVariableBudget - totalBudgeted;
 
@@ -295,78 +335,101 @@ export const BudgetManagementView: React.FC<{
           </p>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          {/* Monthly Income Input */}
-          <div className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 mb-1">
-              <span className="flex items-center gap-1">
-                <DollarSign className="w-3 h-3 text-emerald-600" />
-                월 예상 총 수입
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={incomeInput}
-                onChange={(e) => setIncomeInput(formatAmountInput(e.target.value))}
-                placeholder="예: 3,482,000"
-                className="w-full bg-white rounded-xl border border-slate-200 px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
-              />
-              <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
-            </div>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              {monthName}에 들어올 것으로 보는 급여 + 기타 수입
-            </span>
-          </div>
+        {/*
+          세로 한 줄씩 놓습니다. 3열로 나누면 좁은 화면에서 칸이 200px 아래로
+          줄어 "7,021,2" 처럼 금액이 잘렸습니다 — 금액은 예산 화면에서 가장
+          먼저 읽혀야 하는 값입니다.
+        */}
+        <div className="space-y-2">
+          {([
+            {
+              key: "income",
+              label: "월 예상 총 수입",
+              hint: `${monthName}에 들어올 것으로 보는 급여 + 기타 수입`,
+              icon: <DollarSign className="w-3.5 h-3.5 text-emerald-600" />,
+              value: incomeInput,
+              onChange: (next: string) => {
+                setIncomeTouched(true);
+                setIncomeInput(next);
+              },
+              placeholder: "3,482,000",
+              saved: budgetConfig.monthlyIncome,
+              source: budgetConfig.incomeSource,
+            },
+            {
+              key: "fixed",
+              label: "월간 고정 지출",
+              hint: "월세·관리비·통신비·보험처럼 매달 나가는 돈",
+              icon: <Lock className="w-3.5 h-3.5 text-indigo-600" />,
+              value: fixedInput,
+              onChange: (next: string) => {
+                setFixedTouched(true);
+                setFixedInput(next);
+              },
+              placeholder: "995,690",
+              saved: budgetConfig.fixedExpenses,
+              source: budgetConfig.fixedSource,
+            },
+            {
+              key: "savings",
+              label: "목표 저축액",
+              hint: "먼저 떼어 둘 금액. 가용 변동비에서 빠집니다",
+              icon: <PiggyBank className="w-3.5 h-3.5 text-rose-500" />,
+              value: savingsInput,
+              onChange: setSavingsInput,
+              placeholder: "600,000",
+              saved: budgetConfig.savingsTarget,
+              // 저축은 실적에서 나올 값이 아니라 늘 사람이 정합니다
+              source: "USER" as const,
+            },
+          ]).map((field) => {
+            const dirty = parseAmountInput(field.value) !== field.saved;
+            return (
+              <div
+                key={field.key}
+                className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60 flex items-center gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                      {field.icon}
+                      {field.label}
+                    </span>
+                    {/*
+                      실적에서 불러온 값과 사람이 적은 값은 신뢰도가 다릅니다.
+                      잔액의 USER/AUTO 표시와 같은 취지입니다(8절).
+                    */}
+                    <span
+                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                        dirty
+                          ? "bg-amber-100 text-amber-700"
+                          : field.source === "ACTUALS"
+                            ? "bg-indigo-100 text-indigo-700"
+                            : "bg-slate-200/80 text-slate-600"
+                      }`}
+                    >
+                      {dirty ? "수정 중" : field.source === "ACTUALS" ? "실적 반영" : "직접 입력"}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-0.5 block leading-relaxed">
+                    {field.hint}
+                  </span>
+                </div>
 
-          {/* Monthly Fixed Expenses Input */}
-          <div className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 mb-1">
-              <span className="flex items-center gap-1">
-                <Lock className="w-3 h-3 text-indigo-600" />
-                월간 고정 지출
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={fixedInput}
-                onChange={(e) => setFixedInput(formatAmountInput(e.target.value))}
-                placeholder="예: 995,690"
-                className="w-full bg-white rounded-xl border border-slate-200 px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
-              />
-              <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
-            </div>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              월세·관리비·통신비·보험처럼 매달 나가는 돈
-            </span>
-          </div>
-
-          {/* Savings Target Input */}
-          <div className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 mb-1">
-              <span className="flex items-center gap-1">
-                <PiggyBank className="w-3 h-3 text-rose-500" />
-                목표 저축액
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={savingsInput}
-                onChange={(e) => setSavingsInput(formatAmountInput(e.target.value))}
-                placeholder="예: 600,000"
-                className="w-full bg-white rounded-xl border border-slate-200 px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
-              />
-              <span className="text-xs font-bold text-slate-500 shrink-0">원</span>
-            </div>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              선저축 목표 금액
-            </span>
-          </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={field.value}
+                    onChange={(e) => field.onChange(formatAmountInput(e.target.value))}
+                    placeholder={field.placeholder}
+                    className="w-32 text-right rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                  />
+                  <span className="text-xs font-bold text-slate-500">원</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Calculation Summary Bar */}
@@ -424,15 +487,106 @@ export const BudgetManagementView: React.FC<{
           <div className="text-right">
             <span className="text-[10px] text-slate-400 block">설정 총예산</span>
             <span className="text-xs font-black text-slate-900">
-              {totalBudgeted.toLocaleString()}원
+              {withCommas(totalBudgeted)}원
             </span>
           </div>
         </div>
+
+        {/*
+          기준을 한 번 정해 두고 달마다 적용합니다 — 열두 칸을 매달 다시 적는
+          일은 아무도 계속하지 못하고, 그러면 예산은 몇 달 전 값에 멈춥니다.
+        */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setShowPolicy(true)}
+            className="py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5"
+          >
+            <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+            <span>예산 기준 설정</span>
+          </button>
+          <button
+            type="button"
+            disabled={policyCount === 0}
+            onClick={() => {
+              const changed = applyBudgetPolicy();
+              triggerToast(
+                changed > 0
+                  ? `기준대로 ${changed}개 카테고리의 한도를 채웠습니다.`
+                  : "기준과 이미 같습니다. 바뀐 한도가 없습니다."
+              );
+            }}
+            className="py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition disabled:opacity-40 disabled:hover:bg-indigo-600 flex items-center justify-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>이 기준으로 채우기</span>
+          </button>
+        </div>
+
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+          {policyCount === 0
+            ? "아직 기준이 없습니다. [예산 기준 설정]에서 금액 또는 비율로 한 번 정해 두면 매달 [이 기준으로 채우기] 한 번으로 끝납니다."
+            : `기준 ${policyCount}개 · ${
+                budgetPolicy.mode === "AMOUNT"
+                  ? "금액"
+                  : budgetPolicy.mode === "INCOME_RATIO"
+                    ? "수입 대비 비율"
+                    : "가용 변동비 대비 비율"
+              } 방식`}
+        </p>
+
+        {/*
+          가용 변동비와 실제 배분한 합계의 차이. 1번 블록은 가용을, 2번은 배분
+          합계를 따로 보여 주기만 해서 얼마가 남았는지 아무도 알 수 없었습니다.
+        */}
+        {availableVariableBudget > 0 && (
+          <div
+            className={`p-2.5 rounded-xl border text-[11px] flex items-center justify-between gap-2 ${
+              budgetDifference < 0
+                ? "bg-amber-50 border-amber-200 text-amber-800"
+                : "bg-slate-50 border-slate-200/70 text-slate-600"
+            }`}
+          >
+            <span className="font-bold">
+              {budgetDifference < 0 ? "가용 변동비를 넘었습니다" : "아직 배분하지 않은 금액"}
+            </span>
+            <span className="font-black">
+              {withCommas(Math.abs(budgetDifference))}원
+            </span>
+          </div>
+        )}
+
+        {/* 고정비보다 낮은 한도 — 달 시작부터 초과인 것들 */}
+        {underFixedList.length > 0 && (
+          <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200/80 text-[10px] text-amber-800 leading-relaxed">
+            <Lock className="w-3 h-3 inline -mt-0.5 mr-0.5" />
+            <strong>{underFixedList.length}개 카테고리</strong>의 한도가 월평균 고정비보다
+            낮습니다 (
+            {underFixedList
+              .slice(0, 3)
+              .map(
+                (row: { category: string; average: number }) =>
+                  `${row.category} ${withCommas(row.average)}원`
+              )
+              .join(", ")}
+            {underFixedList.length > 3 && " 등"}
+            ). 고정비는 줄일 수 없는 돈이라 달이 시작되는 순간 이미 초과입니다.
+          </div>
+        )}
 
         <div className="space-y-2.5">
           {budgetStatusList.map((item) => {
             const isExceeded = item.status === "EXCEEDED";
             const isWarning = item.status === "WARNING";
+            const isUnset = item.status === "UNSET";
+            const baseline = baselineOf(item.category);
+            /*
+              고정비는 줄일 수 없는 돈이라, 한도가 그 월평균보다 낮으면 달이
+              시작되는 순간 이미 초과입니다.
+            */
+            const underFixed = Boolean(
+              baseline && item.budget > 0 && item.budget < baseline.average
+            );
 
             return (
               <div
@@ -441,49 +595,96 @@ export const BudgetManagementView: React.FC<{
                   isExceeded
                     ? "bg-rose-50/50 border-rose-200"
                     : isWarning
-                    ? "bg-amber-50/40 border-amber-200"
-                    : "bg-slate-50/70 border-slate-200/70"
+                      ? "bg-amber-50/40 border-amber-200"
+                      : isUnset
+                        ? "bg-white border-dashed border-slate-300"
+                        : "bg-slate-50/70 border-slate-200/70"
                 }`}
               >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-xs text-slate-900">
+                <div className="flex items-center justify-between mb-1.5 gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-bold text-xs text-slate-900 truncate">
                       {item.category}
                     </span>
+                    {/*
+                      예산을 정하지 않은 칸은 안전한 것도 초과한 것도 아닙니다.
+                      예전에는 지출 46만원짜리 칸이 초록 막대를 가득 채운 채
+                      "안전 · 100% 소진"이라고 적혀 있었습니다.
+                    */}
                     <span
-                      className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded-full ${
+                      className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0 ${
                         isExceeded
                           ? "bg-rose-100 text-rose-700"
                           : isWarning
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-emerald-100 text-emerald-700"
+                            ? "bg-amber-100 text-amber-800"
+                            : isUnset
+                              ? "bg-slate-200/80 text-slate-600"
+                              : "bg-emerald-100 text-emerald-700"
                       }`}
                     >
                       {isExceeded
                         ? "초과 🚨"
                         : isWarning
-                        ? `경고 (${Math.round(item.percentage)}%)`
-                        : "안전"}
+                          ? `경고 (${Math.round(item.percentage)}%)`
+                          : isUnset
+                            ? "예산 미설정"
+                            : "안전"}
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  {/*
+                    1만원 단위 버튼만으로는 45만원을 맞추려면 45번 눌러야 하고
+                    1천원 단위는 아예 맞출 수 없었습니다. 숫자를 직접 적을 수
+                    있게 하고 버튼은 그대로 둡니다.
+                  */}
+                  <div className="flex items-center gap-1 shrink-0">
                     <button
                       onClick={() => adjustCategory(item.category, -10000)}
-                      className="w-5 h-5 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 transition text-[10px]"
+                      className="w-6 h-6 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 transition"
                       title="1만원 줄이기"
                     >
-                      <Minus className="w-2.5 h-2.5" />
+                      <Minus className="w-3 h-3" />
                     </button>
-                    <span className="text-xs font-black text-slate-900 min-w-16 text-right">
-                      {item.budget.toLocaleString()}원
-                    </span>
+                    <div className="flex items-center gap-0.5">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={
+                          editing === item.category
+                            ? editingValue
+                            : item.budget > 0
+                              ? withCommas(item.budget)
+                              : ""
+                        }
+                        onFocus={() => {
+                          setEditing(item.category);
+                          setEditingValue(item.budget > 0 ? withCommas(item.budget) : "");
+                        }}
+                        onChange={(e) => setEditingValue(formatAmountInput(e.target.value))}
+                        onBlur={() => {
+                          if (editing === item.category) {
+                            setCategoryBudget(item.category, parseAmountInput(editingValue));
+                          }
+                          setEditing(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                          if (e.key === "Escape") {
+                            setEditing(null);
+                            setEditingValue("");
+                          }
+                        }}
+                        placeholder="0"
+                        className="w-24 text-right rounded-md border border-slate-200 bg-white px-1.5 py-1 text-xs font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                      />
+                      <span className="text-[10px] font-bold text-slate-500">원</span>
+                    </div>
                     <button
                       onClick={() => adjustCategory(item.category, 10000)}
-                      className="w-5 h-5 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 transition text-[10px]"
+                      className="w-6 h-6 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 transition"
                       title="1만원 늘리기"
                     >
-                      <Plus className="w-2.5 h-2.5" />
+                      <Plus className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
@@ -495,34 +696,51 @@ export const BudgetManagementView: React.FC<{
                       isExceeded
                         ? "bg-rose-500"
                         : isWarning
-                        ? "bg-amber-500"
-                        : "bg-emerald-500"
+                          ? "bg-amber-500"
+                          : isUnset
+                            ? "bg-slate-300"
+                            : "bg-emerald-500"
                     }`}
                     style={{
-                      width: `${Math.min(100, item.percentage)}%`,
+                      // 예산이 없으면 소진율이란 것이 없으므로 막대를 채우지 않습니다
+                      width: isUnset ? "0%" : `${Math.min(100, item.percentage)}%`,
                     }}
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1">
-                  <span>
+                <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 gap-2">
+                  <span className="shrink-0">
                     지출:{" "}
                     <strong className="text-slate-800 font-bold">
-                      {item.spent.toLocaleString()}원
+                      {withCommas(item.spent)}원
                     </strong>
                   </span>
-                  <span>
-                    {isExceeded ? (
+                  <span className="text-right min-w-0">
+                    {isUnset ? (
+                      <span className="text-slate-400">한도를 정하면 소진율이 표시됩니다</span>
+                    ) : isExceeded ? (
                       <span className="text-rose-600 font-bold">
-                        {Math.abs(item.remaining).toLocaleString()}원 초과
+                        {withCommas(Math.abs(item.remaining))}원 초과
                       </span>
                     ) : (
                       <span>
-                        잔여: {item.remaining.toLocaleString()}원 ({Math.round(item.percentage)}% 소진)
+                        잔여: {withCommas(item.remaining)}원 ({Math.round(item.percentage)}% 소진)
                       </span>
                     )}
                   </span>
                 </div>
+
+                {baseline && (
+                  <p
+                    className={`mt-1 text-[10px] leading-relaxed ${
+                      underFixed ? "font-bold text-amber-700" : "text-slate-400"
+                    }`}
+                  >
+                    <Lock className="w-2.5 h-2.5 inline -mt-0.5 mr-0.5" />
+                    고정비 월평균 {withCommas(baseline.average)}원 ({baseline.months}개월)
+                    {underFixed && " — 한도가 이보다 낮아 시작부터 초과입니다"}
+                  </p>
+                )}
               </div>
             );
           })}
@@ -594,6 +812,8 @@ export const BudgetManagementView: React.FC<{
           </div>
         </div>
       </div>
+      {/* 카테고리별 예산 기준 — 달에 매이지 않는 한도 규칙 */}
+      <BudgetPolicyModal isOpen={showPolicy} onClose={() => setShowPolicy(false)} />
     </div>
   );
 };

@@ -20,6 +20,15 @@ import {
   ValueSource,
 } from "../types/finance";
 import {
+  allocate,
+  belowBaseline,
+  emptyPolicy,
+  fixedBaselines,
+  spareOf,
+  type BudgetPolicy,
+  type FixedBaseline,
+} from "../services/budgetPolicy";
+import {
   encryptBackup,
   decryptBackup,
   isEncryptedBackup,
@@ -191,6 +200,16 @@ interface FinanceContextType {
   updateBudgetConfig: (partial: Partial<MonthlyBudgetConfig>) => void;
   setCategoryBudget: (category: string, amount: number) => void;
   autoAllocateBudgets: (income: number, fixed: number, savingsTarget: number) => void;
+
+  /** 달에 매이지 않는 카테고리별 한도 기준 (11.5). */
+  budgetPolicy: BudgetPolicy;
+  saveBudgetPolicy: (policy: BudgetPolicy) => void;
+  /** 기준대로 이 달의 카테고리 예산을 채웁니다. 바꾼 카테고리 수를 돌려줍니다. */
+  applyBudgetPolicy: () => number;
+  /** 카테고리마다 고정비로 매달 얼마가 나가는지 — 예산의 최소선. */
+  fixedBaselineList: FixedBaseline[];
+  /** 예산이 그 최소선보다 낮은 카테고리들. */
+  underFixedList: { category: string; budget: number; average: number }[];
   budgetStatusList: CategoryBudgetStatus[];
   budgetAlerts: BudgetAlert[];
   dismissAlert: (id: string) => void;
@@ -238,6 +257,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [aiAnalysis, setAiAnalysis] = useState<AISpendingAnalysis | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
+  const [budgetPolicy, setBudgetPolicyState] = useState<BudgetPolicy>(emptyPolicy);
   const [budgetConfig, setBudgetConfig] = useState<MonthlyBudgetConfig>(() =>
     emptyBudgetConfig(currentMonthKey())
   );
@@ -289,6 +309,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       setCategoryRules([]);
       setCustomCategories([]);
       setBudgetConfig(emptyBudgetConfig(selectedMonth));
+      setBudgetPolicyState(emptyPolicy());
       setAiAnalysis(null);
       setDbStats(null);
       return;
@@ -299,6 +320,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     setCategoryRules(repo.listCategoryRules());
     setCustomCategories(repo.listCustomCategories());
     setBudgetConfig(repo.getBudgetConfig(selectedMonth));
+    setBudgetPolicyState(repo.getBudgetPolicy());
     setAiAnalysis(repo.getAnalysis(selectedMonth));
     setDbStats(readStats());
   }, [selectedMonth, currentUserId, readStats]);
@@ -483,10 +505,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // Budget
   // -------------------------------------------------------------------------
 
-  const disposableIncome = Math.max(
-    0,
-    budgetConfig.monthlyIncome - budgetConfig.fixedExpenses - budgetConfig.savingsTarget
-  );
+  /*
+    가용 변동비. 예산 기준의 비율 모드가 기준으로 삼는 값과 같은 것이어야
+    하므로 `spareOf` 하나만 씁니다 — 같은 식을 두 곳에 두면 한쪽만 고쳐집니다.
+  */
+  const disposableIncome = spareOf({
+    income: budgetConfig.monthlyIncome,
+    fixed: budgetConfig.fixedExpenses,
+    savings: budgetConfig.savingsTarget,
+  });
 
   const totalBudgeted = useMemo(
     () =>
@@ -529,13 +556,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         const remaining = budget - spent;
         const percentage = budget > 0 ? (spent / budget) * 100 : spent > 0 ? 100 : 0;
 
-        let status: "SAFE" | "WARNING" | "EXCEEDED" = "SAFE";
-        if (budget > 0) {
-          if (percentage >= 100) {
-            status = "EXCEEDED";
-          } else if (percentage >= (budgetConfig.alertThresholdPercent || 80)) {
-            status = "WARNING";
-          }
+        /*
+          예산을 정하지 않은 칸은 안전한 것도 초과한 것도 아닙니다. 예전에는
+          `SAFE`로 남아, 지출이 46만원인 칸이 초록 막대를 가득 채운 채
+          "안전 · 100% 소진"이라고 적혀 있었습니다.
+        */
+        let status: "SAFE" | "WARNING" | "EXCEEDED" | "UNSET" = "SAFE";
+        if (budget <= 0) {
+          status = "UNSET";
+        } else if (percentage >= 100) {
+          status = "EXCEEDED";
+        } else if (percentage >= (budgetConfig.alertThresholdPercent || 80)) {
+          status = "WARNING";
         }
 
         return { category, budget, spent, remaining, percentage, status };
@@ -605,6 +637,63 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       persistBudget(next);
       return next;
     });
+  };
+
+  /*
+    고정비 가이드.
+
+    이번 달은 아직 끝나지 않았으므로 평균에서 뺍니다 — 반 달치를 한 달치로
+    세면 최소선이 실제보다 낮게 제시되고, 그러면 가이드가 아니라 오해가 됩니다.
+    `transactions` 전체를 보되 최근 6개월만 셉니다.
+  */
+  const fixedBaselineList = useMemo(
+    () => fixedBaselines(transactions, { months: 6, upTo: selectedMonth }),
+    [transactions, selectedMonth]
+  );
+
+  const underFixedList = useMemo(
+    () => belowBaseline(budgetConfig.categoryBudgets || {}, fixedBaselineList),
+    [budgetConfig.categoryBudgets, fixedBaselineList]
+  );
+
+  const saveBudgetPolicy = (policy: BudgetPolicy) => {
+    try {
+      repo.saveBudgetPolicy(policy);
+      setBudgetPolicyState(policy);
+    } catch (error) {
+      console.error("예산 기준을 저장하지 못했습니다:", error);
+    }
+  };
+
+  /**
+   * 기준대로 이 달의 카테고리 예산을 채웁니다.
+   *
+   * 기준에 없는 카테고리는 건드리지 않습니다 — 기준을 적용했다고 해서 손으로
+   * 정해 둔 다른 칸을 0으로 만들 이유가 없습니다.
+   */
+  const applyBudgetPolicy = (): number => {
+    const wanted = allocate(budgetPolicy, {
+      income: budgetConfig.monthlyIncome,
+      fixed: budgetConfig.fixedExpenses,
+      savings: budgetConfig.savingsTarget,
+    });
+
+    const entries = Object.entries(wanted).filter(
+      ([category, amount]) => (budgetConfig.categoryBudgets[category] || 0) !== amount
+    );
+    if (entries.length === 0) return 0;
+
+    setBudgetConfig((prev) => {
+      const next = {
+        ...prev,
+        month: prev.month || selectedMonth,
+        categoryBudgets: { ...prev.categoryBudgets, ...Object.fromEntries(entries) },
+      };
+      persistBudget(next);
+      return next;
+    });
+
+    return entries.length;
   };
 
   const setCategoryBudget = (category: string, amount: number) => {
@@ -1281,6 +1370,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         updateBudgetConfig,
         setCategoryBudget,
         autoAllocateBudgets,
+        budgetPolicy,
+        saveBudgetPolicy,
+        applyBudgetPolicy,
+        fixedBaselineList,
+        underFixedList,
         budgetStatusList,
         budgetAlerts,
         dismissAlert,

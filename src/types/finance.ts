@@ -164,6 +164,14 @@ export interface MonthlyBudgetConfig {
   categoryBudgets: Record<string, number>; // 카테고리별 예산 금액
   alertThresholdPercent: number; // 알림 기준 (기본 80%)
   enablePushAlerts: boolean;
+  /**
+   * 수입·고정비 값이 어디서 왔는지.
+   *
+   * 잔액의 `balanceSource`와 같은 발상입니다 — 숫자만 남기면 실적에서 불러온
+   * 것인지 사람이 고친 것인지 나중에 알 수 없고, 그 둘은 신뢰도가 다릅니다.
+   */
+  incomeSource?: "USER" | "ACTUALS";
+  fixedSource?: "USER" | "ACTUALS";
 }
 
 export interface CategoryBudgetStatus {
@@ -172,7 +180,14 @@ export interface CategoryBudgetStatus {
   spent: number;
   remaining: number;
   percentage: number;
-  status: "SAFE" | "WARNING" | "EXCEEDED";
+  /**
+   * `UNSET` — 예산을 정하지 않은 카테고리.
+   *
+   * 예전에는 예산 0원이면서 지출이 있는 칸이 `SAFE`로 남아, 초록 막대가
+   * 가득 찬 채 "안전 · 100% 소진"이라고 적혀 있었습니다. 안전한 것도
+   * 초과한 것도 아니라 **아직 정하지 않은 것**입니다.
+   */
+  status: "SAFE" | "WARNING" | "EXCEEDED" | "UNSET";
 }
 
 export interface BudgetAlert {

@@ -10,6 +10,11 @@ import type {
   ValueSource,
 } from "../types/finance";
 import type { StoredPin } from "../services/pinCrypto";
+import {
+  emptyPolicy,
+  type BudgetPolicy,
+  type BudgetPolicyMode,
+} from "../services/budgetPolicy";
 import { persist, queryAll, queryOne, run, runBatch } from "./database";
 import { movesBalance } from "../services/balance";
 import {
@@ -132,6 +137,7 @@ export function deleteUser(id: string): void {
     { sql: "DELETE FROM ai_analyses WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM category_rules WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM custom_categories WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM budget_policy WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM users WHERE id = ?", params: [id] },
   ]);
 }
@@ -679,6 +685,8 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
       alertThresholdPercent: 80,
       enablePushAlerts: true,
       categoryBudgets,
+      incomeSource: "USER",
+      fixedSource: "USER",
     };
   }
 
@@ -690,7 +698,48 @@ export function getBudgetConfig(month: string): MonthlyBudgetConfig {
     alertThresholdPercent: configRow.alert_threshold_percent,
     enablePushAlerts: Boolean(configRow.enable_push_alerts),
     categoryBudgets,
+    incomeSource: configRow.income_source === "ACTUALS" ? "ACTUALS" : "USER",
+    fixedSource: configRow.fixed_source === "ACTUALS" ? "ACTUALS" : "USER",
   };
+}
+
+/**
+ * 예산 기준 — 달에 매이지 않는 한 행.
+ *
+ * 카테고리별 한도를 매달 다시 적지 않으려고 두는 것이라, 사용자당 하나이고
+ * 어느 달에든 적용됩니다.
+ */
+export function getBudgetPolicy(): BudgetPolicy {
+  const row = queryOne<{ mode: string; rules_json: string }>(
+    "SELECT mode, rules_json FROM budget_policy WHERE user_id = ?",
+    [requireUser()]
+  );
+  if (!row) return emptyPolicy();
+
+  const mode: BudgetPolicyMode =
+    row.mode === "INCOME_RATIO" || row.mode === "SPARE_RATIO" ? row.mode : "AMOUNT";
+
+  try {
+    const parsed = JSON.parse(row.rules_json || "{}") as Record<string, unknown>;
+    const rules: Record<string, number> = {};
+    for (const [category, value] of Object.entries(parsed)) {
+      const amount = Number(value);
+      if (Number.isFinite(amount) && amount > 0) rules[category] = amount;
+    }
+    return { mode, rules };
+  } catch {
+    // 저장된 JSON 이 깨졌다면 기준이 없는 것으로 봅니다 — 엉뚱한 예산을 배분하지 않습니다
+    console.error("예산 기준을 읽지 못했습니다. 비어 있는 것으로 봅니다.");
+    return { mode, rules: {} };
+  }
+}
+
+export function saveBudgetPolicy(policy: BudgetPolicy): void {
+  run(
+    `INSERT OR REPLACE INTO budget_policy (user_id, mode, rules_json, updated_at)
+     VALUES (?, ?, ?, ?)`,
+    [requireUser(), policy.mode, JSON.stringify(policy.rules || {}), new Date().toISOString()]
+  );
 }
 
 export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
@@ -698,8 +747,8 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
   runBatch([
     {
       sql: `INSERT OR REPLACE INTO budget_configs
-              (user_id, month, monthly_income, fixed_expenses, savings_target, alert_threshold_percent, enable_push_alerts, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              (user_id, month, monthly_income, fixed_expenses, savings_target, alert_threshold_percent, enable_push_alerts, income_source, fixed_source, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         userId,
         config.month,
@@ -708,6 +757,8 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
         Number(config.savingsTarget || 0),
         Number(config.alertThresholdPercent || 80),
         config.enablePushAlerts ? 1 : 0,
+        config.incomeSource === "ACTUALS" ? "ACTUALS" : "USER",
+        config.fixedSource === "ACTUALS" ? "ACTUALS" : "USER",
         new Date().toISOString(),
       ],
     },
