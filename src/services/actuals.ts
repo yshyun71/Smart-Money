@@ -45,7 +45,7 @@ export function spendingRows(transactions: Transaction[]): Transaction[] {
   return transactions.filter((tx) => !isAssetMove(tx));
 }
 
-export type ActualKind = "INCOME" | "FIXED" | "SAVINGS" | "VARIABLE";
+export type ActualKind = "INCOME" | "EXPENSE" | "FIXED" | "SAVINGS" | "VARIABLE";
 
 /**
  * 그 달의 실적을 만드는 거래들.
@@ -59,6 +59,8 @@ export type ActualKind = "INCOME" | "FIXED" | "SAVINGS" | "VARIABLE";
  *   저축액이 부풀려집니다.
  * - `VARIABLE` 변동비로 판정된 지출에서 **저축을 뺀 것**. `FIXED` 와 같은 이유입니다 —
  *   저축은 예산 화면에서 따로 셈하므로 양쪽에 세면 두 번 깎입니다.
+ * - `EXPENSE` 그 달의 **모든 지출** — 저축도 고정비도 변동비도 다 들어갑니다.
+ *   홈 화면의 `총 지출`이 그 값이고, `고정비 + 변동비 + 저축` 과 같아야 합니다.
  */
 export function actualRows(
   transactions: Transaction[],
@@ -77,6 +79,7 @@ export function actualRows(
 
     if (kind === "INCOME") return tx.type === "INCOME";
     if (tx.type !== "EXPENSE") return false;
+    if (kind === "EXPENSE") return true;
 
     if (kind === "SAVINGS") {
       return tx.category === SAVINGS_CATEGORY && bankIds.has(tx.accountId);

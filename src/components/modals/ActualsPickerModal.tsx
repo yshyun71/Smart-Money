@@ -31,7 +31,7 @@ import {
  */
 export const ActualsPickerModal: React.FC<{
   isOpen: boolean;
-  /** 수입·고정비·저축·변동비 중 어느 칸을 고르는지. */
+  /** 수입·지출·고정비·저축·변동비 중 무엇을 보여 주는지. */
   kind: ActualKind;
   /**
    * 고르지 않고 **보여 주기만** 하는가.
@@ -46,9 +46,25 @@ export const ActualsPickerModal: React.FC<{
   month: string;
   /** 지난번에 빼 둔 거래의 id — 그 상태로 다시 엽니다. */
   excludedIds?: string[];
+  /**
+   * 읽기 전용일 때 줄을 누르면 부르는 함수.
+   *
+   * 고를 것이 없는 목록에서 줄을 누르는 뜻은 "그 건을 보고 고친다"입니다
+   * (§11.7과 같은 길). 주지 않으면 줄은 누를 수 없습니다.
+   */
+  onPick?: (transaction: Transaction) => void;
   onClose: () => void;
   onApply: (total: number, counted: number, excludedIds: string[]) => void;
-}> = ({ isOpen, kind, month, excludedIds, readOnly = false, onClose, onApply }) => {
+}> = ({
+  isOpen,
+  kind,
+  month,
+  excludedIds,
+  readOnly = false,
+  onPick,
+  onClose,
+  onApply,
+}) => {
   const { allTransactions, accounts } = useFinance();
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
@@ -97,11 +113,13 @@ export const ActualsPickerModal: React.FC<{
   const label =
     kind === "INCOME"
       ? "수입"
-      : kind === "FIXED"
-        ? "고정비"
-        : kind === "VARIABLE"
-          ? "변동비"
-          : "저축";
+      : kind === "EXPENSE"
+        ? "지출"
+        : kind === "FIXED"
+          ? "고정비"
+          : kind === "VARIABLE"
+            ? "변동비"
+            : "저축";
   const monthName = `${Number(month.slice(5, 7)) || ""}월`;
 
   const content = (
@@ -121,7 +139,7 @@ export const ActualsPickerModal: React.FC<{
                   ? "bg-emerald-50 text-emerald-600"
                   : kind === "FIXED"
                     ? "bg-indigo-50 text-indigo-600"
-                    : kind === "VARIABLE"
+                    : kind === "VARIABLE" || kind === "EXPENSE"
                     ? "bg-slate-100 text-slate-600"
                     : "bg-rose-50 text-rose-500"
               }`}
@@ -130,7 +148,7 @@ export const ActualsPickerModal: React.FC<{
                 <DollarSign className="w-4 h-4" />
               ) : kind === "FIXED" ? (
                 <Lock className="w-4 h-4" />
-              ) : kind === "VARIABLE" ? (
+              ) : kind === "VARIABLE" || kind === "EXPENSE" ? (
                 <TrendingDown className="w-4 h-4" />
               ) : (
                 <PiggyBank className="w-4 h-4" />
@@ -142,7 +160,9 @@ export const ActualsPickerModal: React.FC<{
               </h3>
               <p className="text-[10px] text-slate-400">
                 {readOnly
-                  ? "이 금액을 만든 내역입니다"
+                  ? onPick
+                    ? `${rows.length}건 · 누르면 그 내역을 고칠 수 있습니다`
+                    : "이 금액을 만든 내역입니다"
                   : "뺄 항목의 체크를 풀고 [선택한 금액 적용]을 누르세요"}
               </p>
             </div>
@@ -201,8 +221,8 @@ export const ActualsPickerModal: React.FC<{
                   <button
                     key={tx.id}
                     type="button"
-                    disabled={readOnly}
-                    onClick={() => toggle(tx.id)}
+                    disabled={readOnly && !onPick}
+                    onClick={() => (readOnly ? onPick?.(tx) : toggle(tx.id))}
                     className={`w-full text-left p-2.5 rounded-xl border transition flex items-center gap-2.5 cursor-pointer ${
                       chosen
                         ? "bg-white border-slate-200"
@@ -256,8 +276,8 @@ export const ActualsPickerModal: React.FC<{
             <p className="text-[10px] text-slate-400 leading-relaxed">
               {readOnly ? (
                 <>
-                  변동비 지출은 <strong>적는 값이 아니라 그 달 실적</strong>입니다. 금액을
-                  바꾸려면 내역의 구분을 고정비로 옮기거나 카테고리를 고치세요.
+                  이 금액은 <strong>적는 값이 아니라 그 달 실적</strong>입니다. 금액을
+                  바꾸려면 내역의 구분(고정비·변동비)이나 카테고리를 고치세요.
                 </>
               ) : (
                 <>

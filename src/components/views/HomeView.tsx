@@ -1,15 +1,21 @@
-import React from "react";
+import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import { spareOf } from "../../services/budgetPolicy";
 import { SummaryCard } from "../dashboard/SummaryCard";
 import { FixedVsVariableRatio } from "../dashboard/FixedVsVariableRatio";
 import { TransactionItem } from "../transactions/TransactionItem";
 import { NavTab } from "../layout/BottomNavigation";
 import { PWAHomeBanner } from "../pwa/PWAInstallButton";
+
+/** 바로가기 묶음을 펼쳐 두었는지 기억하는 열쇠. */
+const SHORTCUTS_KEY = "smartmoney_home_shortcuts";
 import {
   Sparkles,
   Plus,
   Receipt,
   CreditCard,
+  LayoutGrid,
+  ChevronDown,
   ArrowRight,
   TrendingDown,
   ShieldAlert,
@@ -41,15 +47,55 @@ export const HomeView: React.FC<HomeViewProps> = ({
     budgetStatusList,
     totalVariableSpent,
     totalBudgeted,
+    selectedMonth,
   } = useFinance();
 
   const recentTransactions = transactions.slice(0, 4);
+  const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
 
-  // Variable budget progress
-  const variableBudgetTotal = Math.max(
-    0,
-    budgetConfig.monthlyIncome - budgetConfig.fixedExpenses - budgetConfig.savingsTarget
-  );
+  /*
+    바로가기 묶음을 펼쳐 둘지.
+
+    여섯 개 모두 **다른 화면으로 가는 버튼**이고 그 자체로는 정보가 없습니다.
+    늘 펼쳐 두면 화면 위쪽을 차지해 결산·예산 같은 실제 정보가 밀립니다.
+    마지막에 고른 상태를 기억하므로, 자주 쓰는 사람은 펼친 채로, 그렇지 않은
+    사람은 접힌 채로 씁니다.
+
+    localStorage 에 둡니다 — 이것은 가계부 데이터가 아니라 화면 취향이고,
+    기기를 다시 열어도 그대로여야 뜻이 있습니다(숨긴 알림과 같은 취급, §5).
+  */
+  const [showShortcuts, setShowShortcuts] = useState(() => {
+    try {
+      return localStorage.getItem(SHORTCUTS_KEY) !== "closed";
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleShortcuts = () => {
+    setShowShortcuts((prev: boolean) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SHORTCUTS_KEY, next ? "open" : "closed");
+      } catch {
+        /* 사생활 보호 모드 등 — 기억하지 못해도 화면은 동작해야 합니다 */
+      }
+      return next;
+    });
+  };
+
+  /*
+    변동비 가용 한도는 `spareOf` 하나에서 옵니다.
+
+    여기서 같은 식을 손으로 다시 적고 있었습니다(§11.4가 한 곳에 두라고 적어
+    둔 바로 그 식입니다). 예산 화면에서 식이 바뀌면 이 화면만 옛 값을 말하게
+    됩니다.
+  */
+  const variableBudgetTotal = spareOf({
+    income: budgetConfig.monthlyIncome,
+    fixed: budgetConfig.fixedExpenses,
+    savings: budgetConfig.savingsTarget,
+  });
   const variableSpentPercent =
     variableBudgetTotal > 0
       ? Math.round((totalVariableSpent / variableBudgetTotal) * 100)
@@ -94,7 +140,36 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       )}
 
-      {/* Quick Action Buttons */}
+      {/*
+        바로가기 묶음.
+
+        여섯 개 모두 다른 화면으로 가는 버튼이고 그 자체로는 정보가 없습니다.
+        늘 펼쳐 두면 화면 위쪽을 차지해 결산·예산 같은 **실제 정보가 밀립니다.**
+        마지막에 고른 상태를 기억하므로 자주 쓰는 사람은 펼친 채로, 그렇지 않은
+        사람은 접힌 채로 씁니다.
+      */}
+      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs overflow-hidden">
+        <button
+          type="button"
+          onClick={toggleShortcuts}
+          className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-slate-50 transition cursor-pointer"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <LayoutGrid className="w-4 h-4 text-slate-400 shrink-0" />
+            <span className="text-xs font-bold text-slate-900">바로가기</span>
+            <span className="text-[10px] text-slate-400 truncate">
+              {showShortcuts
+                ? "문자등록 · 카드·계좌 · 직접입력 · AI 코치 · 대시보드 · 예산"
+                : "6개 기능 바로 열기"}
+            </span>
+          </div>
+          <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition rounded-full px-2.5 py-1 whitespace-nowrap">
+            {showShortcuts ? "접기" : "펼치기"}
+            <ChevronDown className={`w-3 h-3 ${showShortcuts ? "rotate-180" : ""}`} />
+          </span>
+        </button>
+
+        <div className={`px-3 pb-3 space-y-2 ${showShortcuts ? "" : "hidden"}`}>
       <div className="grid grid-cols-4 gap-1.5">
         <button
           onClick={onOpenSMSModal}
@@ -171,6 +246,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <ArrowRight className="w-3.5 h-3.5 text-slate-400 mt-1" />
         </button>
       </div>
+        </div>
+      </div>
 
       {/* Monthly Budget Consumption Snapshot Bar */}
       <div
@@ -181,7 +258,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="flex items-center gap-1.5">
             <PiggyBank className="w-4 h-4 text-emerald-600" />
             <span className="text-xs font-bold text-slate-900">
-              9월 변동비 예산 소진 현황
+              {monthName} 변동비 예산 소진 현황
             </span>
           </div>
           <span
