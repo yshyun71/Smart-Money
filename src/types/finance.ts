@@ -129,7 +129,16 @@ export interface Transaction {
    * the match out again every time.
    */
   billingMonth?: string;
+  /**
+   * 이 줄이 **DB 에 들어온** 시각 (ISO). 거래 날짜가 아닙니다.
+   *
+   * 지난달 명세서를 오늘 가져오면 `date` 는 지난달이지만 이 값은 오늘입니다.
+   * "AI 분석 이후에 들어온 내역인가"를 가릴 수 있는 유일한 근거입니다(11.6).
+   */
+  createdAt?: string;
 }
+
+import type { AnalysisBasis } from "../services/analysisFreshness";
 
 export interface SavingsRecommendation {
   id: string;
@@ -165,7 +174,23 @@ export interface AISpendingAnalysis {
   habitImprovements?: HabitImprovementTip[];
   weeklyActionChecklist: string[];
   coachEncouragement: string;
+  /** 분석 시각 — 사람이 읽는 문자열. 견주는 데는 쓸 수 없습니다. */
   analyzedAt: string;
+  /**
+   * 분석 시각 (ISO).
+   *
+   * `analyzedAt` 은 만들 때의 지역 문자열이라 기기 설정에 따라 모양이 갈리고
+   * 견줄 수 없습니다. "이 분석 이후에 들어온 내역"을 세려면 견줄 수 있는 값이
+   * 따로 있어야 합니다(11.6).
+   */
+  analyzedAtIso?: string;
+  /**
+   * 무엇을 보고 만든 분석인가 — 그때의 건수와 합계.
+   *
+   * 삭제와 수정은 흔적을 남기지 않으므로, 그때의 숫자를 적어 두지 않으면
+   * 지금과 견줄 방법이 없습니다.
+   */
+  basis?: AnalysisBasis;
 }
 
 export interface MonthlyBudgetConfig {

@@ -53,6 +53,7 @@ import {
   settlesFromBank,
 } from "../services/cardLink";
 import { actualRows, sumActuals } from "../services/actuals";
+import { basisOf, driftSince, type AnalysisDrift } from "../services/analysisFreshness";
 import {
   BUDGET_EXCLUDED_CATEGORIES,
   BUILT_IN_CATEGORIES,
@@ -99,6 +100,8 @@ interface FinanceContextType {
   setSelectedMonth: (month: string) => void;
   aiAnalysis: AISpendingAnalysis | null;
   isAnalyzingAI: boolean;
+  /** 분석 이후 그 달의 내역이 달라졌는가 (11.6). 견줄 수 없으면 null. */
+  aiAnalysisDrift: AnalysisDrift | null;
   aiError: string | null;
   clearAiError: () => void;
   isSyncing: boolean;
@@ -808,6 +811,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     세면 최소선이 실제보다 낮게 제시되고, 그러면 가이드가 아니라 오해가 됩니다.
     `transactions` 전체를 보되 최근 6개월만 셉니다.
   */
+  /**
+   * 이 분석이 아직 지금의 가계부를 말하고 있는가 (11.6).
+   *
+   * 분석이 없거나 견줄 근거가 없으면 `null` 입니다 — 모르는 것을 "변화 없음"
+   * 이라고 말하지 않습니다(§17.1).
+   */
+  const aiAnalysisDrift: AnalysisDrift | null = useMemo(
+    () =>
+      aiAnalysis
+        ? driftSince({
+            transactions,
+            month: selectedMonth,
+            basis: aiAnalysis.basis,
+            savedAt: aiAnalysis.analyzedAtIso,
+          })
+        : null,
+    [aiAnalysis, transactions, selectedMonth]
+  );
+
   const fixedBaselineList = useMemo(
     () => fixedBaselines(transactions, { months: 6, upTo: selectedMonth }),
     [transactions, selectedMonth]
@@ -1565,6 +1587,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
           hour: "2-digit",
           minute: "2-digit",
         }),
+        /*
+          무엇을 보고 만든 분석인지 함께 남깁니다.
+
+          결과만 저장하면 며칠 뒤 명세서를 더 가져왔을 때 그 82점이 절반짜리
+          데이터에서 나온 값인지 알 수 없습니다. `analyzedAt` 은 지역 문자열이라
+          견줄 수 없으므로 ISO 를 따로 둡니다(11.6).
+        */
+        analyzedAtIso: new Date().toISOString(),
+        basis: basisOf(transactions, selectedMonth),
       };
 
       setAiAnalysis(result);
@@ -1668,6 +1699,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         setSelectedMonth,
         aiAnalysis,
         isAnalyzingAI,
+        aiAnalysisDrift,
         aiError,
         clearAiError,
         isSyncing,

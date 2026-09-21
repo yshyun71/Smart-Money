@@ -306,7 +306,8 @@ export function listTransactions(month?: string): Transaction[] {
            expense_type as expenseType, category, merchant, amount,
            payment_method as paymentMethod, account_id as accountId, memo, note, origin,
            is_fixed_recurring as isFixedRecurring, recurring_day as recurringDay,
-           linked_account_id as linkedAccountId, billing_month as billingMonth
+           linked_account_id as linkedAccountId, billing_month as billingMonth,
+           created_at as createdAt
     FROM transactions
     WHERE user_id = ?
   `;
@@ -905,13 +906,21 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
 // ---------------------------------------------------------------------------
 
 export function getAnalysis(month: string): AISpendingAnalysis | null {
-  const row = queryOne<{ analysis_json: string }>(
-    "SELECT analysis_json FROM ai_analyses WHERE user_id = ? AND month = ?",
+  const row = queryOne<{ analysis_json: string; updated_at: string }>(
+    "SELECT analysis_json, updated_at FROM ai_analyses WHERE user_id = ? AND month = ?",
     [requireUser(), month]
   );
   if (!row) return null;
   try {
-    return JSON.parse(row.analysis_json) as AISpendingAnalysis;
+    const analysis = JSON.parse(row.analysis_json) as AISpendingAnalysis;
+    /*
+      옛 분석에는 견줄 수 있는 시각이 없습니다. 행의 `updated_at` 이 그 값을
+      대신하므로 읽을 때 채워 넣습니다 — 그러면 다음 저장 때 JSON 안으로
+      들어가 스스로 나아집니다. 이미 있는 값은 건드리지 않습니다.
+    */
+    return analysis.analyzedAtIso
+      ? analysis
+      : { ...analysis, analyzedAtIso: row.updated_at };
   } catch {
     return null;
   }

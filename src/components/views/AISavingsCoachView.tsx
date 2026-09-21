@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { askCoach } from "../../services/aiClient";
-import { shortWon } from "../../utils/format";
+import { shortWon, won } from "../../utils/format";
+import { describeWhen } from "../../services/analysisFreshness";
 import {
   AlertCircle,
   Sparkles,
@@ -30,6 +31,8 @@ export const AISavingsCoachView: React.FC = () => {
     variableExpenseTotal,
     aiError,
     clearAiError,
+    aiAnalysisDrift,
+    selectedMonth,
   } = useFinance();
 
   // Chat state
@@ -91,6 +94,10 @@ export const AISavingsCoachView: React.FC = () => {
       setIsAskingChat(false);
     }
   };
+
+  /** 언제 분석한 것인가. 저장만 하고 보여 주지 않아 아무도 알 수 없었습니다. */
+  const analysedWhen = describeWhen(aiAnalysis?.analyzedAtIso) || aiAnalysis?.analyzedAt || "";
+  const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
 
   const getDifficultyBadge = (diff: string) => {
     switch (diff) {
@@ -174,6 +181,64 @@ export const AISavingsCoachView: React.FC = () => {
         )}
       </div>
 
+      {/*
+        분석은 그 시점의 스냅샷입니다.
+
+        누른 순간의 내역으로 만들어지고 스스로 다시 계산하지 않으므로, 며칠 뒤
+        명세서를 더 가져오면 위의 건강도와 절약 가능액은 **절반짜리 데이터에서
+        나온 값**이 됩니다. 화면이 그 사실을 말하지 않으면 알아낼 방법이
+        없습니다 — 잔액(§8)·실적(§11.4)에서 이미 두 번 겪은 문제입니다.
+      */}
+      {aiAnalysis && aiAnalysisDrift?.stale && !isAnalyzingAI && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200/80 space-y-2">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-amber-900">
+                {aiAnalysisDrift.headline}
+              </div>
+              <p className="mt-0.5 text-[11px] text-amber-800 leading-relaxed">
+                위의 건강도와 절약 가능액은 {analysedWhen ? `${analysedWhen} ` : ""}분석한
+                시점의 내역으로 계산된 값입니다.
+              </p>
+
+              {/* 무엇이 얼마나 달라졌는지 — 숫자로 */}
+              {(aiAnalysisDrift.expenseDelta !== 0 || aiAnalysisDrift.incomeDelta !== 0) && (
+                <div className="mt-1.5 space-y-0.5 text-[11px] text-amber-900">
+                  {aiAnalysisDrift.expenseDelta !== 0 && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-amber-700 shrink-0">{monthName} 지출</span>
+                      <span className="font-bold text-right">
+                        {won(aiAnalysisDrift.expense - aiAnalysisDrift.expenseDelta)} →{" "}
+                        {won(aiAnalysisDrift.expense)}
+                      </span>
+                    </div>
+                  )}
+                  {aiAnalysisDrift.incomeDelta !== 0 && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-amber-700 shrink-0">{monthName} 수입</span>
+                      <span className="font-bold text-right">
+                        {won(aiAnalysisDrift.income - aiAnalysisDrift.incomeDelta)} →{" "}
+                        {won(aiAnalysisDrift.income)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <button
+            onClick={runAISpendingAnalysis}
+            disabled={isAnalyzingAI}
+            className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-[11px] font-bold transition active:scale-98 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            지금 내역으로 다시 분석하기
+          </button>
+        </div>
+      )}
+
       {/* Analysis failure (missing key, quota, offline …) */}
       {aiError && (
         <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200/80 text-xs text-rose-800 flex items-start gap-2">
@@ -217,9 +282,17 @@ export const AISavingsCoachView: React.FC = () => {
       {/* Summary comment from AI */}
       {aiAnalysis && (
         <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-2">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
-            <Zap className="w-4 h-4 text-emerald-600" />
-            <span>AI 종합 진단 코멘트</span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 min-w-0">
+              <Zap className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="truncate">AI 종합 진단 코멘트</span>
+            </div>
+            {/* 언제 무엇을 보고 만든 값인지 — 저장은 하면서 보여 주지 않았습니다 */}
+            {analysedWhen && (
+              <span className="text-[10px] text-slate-400 shrink-0 whitespace-nowrap">
+                {monthName} 기준 · {analysedWhen} 분석
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-700 leading-relaxed">
             {aiAnalysis.summary}
