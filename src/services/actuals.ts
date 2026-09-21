@@ -50,6 +50,25 @@ export function actualRows(
   });
 }
 
+/**
+ * 그 달 그 카테고리의 **지출** 내역.
+ *
+ * 예산 화면의 `지출: 460,000원` 을 눌렀을 때 열리는 목록입니다. 합계를 내는
+ * 규칙(`budgetStatusList` 의 카테고리별 집계)과 **같은 조건**이어야 합니다 —
+ * 목록의 합과 위에 적힌 금액이 다르면 둘 중 무엇이 맞는지 알 수 없습니다.
+ * 카드·계좌를 가리지 않는 것도 그 집계와 같습니다.
+ */
+export function categorySpendRows(
+  transactions: Transaction[],
+  options: { month: string; category: string }
+): Transaction[] {
+  const { month, category } = options;
+  return transactions.filter(
+    (tx) =>
+      tx.type === "EXPENSE" && tx.category === category && tx.date.startsWith(month)
+  );
+}
+
 export interface ActualSum {
   /** 제외한 건을 뺀 금액 — 예산 칸에 들어가는 값. */
   total: number;

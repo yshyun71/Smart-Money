@@ -21,6 +21,7 @@ import {
   sumActuals,
   monthPhase,
   budgetWording,
+  categorySpendRows,
 } from "../src/services/actuals";
 
 let passed = 0;
@@ -462,6 +463,71 @@ section("지난 달은 예상이 아니라 실적입니다");
     [past, now].every((w) =>
       [w.income.label, w.fixed.label, w.savings.label].every((label) => /^\d+월/.test(label))
     )
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("카테고리 지출 펼쳐 보기 — 합계와 목록이 같은 말을 할 것");
+// ---------------------------------------------------------------------------
+{
+  const rows: any[] = [
+    varTx("식비", "2026-08", 30_000),
+    varTx("식비", "2026-08", 12_000),
+    fixedTx("식비", "2026-08", 8_000),
+    varTx("교통", "2026-08", 50_000),
+    varTx("식비", "2026-07", 99_000),
+    {
+      ...varTx("식비", "2026-08", 500_000),
+      type: "INCOME",
+      expenseType: "INCOME",
+    },
+  ];
+
+  const food = categorySpendRows(rows, { month: "2026-08", category: "식비" });
+  check("그 달 그 카테고리만", food.length === 3, food.length);
+  check(
+    "합계",
+    food.reduce((sum: number, tx: any) => sum + tx.amount, 0) === 50_000,
+    food
+  );
+  check("다른 달 제외", !food.some((tx: any) => tx.date.startsWith("2026-07")), food);
+  check("다른 카테고리 제외", !food.some((tx: any) => tx.category === "교통"), food);
+
+  /*
+    환불(수입)은 빼야 합니다 — 예산의 소진율은 지출만 보고 계산하므로,
+    목록에 수입이 섞이면 목록의 합과 위에 적힌 금액이 달라집니다.
+  */
+  check("수입은 목록에 없음", !food.some((tx: any) => tx.type === "INCOME"), food);
+
+  // 고정비도 그 카테고리의 지출입니다(예산 소진율이 고정비를 포함해 셉니다)
+  check("고정비도 포함", food.some((tx: any) => tx.expenseType === "FIXED"), food);
+
+  /*
+    **이 목록의 합은 예산 화면에 적힌 `지출:` 금액과 같아야 합니다.** 여기서
+    그 집계(`budgetStatusList`)와 같은 규칙인지 직접 견줍니다 — 두 곳이 갈리면
+    사용자는 어느 쪽이 맞는지 알 수 없습니다.
+  */
+  const grouped: Record<string, number> = {};
+  rows
+    .filter((tx: any) => tx.type === "EXPENSE" && tx.date.startsWith("2026-08"))
+    .forEach((tx: any) => {
+      grouped[tx.category] = (grouped[tx.category] || 0) + tx.amount;
+    });
+
+  for (const category of Object.keys(grouped)) {
+    const listed = categorySpendRows(rows, { month: "2026-08", category }).reduce(
+      (sum: number, tx: any) => sum + tx.amount,
+      0
+    );
+    check(`${category}: 목록의 합 == 집계`, listed === grouped[category], {
+      listed,
+      grouped: grouped[category],
+    });
+  }
+
+  check(
+    "없는 카테고리는 빈 목록",
+    categorySpendRows(rows, { month: "2026-08", category: "의료" }).length === 0
   );
 }
 

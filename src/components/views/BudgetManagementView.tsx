@@ -10,6 +10,8 @@ import {
 } from "../../services/actuals";
 import { BudgetPolicyModal } from "../modals/BudgetPolicyModal";
 import { ActualsPickerModal } from "../modals/ActualsPickerModal";
+import { CategorySpendingModal } from "../modals/CategorySpendingModal";
+import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { spareOf } from "../../services/budgetPolicy";
 import {
   Sliders,
@@ -80,6 +82,13 @@ export const BudgetManagementView: React.FC<{
   */
   const [editing, setEditing] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  /*
+    `지출: 460,000원` 뒤에 무엇이 있는지 보는 창. 한도를 넘었다는 말만 듣고
+    무엇 때문인지 모르면 할 수 있는 일이 없습니다(11.7).
+  */
+  const [spending, setSpending] = useState<string | null>(null);
+  /** 그 목록에서 고른 건 — 거래 수정 화면으로 넘깁니다. */
+  const [editingTx, setEditingTx] = useState<any>(null);
 
   /** 기준에 값이 들어 있는 카테고리 수. 0이면 적용할 것이 없습니다. */
   const policyCount = Object.keys(budgetPolicy.rules || {}).length;
@@ -920,11 +929,31 @@ export const BudgetManagementView: React.FC<{
                 </div>
 
                 <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 gap-2">
-                  <span className="shrink-0">
+                  {/*
+                    합계 하나만 보여 주면 "무엇을 줄여야 하는가"에 답할 수
+                    없습니다. 금액과 [조회] 둘 다 같은 목록을 엽니다 — 금액이
+                    눌린다는 것을 모르는 사람이 있으므로 버튼도 함께 둡니다.
+                  */}
+                  <span className="shrink-0 flex items-center gap-1">
                     지출:{" "}
-                    <strong className="text-slate-800 font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setSpending(item.category)}
+                      disabled={item.spent <= 0}
+                      className="font-bold text-slate-800 underline decoration-slate-300 underline-offset-2 hover:text-slate-900 hover:decoration-slate-500 transition disabled:no-underline disabled:text-slate-400 cursor-pointer disabled:cursor-default"
+                    >
                       {withCommas(item.spent)}원
-                    </strong>
+                    </button>
+                    {item.spent > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSpending(item.category)}
+                        className="px-1.5 py-0.5 rounded-full bg-white border border-slate-200 text-[9px] font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition whitespace-nowrap cursor-pointer"
+                      >
+                        조회
+                        <ChevronRight className="w-2.5 h-2.5 inline -mt-0.5" />
+                      </button>
+                    )}
                   </span>
                   <span className="text-right min-w-0">
                     {isUnset ? (
@@ -1025,6 +1054,28 @@ export const BudgetManagementView: React.FC<{
       </div>
       {/* 카테고리별 예산 기준 — 달에 매이지 않는 한도 규칙 */}
       <BudgetPolicyModal isOpen={showPolicy} onClose={() => setShowPolicy(false)} />
+
+      {/* 카테고리 지출의 속 — 누르면 그 자리에서 고칠 수 있습니다 (11.7) */}
+      <CategorySpendingModal
+        isOpen={spending !== null}
+        category={spending}
+        month={selectedMonth}
+        budget={budgetConfig.categoryBudgets?.[spending || ""] || 0}
+        /* 위에 수정 화면이 떠 있으면 Escape 를 가로채지 않습니다 (14.4) */
+        suspended={editingTx !== null}
+        onClose={() => setSpending(null)}
+        onPick={(transaction) => setEditingTx(transaction)}
+      />
+
+      {/*
+        목록은 뒤에 남겨 둡니다 — 고치고 나면 대개 다음 건을 이어서 봅니다.
+        카테고리를 바꿨다면 그 건은 목록에서 사라지고 합계도 줄어듭니다.
+      */}
+      <AddTransactionModal
+        isOpen={editingTx !== null}
+        editing={editingTx}
+        onClose={() => setEditingTx(null)}
+      />
 
       {/* 그 합계를 만든 내역을 열어 보고, 뺄 것을 빼는 화면 */}
       <ActualsPickerModal
