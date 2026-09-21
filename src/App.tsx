@@ -12,6 +12,8 @@ import { ConnectedAssetsView } from "./components/views/ConnectedAssetsView";
 import { AnalyticsDashboardView } from "./components/views/AnalyticsDashboardView";
 import { BudgetManagementView } from "./components/views/BudgetManagementView";
 import { AddTransactionModal } from "./components/transactions/AddTransactionModal";
+import { AccountLedgerModal } from "./components/transactions/AccountLedgerModal";
+import { CsvImportModal } from "./components/modals/CsvImportModal";
 import { SmsInboxModal } from "./components/modals/SmsInboxModal";
 import { OfflineIndicator } from "./components/pwa/PWAInstallButton";
 import { Wifi, Signal } from "lucide-react";
@@ -20,6 +22,18 @@ const MainContent: React.FC = () => {
   const { viewMode, aiAnalysis } = useFinance();
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  /*
+    계좌·카드 내역 창을 여기서 엽니다.
+
+    홈 화면의 자산 요약에서도 그 계좌의 내역으로 바로 들어갈 수 있어야 하는데,
+    창은 `카드·계좌` 화면 안에만 있었습니다. 뿌리에 두면 두 화면이 같은 창을
+    쓰고, 그 안의 [직접 추가]·[엑셀·CSV]까지 같은 길로 이어집니다 — 누를 수는
+    있는데 아무 일도 없는 버튼을 만들지 않으려면 함께 이어 두어야 합니다.
+  */
+  const [ledgerAccountId, setLedgerAccountId] = useState<string | null>(null);
+  const [editingTx, setEditingTx] = useState<any>(null);
+  const [addForAccount, setAddForAccount] = useState<string | undefined>(undefined);
+  const [csvAccountId, setCsvAccountId] = useState<string | null>(null);
   const [isSMSModalOpen, setIsSMSModalOpen] = useState(false);
   /** 문자 앱에서 공유로 들어온 글. 대기함에 담긴 뒤 비웁니다. */
   const [sharedText, setSharedText] = useState<string | null>(null);
@@ -75,6 +89,7 @@ const MainContent: React.FC = () => {
             onNavigateTab={setActiveTab}
             onOpenAddModal={() => setIsAddModalOpen(true)}
             onOpenSMSModal={() => setIsSMSModalOpen(true)}
+            onOpenAccount={(id: string) => setLedgerAccountId(id)}
           />
         );
       case "analytics":
@@ -114,6 +129,7 @@ const MainContent: React.FC = () => {
             onNavigateTab={setActiveTab}
             onOpenAddModal={() => setIsAddModalOpen(true)}
             onOpenSMSModal={() => setIsSMSModalOpen(true)}
+            onOpenAccount={(id: string) => setLedgerAccountId(id)}
           />
         );
     }
@@ -212,8 +228,33 @@ const MainContent: React.FC = () => {
 
         {/* Modals */}
         <AddTransactionModal
-          isOpen={isAddModalOpen}
-          onClose={() => setIsAddModalOpen(false)}
+          isOpen={isAddModalOpen || editingTx !== null}
+          editing={editingTx}
+          defaultAccountId={addForAccount}
+          onClose={() => {
+            setIsAddModalOpen(false);
+            setEditingTx(null);
+            setAddForAccount(undefined);
+          }}
+        />
+
+        {/* 홈의 자산 요약에서 연 계좌·카드 내역 */}
+        <AccountLedgerModal
+          isOpen={ledgerAccountId !== null}
+          accountId={ledgerAccountId || ""}
+          onClose={() => setLedgerAccountId(null)}
+          onEdit={(tx: any) => setEditingTx(tx)}
+          onAdd={() => {
+            setAddForAccount(ledgerAccountId || undefined);
+            setIsAddModalOpen(true);
+          }}
+          onImport={() => setCsvAccountId(ledgerAccountId)}
+        />
+
+        <CsvImportModal
+          isOpen={csvAccountId !== null}
+          defaultAccountId={csvAccountId || undefined}
+          onClose={() => setCsvAccountId(null)}
         />
 
         <SmsInboxModal

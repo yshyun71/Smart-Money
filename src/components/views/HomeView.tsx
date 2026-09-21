@@ -1,6 +1,8 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { spareOf } from "../../services/budgetPolicy";
+import { describeBill, pendingBill } from "../../services/cardLink";
+import { asOfLabel } from "../../utils/format";
 import { SummaryCard } from "../dashboard/SummaryCard";
 import { FixedVsVariableRatio } from "../dashboard/FixedVsVariableRatio";
 import { TransactionItem } from "../transactions/TransactionItem";
@@ -31,10 +33,13 @@ interface HomeViewProps {
   onNavigateTab: (tab: NavTab) => void;
   onOpenAddModal: () => void;
   onOpenSMSModal: () => void;
+  /** 그 계좌·카드의 내역 창을 엽니다(뿌리에서 `App` 이 들고 있습니다). */
+  onOpenAccount?: (accountId: string) => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
   onNavigateTab,
+  onOpenAccount,
   onOpenAddModal,
   onOpenSMSModal,
 }) => {
@@ -48,7 +53,29 @@ export const HomeView: React.FC<HomeViewProps> = ({
     totalVariableSpent,
     totalBudgeted,
     selectedMonth,
+    allTransactions,
   } = useFinance();
+
+  /*
+    카드의 청구액은 **계산하는 값**입니다(§9.4).
+
+    이 화면은 `accounts.balance_or_billed` 를 그대로 읽어 `0원 청구예정`이라고
+    적고 있었습니다. 그 칸은 카드에 대해서는 **아무도 갱신하지 않습니다** —
+    등록할 때 적어 둔 값이 그대로 남아 있을 뿐이고, 카드 행에는 수정 버튼조차
+    없습니다(§8). 그래서 대금을 이미 낸 카드 넷이 모두 `0원 청구예정`으로,
+    신한카드는 등록 때의 80,000원으로 보였습니다. 같은 카드를 두고 카드·계좌
+    화면은 `8월 결재완료 1,162,344원` 이라고 말하고 있었습니다.
+
+    `describeBill` 로 두 화면이 같은 말을 하게 합니다.
+  */
+  const cardBills = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof describeBill>>();
+    for (const account of accounts) {
+      if (account.type === "BANK") continue;
+      map.set(account.id, describeBill(pendingBill(account.id, allTransactions)));
+    }
+    return map;
+  }, [accounts, allTransactions]);
 
   const recentTransactions = transactions.slice(0, 4);
   const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
@@ -370,32 +397,57 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          {accounts.map((acc) => (
-            <div
-              key={acc.id}
-              onClick={() => onNavigateTab("assets")}
-              className="p-3 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-100 cursor-pointer flex flex-col justify-between transition active:scale-98"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold text-slate-500">
-                  {acc.institution}
-                </span>
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: accountTone(acc.type).hex }}
-                />
-              </div>
-              <div className="text-xs font-bold text-slate-800 truncate mt-1">
-                {acc.name}
-              </div>
-              <div className="text-xs font-black text-slate-900 mt-1">
-                {acc.balanceOrBilled.toLocaleString()}원
-                <span className="text-[9px] font-normal text-slate-400 ml-1">
-                  {acc.type === "BANK" ? "잔액" : "청구예정"}
-                </span>
-              </div>
-            </div>
-          ))}
+          {accounts.map((acc) => {
+            const bill = cardBills.get(acc.id);
+            const isBank = acc.type === "BANK";
+            /* 정산된 카드는 낸 금액과 `N월 결재완료` — 쓰지 않은 카드와 다릅니다 */
+            const amount = isBank ? acc.balanceOrBilled : bill?.amount ?? 0;
+            const settled = Boolean(bill && bill.headline.endsWith("결재완료"));
+
+            return (
+              <button
+                key={acc.id}
+                type="button"
+                /* 그 계좌·카드의 내역으로 바로 들어갑니다 — 탭만 여는 것보다 한 걸음 짧습니다 */
+                onClick={() => onOpenAccount?.(acc.id)}
+                className="p-3 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-100 cursor-pointer flex flex-col justify-between transition active:scale-98 text-left"
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-bold text-slate-500 truncate">
+                    {acc.institution}
+                  </span>
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: accountTone(acc.type).hex }}
+                  />
+                </div>
+                <div className="text-xs font-bold text-slate-800 truncate mt-1">
+                  {acc.name}
+                </div>
+                <div className="text-xs font-black text-slate-900 mt-1 whitespace-nowrap">
+                  {amount.toLocaleString()}원
+                  <span
+                    className={`text-[9px] font-normal ml-1 ${
+                      settled ? "text-emerald-600 font-bold" : "text-slate-400"
+                    }`}
+                  >
+                    {isBank ? "잔액" : bill?.headline ?? "청구예정"}
+                  </span>
+                </div>
+                {/*
+                  잔액은 금액만으로는 뜻이 반쪽입니다 — 언제 기준인지가 함께
+                  있어야 그 숫자를 믿을 수 있습니다(§8).
+                */}
+                <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                  {isBank
+                    ? acc.balanceAsOf
+                      ? `${asOfLabel(acc.balanceAsOf)} 기준`
+                      : "기준일시 없음"
+                    : bill?.detail || ""}
+                </div>
+              </button>
+            );
+          })}
 
           {/* Quick Add Card Slot */}
           <button

@@ -11,6 +11,7 @@ import {
   billingTotalsFor,
   pendingBill,
   settlesFromBank,
+  describeBill,
 } from "../src/services/cardLink";
 
 let passed = 0;
@@ -354,6 +355,80 @@ section("낸 대금은 낸 것으로 보입니다");
     pay(100_000, "2026-09-25", { linkedAccountId: "kb", billingMonth: "2026-08" }),
   ]);
   check("환불을 뺀 금액으로 정산", refunded.settledAmount === 100_000, refunded);
+}
+
+// ---------------------------------------------------------------------------
+section("카드가 무엇을 보여 줘야 하는가 (describeBill)");
+// ---------------------------------------------------------------------------
+{
+  /*
+    **낸 대금은 낸 것으로 보여야 합니다.** `0원 이번 달 청구예정` 은 정산된
+    카드가 아니라 **쓰지 않은 카드**처럼 읽힙니다.
+  */
+  const settled = describeBill({
+    count: 0,
+    amount: 0,
+    basis: "AFTER_PAYMENT",
+    from: "2026-08",
+    settledMonth: "2026-08",
+    settledAmount: 1_162_344,
+  });
+  check("정산된 카드는 낸 금액", settled.amount === 1_162_344, settled);
+  check("정산 문구", settled.headline === "8월 결재완료", settled.headline);
+  check("건수는 0", settled.count === 0, settled);
+
+  // 낸 뒤에 또 쓴 것이 있으면 그 금액은 아직 낼 돈입니다
+  const usedAgain = describeBill({
+    count: 3,
+    amount: 210_290,
+    basis: "AFTER_PAYMENT",
+    from: "2026-08",
+    settledMonth: "2026-08",
+    settledAmount: 500_000,
+  });
+  check("낸 뒤 이용분은 청구예정", usedAgain.headline === "이번 달 청구예정", usedAgain);
+  check("금액은 낼 돈", usedAgain.amount === 210_290, usedAgain);
+  check("기준을 말함", usedAgain.detail === "8월 결제 이후 이용분", usedAgain.detail);
+
+  const behind = describeBill({
+    count: 1,
+    amount: 5_000,
+    basis: "LATEST_STATEMENT",
+    from: "2026-09",
+    settledMonth: null,
+    settledAmount: 0,
+  });
+  check("미정산이 쌓이면 명세서 기준", behind.detail === "9월 명세서 기준", behind.detail);
+
+  const fresh = describeBill({
+    count: 2,
+    amount: 30_000,
+    basis: "THIS_MONTH",
+    from: "2026-09",
+    settledMonth: null,
+    settledAmount: 0,
+  });
+  check("근거가 없으면 이번 달 1일부터", fresh.detail === "9월 1일부터 이용분", fresh.detail);
+
+  /*
+    이 함수가 서비스에 있는 이유: 홈 화면의 자산 요약과 카드·계좌 화면이 **같은
+    카드를 두고 다른 말**을 하고 있었습니다. 홈은 저장된 `balance_or_billed` 를
+    읽어 `0원 청구예정` 이라고 적었고, 그 칸은 카드에 대해서는 아무도 갱신하지
+    않습니다(§9.4).
+  */
+  check(
+    "같은 입력이면 같은 답",
+    JSON.stringify(
+      describeBill({
+        count: 0,
+        amount: 0,
+        basis: "AFTER_PAYMENT",
+        from: "2026-08",
+        settledMonth: "2026-08",
+        settledAmount: 1_162_344,
+      })
+    ) === JSON.stringify(settled)
+  );
 }
 
 // ---------------------------------------------------------------------------

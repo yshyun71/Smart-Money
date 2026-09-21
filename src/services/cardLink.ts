@@ -185,6 +185,54 @@ function billedMonthOf(tx: Transaction): string {
   return tx.billingMonth || tx.date.slice(0, 7);
 }
 
+export interface BillDisplay {
+  amount: number;
+  headline: string;
+  detail: string;
+  count: number;
+}
+
+/**
+ * 그 카드가 지금 무엇을 보여 줘야 하는가.
+ *
+ * 대금을 이미 냈고 그 뒤로 쓴 것이 없으면 `0원 이번 달 청구예정`이 됩니다 —
+ * 쓰지 않은 카드처럼 읽히지, 정산된 카드로 읽히지 않습니다. 그럴 때는 낸
+ * 금액과 `결재완료`를 보여 주는 편이 사실에 가깝습니다(§9.4).
+ *
+ * 낸 뒤에 또 쓴 것이 있으면 그 금액은 아직 낼 돈이므로 `청구예정`이 맞습니다.
+ *
+ * **화면이 아니라 여기에 둡니다.** 카드·계좌 화면 안에 있던 것을 옮겼습니다 —
+ * 홈 화면의 자산 요약이 같은 카드를 두고 **다른 말**을 하고 있었기 때문입니다:
+ * 저장된 `balance_or_billed` 를 읽어 `0원 청구예정`이라고 적었는데, 그 값은
+ * 카드에 대해서는 아무도 갱신하지 않는 칸입니다(청구액은 계산하는 값입니다).
+ */
+export function describeBill(bill: PendingBill): BillDisplay {
+  const month = (key: string) => `${Number(key.slice(5, 7))}월`;
+
+  if (bill.settledMonth && bill.amount === 0) {
+    return {
+      amount: bill.settledAmount,
+      headline: `${month(bill.settledMonth)} 결재완료`,
+      detail: "이후 이용 내역 없음",
+      count: 0,
+    };
+  }
+
+  const detail =
+    bill.basis === "AFTER_PAYMENT"
+      ? `${month(bill.from)} 결제 이후 이용분`
+      : bill.basis === "LATEST_STATEMENT"
+        ? `${month(bill.from)} 명세서 기준`
+        : `${month(bill.from)} 1일부터 이용분`;
+
+  return {
+    amount: bill.amount,
+    headline: "이번 달 청구예정",
+    detail,
+    count: bill.count,
+  };
+}
+
 export interface PendingBill {
   /** Entries making up the bill that has not been paid yet. */
   count: number;
