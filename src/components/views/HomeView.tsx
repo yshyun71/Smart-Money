@@ -156,12 +156,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
         >
           <div className="flex items-center gap-1.5 min-w-0">
             <LayoutGrid className="w-4 h-4 text-slate-400 shrink-0" />
-            <span className="text-xs font-bold text-slate-900">바로가기</span>
-            <span className="text-[10px] text-slate-400 truncate">
-              {showShortcuts
-                ? "문자등록 · 카드·계좌 · 직접입력 · AI 코치 · 대시보드 · 예산"
-                : "6개 기능 바로 열기"}
+            {/*
+              이름은 접히지 않습니다. 옆의 설명이 길어지자 flex 가 이 글자를
+              줄여 `바로`/`가기` 두 줄로 쪼갰습니다 — §12.2 의 그 함정입니다.
+              접을 곳이 있는 쪽은 설명뿐이고, 펼친 뒤에는 버튼들이 스스로
+              말하므로 설명을 두지 않습니다.
+            */}
+            <span className="text-xs font-bold text-slate-900 shrink-0 whitespace-nowrap">
+              바로가기
             </span>
+            {!showShortcuts && (
+              <span className="text-[10px] text-slate-400 truncate min-w-0">
+                6개 기능 바로 열기
+              </span>
+            )}
           </div>
           <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition rounded-full px-2.5 py-1 whitespace-nowrap">
             {showShortcuts ? "접기" : "펼치기"}
