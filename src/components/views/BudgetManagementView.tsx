@@ -13,7 +13,7 @@ import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { CategorySpendingModal } from "../modals/CategorySpendingModal";
 import { monthPeriod } from "../../services/trend";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
-import { spareOf } from "../../services/budgetPolicy";
+import { remainingSpare, spareOf } from "../../services/budgetPolicy";
 import {
   Sliders,
   DollarSign,
@@ -57,6 +57,7 @@ export const BudgetManagementView: React.FC<{
     underFixedList,
     allTransactions,
     accounts,
+    variableExpenseTotal,
   } = useFinance();
 
   /** 0 은 "아직 안 정했다"는 뜻이라 비워 둡니다 — 자리표시자가 보여야 적을 곳임을 압니다. */
@@ -75,7 +76,9 @@ export const BudgetManagementView: React.FC<{
   const [fixedTouched, setFixedTouched] = useState(false);
   const [showPolicy, setShowPolicy] = useState(false);
   /** 실적 내역을 열어 볼 칸. 무엇이 그 합계를 만들었는지 보고 뺄 수 있습니다. */
-  const [picking, setPicking] = useState<"INCOME" | "FIXED" | "SAVINGS" | null>(null);
+  const [picking, setPicking] = useState<
+    "INCOME" | "FIXED" | "SAVINGS" | "VARIABLE" | null
+  >(null);
   const [savingsTouched, setSavingsTouched] = useState(false);
   /*
     지금 고치는 중인 카테고리 한도. 누를 때마다 저장하면 "4"만 눌러도 4원이
@@ -164,6 +167,8 @@ export const BudgetManagementView: React.FC<{
       income: of("INCOME", budgetConfig.incomeExcluded),
       fixed: of("FIXED", budgetConfig.fixedExcluded),
       savings: of("SAVINGS", budgetConfig.savingsExcluded),
+      /* 변동비는 저장하지 않으므로 뺀 항목도 없습니다 — 언제나 그 달 전부입니다 */
+      variable: of("VARIABLE"),
     };
   }, [
     allTransactions,
@@ -290,20 +295,48 @@ export const BudgetManagementView: React.FC<{
     이 칸은 "저장하면 이렇게 된다"를 보여 주는 자리이므로 입력칸을 따릅니다.
     저장된 값으로 셈하는 것은 2번 블록의 `미배분` 쪽입니다.
   */
-  const availableVariableBudget = spareOf({
+  const typedInputs = {
     income: parseAmountInput(incomeInput),
     fixed: parseAmountInput(fixedInput),
     savings: parseAmountInput(savingsInput),
+  };
+
+  /** 한 달 전체의 몫 — 자동 배분과 비율 모드의 기준입니다. */
+  const monthSpare = spareOf(typedInputs);
+
+  /*
+    이미 쓴 변동비를 뺀 **남은** 배분 가능액.
+
+    달이 절반 지난 시점에 한 달치 몫만 보여 주면 이미 나간 변동비가 없는 것처럼
+    읽힙니다. 지난 달을 보고 있으면 더 심해서, 다 쓴 돈을 "배분 가능"이라고
+    말하게 됩니다. 그래서 이 화면이 크게 보여 주는 값은 이쪽입니다.
+  */
+  const availableVariableBudget = remainingSpare({
+    ...typedInputs,
+    variableSpent: variableExpenseTotal,
   });
 
-  /** 저장된 값으로 셈한 가용 변동비 — 2번 블록의 배분 비교에 씁니다. */
-  const savedVariableBudget = spareOf({
+  /** 저장된 값으로 셈한 남은 배분 가능액 — 2번 블록의 배분 비교에 씁니다. */
+  const savedVariableBudget = remainingSpare({
     income: budgetConfig.monthlyIncome,
     fixed: budgetConfig.fixedExpenses,
     savings: budgetConfig.savingsTarget,
+    variableSpent: variableExpenseTotal,
   });
 
-  const budgetDifference = savedVariableBudget - totalBudgeted;
+  /*
+    남은 것끼리 견줍니다.
+
+    한도는 한 달 전체의 한도라, 이미 쓴 만큼을 뺀 `남은 가용`과 한도 **합계**를
+    바로 견주면 같은 돈을 두 번 빼게 됩니다. 그래서 한도 쪽도 남은 몫
+    (`한도 − 지출`, 음수는 0)으로 맞춥니다.
+  */
+  const remainingBudgeted = (budgetStatusList || []).reduce(
+    (sum: number, item: { budget: number; spent: number }) =>
+      sum + Math.max(0, (item.budget || 0) - (item.spent || 0)),
+    0
+  );
+  const budgetDifference = savedVariableBudget - remainingBudgeted;
 
   return (
     <div className="space-y-4 pt-1">
@@ -642,23 +675,102 @@ export const BudgetManagementView: React.FC<{
           })}
         </div>
 
+        {/*
+          네 번째 줄 — **변동비 실적.**
+
+          위 세 칸과 달리 사람이 적는 값이 아닙니다. 이미 쓴 돈은 정해진 사실이라
+          적을 것이 없고, 저장해 두면 그 순간의 스냅샷이 되어 나중에 실적과
+          어긋납니다(§11.6의 AI 분석과 같은 문제). 그래서 늘 그 달 내역에서
+          바로 셈해 보여 줍니다.
+        */}
+        <div className="p-3 bg-slate-50/80 rounded-2xl border border-slate-200/60 flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                <TrendingDown className="w-3.5 h-3.5 text-rose-500" />
+                {monthName} 변동비 지출
+              </span>
+              <button
+                type="button"
+                onClick={() => !settling && setPicking("VARIABLE")}
+                title={`${monthName} 변동비 내역 열어 보기`}
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 transition cursor-pointer hover:brightness-95"
+              >
+                실적 {liveActuals.variable.rows}건
+                <ChevronRight className="w-2.5 h-2.5 inline -mt-0.5" />
+              </button>
+            </div>
+            <span className="text-[10px] text-slate-400 mt-0.5 block leading-relaxed">
+              {monthName}에 이미 나간 변동비 — 남은 배분 가능액에서 빠집니다
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => !settling && setPicking("VARIABLE")}
+              disabled={variableExpenseTotal <= 0}
+              className="w-32 text-right rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-black text-slate-900 hover:bg-slate-50 transition disabled:text-slate-400 cursor-pointer disabled:cursor-default"
+            >
+              {withCommas(variableExpenseTotal)}
+            </button>
+            <span className="text-xs font-bold text-slate-500">원</span>
+          </div>
+        </div>
+
         {/* Calculation Summary Bar */}
-        <div className="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-100 flex items-center justify-between text-xs">
-          <div>
-            <span className="text-[11px] text-emerald-800 font-semibold block">
-              카테고리 배분 가능 가용 변동비 예산
-            </span>
-            <span className="text-[10px] text-emerald-700">
-              (수입 {withCommas(parseAmountInput(incomeInput))}원 - 고정비{" "}
-              {withCommas(parseAmountInput(fixedInput))}원 - 저축{" "}
-              {withCommas(parseAmountInput(savingsInput))}원)
+        <div className="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-100 space-y-1.5 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <span className="text-[11px] text-emerald-800 font-semibold block">
+                카테고리 배분 가능 가용 변동비 예산
+              </span>
+              <span className="text-[10px] text-emerald-700 leading-relaxed">
+                (수입 {withCommas(typedInputs.income)}원 − 고정비{" "}
+                {withCommas(typedInputs.fixed)}원 − 저축{" "}
+                {withCommas(typedInputs.savings)}원 − 변동비 지출{" "}
+                {withCommas(variableExpenseTotal)}원)
+              </span>
+            </div>
+            <span className="text-sm font-black text-emerald-900 shrink-0 whitespace-nowrap">
+              {withCommas(availableVariableBudget)}원
             </span>
           </div>
-          <div className="text-right">
-            <span className="text-sm font-black text-emerald-900">
-              {availableVariableBudget.toLocaleString()}원
-            </span>
-          </div>
+
+          {/*
+            자동 배분과 비율 모드는 **한 달 전체**의 몫을 씁니다 — 남은 금액으로
+            한 달치 한도를 만들면 이미 쓴 만큼 한도가 작아져 달 시작부터 초과인
+            칸이 쏟아집니다(§11.5). 두 숫자가 다른 이유를 여기서 밝힙니다.
+          */}
+          {monthSpare !== availableVariableBudget && (
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-100 text-[10px] text-emerald-700">
+              <span>한 달 전체 기준 (자동 배분·비율 계산에 쓰는 값)</span>
+              <span className="font-bold shrink-0 whitespace-nowrap">
+                {withCommas(monthSpare)}원
+              </span>
+            </div>
+          )}
+
+          {/* 수입보다 많이 나갔으면 0 으로 막고 그 사실을 말합니다 */}
+          {typedInputs.income > 0 &&
+            typedInputs.income - typedInputs.fixed - typedInputs.savings - variableExpenseTotal <
+              0 && (
+              <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200/70 rounded-xl px-2 py-1.5 leading-relaxed">
+                고정비·저축·변동비를 더하면 수입보다{" "}
+                <strong>
+                  {withCommas(
+                    Math.abs(
+                      typedInputs.income -
+                        typedInputs.fixed -
+                        typedInputs.savings -
+                        variableExpenseTotal
+                    )
+                  )}
+                  원
+                </strong>{" "}
+                많습니다. 더 배분할 수 있는 돈이 없습니다.
+              </p>
+            )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -757,8 +869,11 @@ export const BudgetManagementView: React.FC<{
         </p>
 
         {/*
-          가용 변동비와 실제 배분한 합계의 차이. 1번 블록은 가용을, 2번은 배분
-          합계를 따로 보여 주기만 해서 얼마가 남았는지 아무도 알 수 없었습니다.
+          남은 가용과 **남은 한도**의 차이.
+
+          한도는 한 달 전체의 한도라, 이미 쓴 변동비를 뺀 `남은 가용`과 한도
+          합계를 바로 견주면 같은 돈을 두 번 빼게 됩니다. 그래서 한도 쪽도
+          `한도 − 지출`(음수는 0)로 맞춰 남은 것끼리 견줍니다.
         */}
         {savedVariableBudget > 0 && (
           <div
@@ -768,10 +883,16 @@ export const BudgetManagementView: React.FC<{
                 : "bg-slate-50 border-slate-200/70 text-slate-600"
             }`}
           >
-            <span className="font-bold">
-              {budgetDifference < 0 ? "가용 변동비를 넘었습니다" : "아직 배분하지 않은 금액"}
+            <span className="font-bold min-w-0">
+              {budgetDifference < 0
+                ? "남은 한도가 남은 가용을 넘었습니다"
+                : "아직 배분하지 않은 금액"}
+              <span className="block font-normal text-[10px] opacity-80">
+                남은 가용 {withCommas(savedVariableBudget)}원 · 남은 한도{" "}
+                {withCommas(remainingBudgeted)}원
+              </span>
             </span>
-            <span className="font-black">
+            <span className="font-black shrink-0 whitespace-nowrap">
               {withCommas(Math.abs(budgetDifference))}원
             </span>
           </div>
@@ -1089,10 +1210,16 @@ export const BudgetManagementView: React.FC<{
             ? budgetConfig.fixedExcluded
             : picking === "SAVINGS"
               ? budgetConfig.savingsExcluded
-              : budgetConfig.incomeExcluded
+              : picking === "VARIABLE"
+                ? []
+                : budgetConfig.incomeExcluded
         }
+        /* 변동비는 저장하지 않는 값이라 고를 수 없습니다 — 보여 주기만 합니다 */
+        readOnly={picking === "VARIABLE"}
         onClose={() => setPicking(null)}
         onApply={(total, counted, excludedIds) => {
+          // 변동비는 적용할 것이 없습니다(읽기 전용)
+          if (picking === "VARIABLE") return;
           if (picking === "INCOME") {
             setIncomeInput(asInput(total));
             setIncomeTouched(false);

@@ -60,6 +60,25 @@ export function spareOf({ income, fixed, savings }: PolicyInputs): number {
 }
 
 /**
+ * 이미 쓴 변동비를 뺀 **남은** 배분 가능액.
+ *
+ * `spareOf` 는 **한 달 전체**의 몫입니다. 그런데 달이 절반 지난 시점에 그 숫자만
+ * 보여 주면 이미 나간 변동비가 없는 것처럼 읽힙니다 — 지난 달을 보고 있을 때는
+ * 더 심해서, 다 쓴 돈을 "배분 가능"이라고 말하게 됩니다.
+ *
+ * **둘을 한 함수에 섞지 않는 이유**: 카테고리 한도는 **한 달 전체**의 한도이고
+ * 소진율도 그 달 지출 전체로 계산합니다(§11.5). 자동 배분과 비율 모드가 남은
+ * 금액을 기준으로 한도를 만들면, 이미 쓴 만큼 한도가 작아져 **달 시작부터
+ * 초과**인 칸이 쏟아집니다. 그래서 배분의 기준은 `spareOf`, 화면이 "앞으로 얼마
+ * 남았나"를 말할 때는 이 함수입니다. 이름이 그 차이를 말하게 둡니다.
+ */
+export function remainingSpare(
+  inputs: PolicyInputs & { variableSpent: number }
+): number {
+  return Math.max(0, spareOf(inputs) - Math.max(0, inputs.variableSpent || 0));
+}
+
+/**
  * What each category would get under this rule.
  *
  * Categories with no rule are left out rather than set to zero: a budget of

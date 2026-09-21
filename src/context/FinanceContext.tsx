@@ -592,12 +592,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     [countedTransactions, selectedMonth, accounts]
   );
 
+  /*
+    변동비 실적.
+
+    고정비와 마찬가지로 **저축을 뺍니다** — 적금이 변동비로 남아 있으면 예산
+    화면의 `저축액`과 이 칸이 같은 돈을 두 번 세게 됩니다(11.4).
+  */
   const variableExpenseTotal = useMemo(
     () =>
-      monthlySpending
-        .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "VARIABLE")
-        .reduce((acc, cur) => acc + cur.amount, 0),
-    [monthlySpending]
+      sumActuals(actualRows(countedTransactions, { month: selectedMonth, kind: "VARIABLE" }))
+        .total,
+    [countedTransactions, selectedMonth]
   );
 
   const netSavings = totalIncome - totalExpense;

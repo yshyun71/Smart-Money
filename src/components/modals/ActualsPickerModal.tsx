@@ -8,6 +8,7 @@ import {
   DollarSign,
   Lock,
   PiggyBank,
+  TrendingDown,
   X,
   CheckSquare,
   Square,
@@ -30,15 +31,24 @@ import {
  */
 export const ActualsPickerModal: React.FC<{
   isOpen: boolean;
-  /** 수입·고정비·저축 중 어느 칸을 고르는지. */
+  /** 수입·고정비·저축·변동비 중 어느 칸을 고르는지. */
   kind: ActualKind;
+  /**
+   * 고르지 않고 **보여 주기만** 하는가.
+   *
+   * 변동비 지출은 저장하지 않는 값입니다(이미 쓴 돈은 정해진 사실이고, 저장하면
+   * 그 순간의 스냅샷이 되어 나중에 실적과 어긋납니다). 뺀 항목을 기억할 자리가
+   * 없으므로 체크박스와 적용 버튼을 두지 않습니다 — 누를 수 있는데 남지 않는
+   * 것이 가장 나쁩니다.
+   */
+  readOnly?: boolean;
   /** 어느 달의 내역인지 (YYYY-MM). */
   month: string;
   /** 지난번에 빼 둔 거래의 id — 그 상태로 다시 엽니다. */
   excludedIds?: string[];
   onClose: () => void;
   onApply: (total: number, counted: number, excludedIds: string[]) => void;
-}> = ({ isOpen, kind, month, excludedIds, onClose, onApply }) => {
+}> = ({ isOpen, kind, month, excludedIds, readOnly = false, onClose, onApply }) => {
   const { allTransactions, accounts } = useFinance();
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
@@ -84,7 +94,14 @@ export const ActualsPickerModal: React.FC<{
       return next;
     });
 
-  const label = kind === "INCOME" ? "수입" : kind === "FIXED" ? "고정비" : "저축";
+  const label =
+    kind === "INCOME"
+      ? "수입"
+      : kind === "FIXED"
+        ? "고정비"
+        : kind === "VARIABLE"
+          ? "변동비"
+          : "저축";
   const monthName = `${Number(month.slice(5, 7)) || ""}월`;
 
   const content = (
@@ -104,6 +121,8 @@ export const ActualsPickerModal: React.FC<{
                   ? "bg-emerald-50 text-emerald-600"
                   : kind === "FIXED"
                     ? "bg-indigo-50 text-indigo-600"
+                    : kind === "VARIABLE"
+                    ? "bg-slate-100 text-slate-600"
                     : "bg-rose-50 text-rose-500"
               }`}
             >
@@ -111,6 +130,8 @@ export const ActualsPickerModal: React.FC<{
                 <DollarSign className="w-4 h-4" />
               ) : kind === "FIXED" ? (
                 <Lock className="w-4 h-4" />
+              ) : kind === "VARIABLE" ? (
+                <TrendingDown className="w-4 h-4" />
               ) : (
                 <PiggyBank className="w-4 h-4" />
               )}
@@ -120,7 +141,9 @@ export const ActualsPickerModal: React.FC<{
                 {monthName} {label} 내역 {rows.length}건
               </h3>
               <p className="text-[10px] text-slate-400">
-                뺄 항목의 체크를 풀고 [선택한 금액 적용]을 누르세요
+                {readOnly
+                  ? "이 금액을 만든 내역입니다"
+                  : "뺄 항목의 체크를 풀고 [선택한 금액 적용]을 누르세요"}
               </p>
             </div>
           </div>
@@ -152,6 +175,7 @@ export const ActualsPickerModal: React.FC<{
           <>
             <button
               type="button"
+              hidden={readOnly}
               onClick={() =>
                 setExcluded(allChosen ? new Set(rows.map((tx) => tx.id)) : new Set())
               }
@@ -177,6 +201,7 @@ export const ActualsPickerModal: React.FC<{
                   <button
                     key={tx.id}
                     type="button"
+                    disabled={readOnly}
                     onClick={() => toggle(tx.id)}
                     className={`w-full text-left p-2.5 rounded-xl border transition flex items-center gap-2.5 cursor-pointer ${
                       chosen
@@ -184,7 +209,7 @@ export const ActualsPickerModal: React.FC<{
                         : "bg-slate-50 border-slate-200/60 opacity-60"
                     }`}
                   >
-                    {chosen ? (
+                    {readOnly ? null : chosen ? (
                       <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0" />
                     ) : (
                       <Square className="w-4 h-4 text-slate-300 shrink-0" />
@@ -216,7 +241,9 @@ export const ActualsPickerModal: React.FC<{
 
             <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-100">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-emerald-800">선택한 금액</span>
+                <span className="text-[11px] font-bold text-emerald-800">
+                  {readOnly ? "합계" : "선택한 금액"}
+                </span>
                 <span className="text-sm font-black text-emerald-900">{won(total)}</span>
               </div>
               {excludedCount > 0 && (
@@ -227,23 +254,33 @@ export const ActualsPickerModal: React.FC<{
             </div>
 
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              거래 내역 자체는 바뀌지 않습니다. 여기서 정한 금액이 예산 화면의{" "}
-              {label} 칸에만 들어갑니다. <strong>뺀 항목은 기억해 두므로</strong> 다시
-              열면 이 상태로 시작합니다.
+              {readOnly ? (
+                <>
+                  변동비 지출은 <strong>적는 값이 아니라 그 달 실적</strong>입니다. 금액을
+                  바꾸려면 내역의 구분을 고정비로 옮기거나 카테고리를 고치세요.
+                </>
+              ) : (
+                <>
+                  거래 내역 자체는 바뀌지 않습니다. 여기서 정한 금액이 예산 화면의{" "}
+                  {label} 칸에만 들어갑니다. <strong>뺀 항목은 기억해 두므로</strong> 다시
+                  열면 이 상태로 시작합니다.
+                </>
+              )}
             </p>
           </>
         )}
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className={readOnly ? "" : "grid grid-cols-2 gap-2"}>
           <button
             type="button"
             onClick={onClose}
-            className="py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+            className="w-full py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
           >
             닫기
           </button>
           <button
             type="button"
+            hidden={readOnly}
             disabled={rows.length === 0}
             onClick={() => {
               /*

@@ -8,6 +8,7 @@
 import {
   allocate,
   spareOf,
+  remainingSpare,
   policyCheck,
   fixedBaselines,
   rulesFromBaselines,
@@ -601,6 +602,54 @@ section("이체 — 옮긴 돈은 쓴 돈이 아닙니다");
     오간 모든 줄을 봐야 합니다. 거르는 것은 합계를 낼 때뿐입니다.
   */
   check("원본 목록은 그대로", rows.length === 5);
+}
+
+// ---------------------------------------------------------------------------
+section("변동비 실적 — 이미 쓴 돈은 배분할 수 없습니다");
+// ---------------------------------------------------------------------------
+{
+  const accounts: any = [{ id: "bank", name: "통장", type: "BANK" }];
+  const rows: any[] = [
+    varTx("식비", "2026-08", 300_000),
+    varTx("쇼핑", "2026-08", 200_000),
+    fixedTx("주거", "2026-08", 500_000),
+    // 저축은 변동비로 남아 있어도 변동비 실적이 아닙니다 — 따로 셈합니다
+    varTx("저축", "2026-08", 400_000),
+    varTx("식비", "2026-07", 999_000),
+  ];
+
+  const variable = actualRows(rows, { month: "2026-08", kind: "VARIABLE", accounts });
+  check("그 달 변동비만", sumActuals(variable).total === 500_000, sumActuals(variable));
+  check("저축은 빠짐", !variable.some((tx: any) => tx.category === "저축"), variable);
+  check("고정비는 빠짐", !variable.some((tx: any) => tx.expenseType === "FIXED"), variable);
+
+  const inputs = { income: 3_000_000, fixed: 1_000_000, savings: 500_000 };
+
+  /*
+    **한 달 전체의 몫과 남은 몫은 다른 값입니다.** 자동 배분과 비율 모드는
+    한 달치 한도를 만드므로 앞엣것을 쓰고, 화면이 "앞으로 얼마 남았나"를 말할
+    때는 뒤엣것을 씁니다. 섞으면 이미 쓴 만큼 한도가 작아져 달 시작부터
+    초과인 칸이 쏟아집니다(§11.5).
+  */
+  check("한 달 기준은 그대로", spareOf(inputs) === 1_500_000, spareOf(inputs));
+  check(
+    "남은 몫은 변동비 실적만큼 적음",
+    remainingSpare({ ...inputs, variableSpent: 500_000 }) === 1_000_000,
+    remainingSpare({ ...inputs, variableSpent: 500_000 })
+  );
+  check(
+    "다 써 버렸으면 0 — 음수를 보여 주지 않습니다",
+    remainingSpare({ ...inputs, variableSpent: 9_000_000 }) === 0
+  );
+  check(
+    "실적이 없으면 한 달 기준과 같습니다",
+    remainingSpare({ ...inputs, variableSpent: 0 }) === spareOf(inputs)
+  );
+  // 음수 실적(있을 수 없지만)이 몫을 부풀리지 않게 막습니다
+  check(
+    "음수 실적은 무시",
+    remainingSpare({ ...inputs, variableSpent: -500_000 }) === 1_500_000
+  );
 }
 
 // ---------------------------------------------------------------------------
