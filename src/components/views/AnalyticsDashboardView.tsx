@@ -98,7 +98,31 @@ export const AnalyticsDashboardView: React.FC<{
   /** 연월 직접 고르기 — 계좌 내역과 같은 창을 씁니다(월별 건수까지 보여 줍니다). */
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [activeChartType, setActiveChartType] = useState<"PIE" | "BAR" | "AREA">("PIE");
-  const [selectedYear, setSelectedYear] = useState<string>("2026년 (예상 누적)");
+  /*
+    사람이 고른 해. **아직 고르지 않았으면 `null`** 입니다.
+
+    예전에는 `"2026년 (예상 누적)"` 이라는 문구를 초기값으로 들고 있었는데, 그
+    문자열은 **데이터에 없는 값**입니다(집계의 `year` 는 `"2026"`). 그래서 어느
+    칩도 선택으로 보이지 않고, 제목에는 그 문구가 그대로 새어 나왔습니다 —
+    화면은 2026년을 보여 주면서 "무엇을 보고 있는지"만 말하지 못한 상태였습니다.
+
+    고르지 않은 상태를 `null` 로 두고 실제로 보여 줄 해는 아래에서 데이터로부터
+    정합니다. 없는 값을 기본값으로 적어 두지 않는다는 규칙입니다(§17.1).
+  */
+  const [selectedYear, setSelectedYear] = useState<string | null>(null);
+
+  /**
+   * 막대그래프 제목에 쓸 연도 이름.
+   *
+   * `"2025 vs 2026"` 이 코드에 박혀 있었습니다 — 해가 바뀌어도, 2024년 자료를
+   * 가져와도 그대로였습니다. 있는 해로 만듭니다.
+   */
+  const yearsLabel = useMemo(() => {
+    const years = yearlyHistoricalData.map((y: { year: string }) => y.year);
+    if (years.length === 0) return selectedMonth.slice(0, 4);
+    if (years.length <= 3) return years.join(" vs ");
+    return `${years[0]}~${years[years.length - 1]}`;
+  }, [yearlyHistoricalData, selectedMonth]);
 
   /** 달을 앞뒤로 옮깁니다. `Date` 가 연말을 넘겨 주므로 12월+1 이 다음 해 1월이 됩니다. */
   const shiftMonth = (month: string, step: number) => {
@@ -198,11 +222,25 @@ export const AnalyticsDashboardView: React.FC<{
     화면이 죽습니다. 기본값을 `선택 → 가장 최근 해 → 빈 집계` 로 두어, 데이터가
     없으면 0과 `–` 가 보이게 합니다(§17.1).
   */
+  /**
+   * 실제로 보고 있는 해.
+   *
+   * 고른 것이 데이터에 있으면 그것, 없으면 **보고 있는 달의 해**, 그것마저
+   * 없으면 가장 최근 해입니다. 화면의 칩·제목·집계가 모두 이 하나를 보므로
+   * "선택 없음"처럼 보이는 일이 생기지 않습니다.
+   */
+  const activeYear: string = useMemo(() => {
+    const years = yearlyHistoricalData.map((y: { year: string }) => y.year);
+    if (selectedYear && years.includes(selectedYear)) return selectedYear;
+    const viewing = selectedMonth.slice(0, 4);
+    if (years.includes(viewing)) return viewing;
+    return years[years.length - 1] || viewing;
+  }, [yearlyHistoricalData, selectedYear, selectedMonth]);
+
   const currentYearlyData = useMemo(() => {
     return (
-      yearlyHistoricalData.find((y: { year: string }) => y.year === selectedYear) ||
-      yearlyHistoricalData[yearlyHistoricalData.length - 1] || {
-        year: selectedMonth.slice(0, 4),
+      yearlyHistoricalData.find((y: { year: string }) => y.year === activeYear) || {
+        year: activeYear,
         income: 0,
         expense: 0,
         fixed: 0,
@@ -211,7 +249,7 @@ export const AnalyticsDashboardView: React.FC<{
         categories: [],
       }
     );
-  }, [yearlyHistoricalData, selectedYear, selectedMonth]);
+  }, [yearlyHistoricalData, activeYear]);
 
   // Yearly pie data
   const yearlyPieData = useMemo(() => {
@@ -350,7 +388,7 @@ export const AnalyticsDashboardView: React.FC<{
                   key={item.year}
                   onClick={() => setSelectedYear(item.year)}
                   className={`px-3 py-1 rounded-full text-xs font-bold transition ${
-                    selectedYear === item.year
+                    activeYear === item.year
                       ? "bg-slate-900 text-white"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
@@ -437,8 +475,8 @@ export const AnalyticsDashboardView: React.FC<{
                   ? "최근 6개월 수입·지출 추이 (막대그래프)"
                   : "고정비 vs 변동비 추이 (영역 차트)"
                 : activeChartType === "PIE"
-                ? `${selectedYear} 카테고리별 지출 비중 (원형 차트)`
-                : "2025 vs 2026 연간 비교 (막대그래프)"}
+                ? `${activeYear}년 카테고리별 지출 비중 (원형 차트)`
+                : `${yearsLabel} 연간 비교 (막대그래프)`}
             </h3>
           </div>
 
@@ -841,7 +879,7 @@ export const AnalyticsDashboardView: React.FC<{
         category={drillCategory}
         period={
           timeframeMode === "YEARLY"
-            ? yearPeriod((currentYearlyData.year || "").slice(0, 4))
+            ? yearPeriod(activeYear)
             : monthPeriod(selectedMonth)
         }
         suspended={editingTx !== null}
