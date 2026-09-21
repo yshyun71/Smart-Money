@@ -5,7 +5,6 @@ import { describeBill, pendingBill } from "../../services/cardLink";
 import { asOfLabel } from "../../utils/format";
 import { SummaryCard } from "../dashboard/SummaryCard";
 import { FixedVsVariableRatio } from "../dashboard/FixedVsVariableRatio";
-import { TransactionItem } from "../transactions/TransactionItem";
 import { NavTab } from "../layout/BottomNavigation";
 import { PWAHomeBanner } from "../pwa/PWAInstallButton";
 
@@ -77,7 +76,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return map;
   }, [accounts, allTransactions]);
 
-  const recentTransactions = transactions.slice(0, 4);
   const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
 
   /*
@@ -205,82 +203,89 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </button>
 
         <div className={`px-3 pb-3 space-y-2 ${showShortcuts ? "" : "hidden"}`}>
-      <div className="grid grid-cols-4 gap-1.5">
-        <button
-          onClick={onOpenSMSModal}
-          className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-emerald-500/50 hover:bg-emerald-50/30 transition text-center active:scale-95 group"
-        >
-          <div className="w-7 h-7 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600 mb-1 group-hover:scale-110 transition">
-            <Receipt className="w-3.5 h-3.5" />
-          </div>
-          <span className="text-[11px] font-bold text-slate-800">문자등록</span>
-          <span className="text-[9px] text-slate-500">SMS 자동</span>
-        </button>
+          {/*
+            순서로 성격을 보입니다 — 앞 줄은 **기록하기**, 뒷 줄은 **보기**.
 
-        <button
-          onClick={() => onNavigateTab("assets")}
-          className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-amber-500/50 hover:bg-amber-50/30 transition text-center active:scale-95 group"
-        >
-          <div className="w-7 h-7 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 mb-1 group-hover:scale-110 transition">
-            <CreditCard className="w-3.5 h-3.5" />
-          </div>
-          <span className="text-[11px] font-bold text-slate-800">카드·계좌</span>
-          <span className="text-[9px] text-slate-500">등록/연동</span>
-        </button>
+            쪼개서 머리글을 하나 더 두지는 않습니다. 버튼은 숫자를 말하지
+            않으므로 기준월과 모순될 수 없고(사용자가 불편을 느낀 원인은
+            "8월이라고 적혀 있는데 숫자가 안 바뀐다"였습니다), 구역을 늘리면
+            스크롤을 줄이려는 노력과 정면으로 부딪힙니다. 예전에는 `AI 코치`가
+            기록 버튼들 사이에 끼어 있었습니다.
 
-        <button
-          onClick={onOpenAddModal}
-          className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-indigo-500/50 hover:bg-indigo-50/30 transition text-center active:scale-95 group"
-        >
-          <div className="w-7 h-7 rounded-xl bg-indigo-100 flex items-center justify-center text-indigo-600 mb-1 group-hover:scale-110 transition">
-            <Plus className="w-3.5 h-3.5" />
-          </div>
-          <span className="text-[11px] font-bold text-slate-800">직접입력</span>
-          <span className="text-[9px] text-slate-500">수기 작성</span>
-        </button>
+            앞 줄 셋은 기준월과 무관하고(문자는 문자에 적힌 날짜, 직접입력은
+            오늘), 뒷 줄 셋은 고른 달을 그대로 따라갑니다.
+          */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              onClick={onOpenSMSModal}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-emerald-500/50 hover:bg-emerald-50/30 transition text-center active:scale-95 group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600 mb-1 group-hover:scale-110 transition">
+                <Receipt className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-800">문자등록</span>
+              <span className="text-[9px] text-slate-500">SMS 자동</span>
+            </button>
 
-        <button
-          onClick={() => onNavigateTab("ai_coach")}
-          className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-xs hover:shadow-md transition active:scale-95 text-center group"
-        >
-          <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center text-white mb-1 group-hover:scale-110 transition">
-            <Sparkles className="w-3.5 h-3.5" />
-          </div>
-          <span className="text-[11px] font-bold">AI 코치</span>
-          <span className="text-[9px] text-emerald-100">절약 추천</span>
-        </button>
-      </div>
+            <button
+              onClick={onOpenAddModal}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-indigo-500/50 hover:bg-indigo-50/30 transition text-center active:scale-95 group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-indigo-100 flex items-center justify-center text-indigo-600 mb-1 group-hover:scale-110 transition">
+                <Plus className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-800">직접입력</span>
+              {/* 오늘 날짜로 시작합니다 — 새로 적는 기록은 거의 언제나 "지금"입니다 */}
+              <span className="text-[9px] text-slate-500">오늘 날짜</span>
+            </button>
 
-      {/* Feature Navigation Cards: Visual Dashboard & Budget Management */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => onNavigateTab("analytics")}
-          className="p-3.5 rounded-3xl bg-white border border-slate-200/90 shadow-2xs hover:border-emerald-500/50 transition text-left active:scale-98 flex items-start justify-between"
-        >
-          <div className="space-y-1">
-            <div className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-              <BarChart3 className="w-4 h-4" />
-            </div>
-            <div className="text-xs font-bold text-slate-900">소비 시각 대시보드</div>
-            <span className="text-[10px] text-slate-500 block">원형·막대 차트 분석</span>
+            <button
+              onClick={() => onNavigateTab("assets")}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-amber-500/50 hover:bg-amber-50/30 transition text-center active:scale-95 group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 mb-1 group-hover:scale-110 transition">
+                <CreditCard className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-800">카드·계좌</span>
+              <span className="text-[9px] text-slate-500">등록/연동</span>
+            </button>
           </div>
-          <ArrowRight className="w-3.5 h-3.5 text-slate-400 mt-1" />
-        </button>
 
-        <button
-          onClick={() => onNavigateTab("budget")}
-          className="p-3.5 rounded-3xl bg-white border border-slate-200/90 shadow-2xs hover:border-emerald-500/50 transition text-left active:scale-98 flex items-start justify-between"
-        >
-          <div className="space-y-1">
-            <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Sliders className="w-4 h-4" />
-            </div>
-            <div className="text-xs font-bold text-slate-900">카테고리 예산 관리</div>
-            <span className="text-[10px] text-slate-500 block">한도 설정 & 초과 알림</span>
+          {/* 뒷 줄 — 고른 달을 따라가는 화면들 */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              onClick={() => onNavigateTab("analytics")}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-emerald-500/50 hover:bg-emerald-50/30 transition text-center active:scale-95 group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-1 group-hover:scale-110 transition">
+                <BarChart3 className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-800">소비분석</span>
+              <span className="text-[9px] text-slate-500">{monthName} 비중</span>
+            </button>
+
+            <button
+              onClick={() => onNavigateTab("budget")}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-emerald-500/50 hover:bg-emerald-50/30 transition text-center active:scale-95 group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 mb-1 group-hover:scale-110 transition">
+                <Sliders className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-800">예산 관리</span>
+              <span className="text-[9px] text-slate-500">한도·알림</span>
+            </button>
+
+            <button
+              onClick={() => onNavigateTab("ai_coach")}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-xs hover:shadow-md transition active:scale-95 text-center group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center text-white mb-1 group-hover:scale-110 transition">
+                <Sparkles className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold">AI 코치</span>
+              <span className="text-[9px] text-emerald-100">절약 추천</span>
+            </button>
           </div>
-          <ArrowRight className="w-3.5 h-3.5 text-slate-400 mt-1" />
-        </button>
-      </div>
         </div>
       </div>
 
@@ -380,6 +385,52 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       )}
 
+      {/*
+        내역으로 가는 한 줄.
+
+        예전에는 여기에 최근 4건을 늘어놓았습니다. 홈에서 값이 가장 낮은
+        블록이었습니다 — 맛보기 4건이고, 전체 내역은 한 번만 누르면 되며,
+        제목이 `최근`인데 실제로는 **그 달 안에서의 최근**이라 기준을 흐렸습니다.
+        250px 가까운 높이가 아래의 자산 요약을 화면 밖으로 밀어내던 것이
+        결정적이었습니다.
+      */}
+      <button
+        onClick={() => onNavigateTab("ledger")}
+        className="w-full bg-white rounded-3xl p-3.5 border border-slate-200/90 shadow-2xs flex items-center justify-between gap-2 hover:border-emerald-500/50 transition active:scale-98 cursor-pointer"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+            <Receipt className="w-3.5 h-3.5" />
+          </div>
+          <div className="text-left min-w-0">
+            <div className="text-xs font-bold text-slate-900 truncate">
+              {monthName} 입출금 &amp; 카드 내역
+            </div>
+            <span className="text-[10px] text-slate-400">
+              {transactions.length}건 — 검색·필터로 모두 보기
+            </span>
+          </div>
+        </div>
+        <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
+      </button>
+
+      {/*
+        기준이 바뀌는 경계.
+
+        위는 전부 기준월을 따르고 아래는 `지금`입니다. 예전에는 이 둘이 섞여
+        있어 기준이 다섯 번 바뀌었습니다 — 사용자가 "화면의 일관성이 없다"고
+        말한 것이 그것입니다. 전환을 한 번으로 줄이고, 그 자리에 이름을 답니다.
+        기준월 바에서 **멀리** 두는 것도 일부러입니다: 바로 밑에 놓으면
+        `2026년 8월`에서 눈을 떼는 순간 안 바뀌는 숫자를 만납니다.
+      */}
+      <div className="flex items-center gap-2 pt-1">
+        <div className="h-px flex-1 bg-slate-200" />
+        <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">
+          지금 기준 · 기준월과 무관
+        </span>
+        <div className="h-px flex-1 bg-slate-200" />
+      </div>
+
       {/* Connected Accounts Snapshot */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-3">
         <div className="flex items-start justify-between gap-2">
@@ -402,7 +453,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 홈에는 그 바가 있어야 하므로, 대신 여기가 말합니다.
               */}
               <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
-                지금 잔액과 낼 카드대금 — <strong>{monthName} 기준이 아닙니다</strong>
+                지금 통장에 있는 돈과 낼 카드대금
               </p>
             </div>
           </div>
@@ -482,31 +533,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </div>
 
-      {/* Recent Transactions List */}
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between px-1">
-          <h2 className="text-xs font-bold text-slate-900">최근 입출금 & 카드 내역</h2>
-          <button
-            onClick={() => onNavigateTab("ledger")}
-            className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-0.5"
-          >
-            <span>전체 내역 ({transactions.length})</span>
-            <ArrowRight className="w-3 h-3" />
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          {recentTransactions.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400 bg-white rounded-2xl border border-slate-200">
-              내역이 없습니다. 문자 자동등록이나 직접 추가로 기록해보세요!
-            </div>
-          ) : (
-            recentTransactions.map((tx) => (
-              <TransactionItem key={tx.id} transaction={tx} />
-            ))
-          )}
-        </div>
-      </div>
     </div>
   );
 };
