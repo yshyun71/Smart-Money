@@ -65,7 +65,15 @@ export const ActualsPickerModal: React.FC<{
   onClose,
   onApply,
 }) => {
-  const { allTransactions, accounts } = useFinance();
+  /*
+    **합계가 세는 것과 같은 목록을 봅니다.**
+
+    `allTransactions` 를 보고 있었습니다. 그 목록에는 내 계좌 사이에서 옮긴 돈이
+    남아 있어(§6.5) 이 창의 합계가 화면의 금액보다 컸습니다 — 총 수입·총 지출·
+    변동비가 어긋나고 **고정비만 맞았습니다**: 고정으로 표시한 이체는 양쪽에서
+    세기 때문입니다. 같은 실수를 `CategorySpendingModal` 에서 이미 한 번 했습니다.
+  */
+  const { spendingTransactions, allTransactions, accounts } = useFinance();
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
   /*
@@ -75,10 +83,10 @@ export const ActualsPickerModal: React.FC<{
   */
   const rows: Transaction[] = useMemo(
     () =>
-      actualRows(allTransactions, { month, kind, accounts })
+      actualRows(spendingTransactions, { month, kind, accounts })
         .slice()
         .sort((a: Transaction, b: Transaction) => b.amount - a.amount),
-    [allTransactions, accounts, month, kind]
+    [spendingTransactions, accounts, month, kind]
   );
 
   useEffect(() => {
@@ -100,6 +108,31 @@ export const ActualsPickerModal: React.FC<{
 
   const kept = rows.filter((tx) => !excluded.has(tx.id));
   const { total, full, excludedCount } = sumActuals(rows, Array.from(excluded));
+
+  /*
+    **규칙으로 빠진 줄.**
+
+    거르지 않은 목록을 같은 기준으로 셈한 것과의 차이가 곧 "이체 때문에 빠진
+    것"입니다. 몇 건 얼마가 빠졌는지 말해 주지 않으면 통장 내역과 이 금액이
+    다른 이유를 알 방법이 없습니다.
+  */
+  const listedIds = new Set(rows.map((tx) => tx.id));
+  const skipped = actualRows(allTransactions, { month, kind, accounts }).filter(
+    (tx: Transaction) => !listedIds.has(tx.id)
+  );
+  const skippedAmount = skipped.reduce((sum: number, tx: Transaction) => sum + tx.amount, 0);
+
+  /** 이 금액이 무엇을 세는가 — 한 줄로. */
+  const basis =
+    kind === "INCOME"
+      ? "그 달에 들어온 돈 전부"
+      : kind === "EXPENSE"
+        ? "그 달에 나간 돈 전부 (고정비 + 변동비 + 저축)"
+        : kind === "FIXED"
+          ? "고정비로 판정된 지출 — 저축은 예산 화면에서 따로 셈하므로 빠집니다"
+          : kind === "VARIABLE"
+            ? "변동비 지출 — 저축은 예산 화면에서 따로 셈하므로 빠집니다"
+            : "계좌에서 [저축] 카테고리로 나간 돈 — 카드 내역은 세지 않습니다";
   const allChosen = excludedCount === 0;
 
   const toggle = (id: string) =>
@@ -270,6 +303,21 @@ export const ActualsPickerModal: React.FC<{
                 <p className="text-[10px] text-emerald-700 mt-0.5">
                   {excludedCount}건 제외 · 전체는 {won(full)}이었습니다
                 </p>
+              )}
+            </div>
+
+            {/* 이 금액이 어떤 기준인지 — 통장과 다르면 그 이유가 여기 있습니다 */}
+            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1">
+              <div className="text-[10px] font-bold text-slate-600">이 금액의 기준</div>
+              <div className="text-[10px] text-slate-500 leading-relaxed">· {basis}</div>
+              {skipped.length > 0 && (
+                <div className="text-[10px] text-slate-500 leading-relaxed">
+                  · 내 계좌 사이{" "}
+                  <strong>
+                    이체 {skipped.length}건 {won(skippedAmount)}
+                  </strong>
+                  은 옮긴 돈이라 세지 않았습니다
+                </div>
               )}
             </div>
 

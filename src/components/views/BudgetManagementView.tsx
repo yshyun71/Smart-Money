@@ -55,7 +55,7 @@ export const BudgetManagementView: React.FC<{
     applyBudgetPolicy,
     fixedBaselineList,
     underFixedList,
-    allTransactions,
+    spendingTransactions,
     accounts,
     variableExpenseTotal,
   } = useFinance();
@@ -158,9 +158,14 @@ export const BudgetManagementView: React.FC<{
     않으면 "이 금액이 어떤 기준인가요"라는 질문이 남습니다.
   */
   const liveActuals = useMemo(() => {
+    /*
+      **합계가 세는 것과 같은 목록**(`spendingTransactions`)을 봅니다. 거르지
+      않은 목록을 쓰면 내 계좌 사이에서 옮긴 돈이 남아(§6.5) 여기서 말하는
+      "지금 실적"이 `실적 채우기`가 넣는 금액과 어긋납니다.
+    */
     const of = (kind: ActualKind, excluded?: string[]) =>
       sumActuals(
-        actualRows(allTransactions, { month: selectedMonth, kind, accounts }),
+        actualRows(spendingTransactions, { month: selectedMonth, kind, accounts }),
         excluded
       );
     return {
@@ -171,7 +176,7 @@ export const BudgetManagementView: React.FC<{
       variable: of("VARIABLE"),
     };
   }, [
-    allTransactions,
+    spendingTransactions,
     accounts,
     selectedMonth,
     budgetConfig.incomeExcluded,
