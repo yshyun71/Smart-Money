@@ -382,16 +382,36 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
       {/* Connected Accounts Snapshot */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <CreditCard className="w-4 h-4 text-emerald-600" />
-            <h2 className="text-xs font-bold text-slate-900">연동된 계좌 및 카드 ({accounts.length}개)</h2>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-1.5 min-w-0">
+            <CreditCard className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+              <h2 className="text-xs font-bold text-slate-900">
+                연동된 계좌 및 카드 ({accounts.length}개)
+              </h2>
+              {/*
+                **이 블록만 기준월을 따르지 않습니다.**
+
+                잔액은 지금 통장에 있는 돈이고(그 자체로 기준일시를 가집니다,
+                §8), 카드 금액은 지금 낼 돈입니다(§9.4의 `pendingBill` — 어느
+                달을 보고 있는지와 무관합니다). 그래서 8월로 옮겨도 숫자가
+                그대로인데, 화면이 그 사실을 말하지 않으면 **고장처럼 보입니다**
+                — 눌러도 아무 일이 없는 조작기와 같은 문제입니다(§12).
+
+                `카드·계좌` 탭은 아예 월 이동 바를 감춰 이 혼동을 없앴습니다.
+                홈에는 그 바가 있어야 하므로, 대신 여기가 말합니다.
+              */}
+              <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                지금 잔액과 낼 카드대금 — <strong>{monthName} 기준이 아닙니다</strong>
+              </p>
+            </div>
           </div>
+
           <button
             onClick={() => onNavigateTab("assets")}
-            className="text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-xl transition flex items-center gap-1 border border-emerald-200/60"
+            className="shrink-0 whitespace-nowrap text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-xl transition flex items-center gap-1 border border-emerald-200/60"
           >
-            <Plus className="w-3 h-3" />
+            <Plus className="w-3 h-3 shrink-0" />
             <span>새 카드/계좌 등록</span>
           </button>
         </div>
