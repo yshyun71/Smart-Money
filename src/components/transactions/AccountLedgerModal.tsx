@@ -188,7 +188,14 @@ export const AccountLedgerModal: React.FC<{
 
   const [showRules, setShowRules] = useState(false);
   const [showBalance, setShowBalance] = useState(false);
-  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  /*
+    연월 선택 창을 어느 칸이 열었는가.
+
+    월별의 기준 월과 기간별의 양끝이 **같은 창**을 씁니다(§12.6) — 창은 하나만
+    두고 무엇을 고르는 중인지만 기억합니다. 예전에 기간별은 `type="month"` 였고,
+    기기마다 다른 모양이 떠서 같은 일을 하는 칸이 화면 안에서 달라 보였습니다.
+  */
+  const [monthPicker, setMonthPicker] = useState<null | "MONTH" | "FROM" | "TO">(null);
   const [showDetails, setShowDetails] = useState(false);
   /** The card bill whose month of usage is being read, if any. */
   const [usage, setUsage] = useState<{
@@ -230,7 +237,7 @@ export const AccountLedgerModal: React.FC<{
     setSummary(null);
     setShowRules(false);
     setShowBalance(false);
-    setShowMonthPicker(false);
+    setMonthPicker(null);
     setShowDetails(false);
     setUsage(null);
     setShowHelp(false);
@@ -278,7 +285,7 @@ export const AccountLedgerModal: React.FC<{
         !summary &&
         !showRules &&
         !showBalance &&
-        !showMonthPicker &&
+        !monthPicker &&
         !showDetails &&
         !usage
       ) {
@@ -294,7 +301,7 @@ export const AccountLedgerModal: React.FC<{
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, summary, showRules, showBalance, showMonthPicker, showDetails, usage]);
+  }, [isOpen, onClose, summary, showRules, showBalance, monthPicker, showDetails, usage]);
 
   /** True when an entry falls inside the chosen month or span. */
   const inPeriod = useMemo(() => {
@@ -1013,7 +1020,7 @@ export const AccountLedgerModal: React.FC<{
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowMonthPicker(true)}
+                  onClick={() => setMonthPicker("MONTH")}
                   title="조회할 연월 직접 선택"
                   className="text-center px-1.5 py-0.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
                 >
@@ -1045,25 +1052,21 @@ export const AccountLedgerModal: React.FC<{
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <input
-                type="month"
-                value={rangeFrom}
-                onChange={(e) => {
-                  setRangeTouched(true);
-                  setRangeFrom(e.target.value);
-                }}
-                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-2 py-1.5 text-[11px] text-slate-900 bg-white focus:border-emerald-400 focus:outline-none"
-              />
+              <button
+                type="button"
+                onClick={() => setMonthPicker("FROM")}
+                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-900 bg-white hover:border-emerald-400 transition truncate cursor-pointer"
+              >
+                {rangeFrom ? monthLabel(rangeFrom) : "시작 월"}
+              </button>
               <span className="text-[10px] font-bold text-slate-500 shrink-0">부터</span>
-              <input
-                type="month"
-                value={rangeTo}
-                onChange={(e) => {
-                  setRangeTouched(true);
-                  setRangeTo(e.target.value);
-                }}
-                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-2 py-1.5 text-[11px] text-slate-900 bg-white focus:border-emerald-400 focus:outline-none"
-              />
+              <button
+                type="button"
+                onClick={() => setMonthPicker("TO")}
+                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-900 bg-white hover:border-emerald-400 transition truncate cursor-pointer"
+              >
+                {rangeTo ? monthLabel(rangeTo) : "끝 월"}
+              </button>
               <span className="text-[10px] font-bold text-slate-500 shrink-0">까지</span>
             </div>
           )}
@@ -1386,12 +1389,37 @@ export const AccountLedgerModal: React.FC<{
         billedAmount={usage?.amount || 0}
         onClose={() => setUsage(null)}
       />
+      {/*
+        하나의 창이 세 칸을 맡습니다. 기간의 양끝은 서로를 넘지 못하게 범위를
+        주어, 시작이 끝보다 뒤여서 조회가 조용히 0건이 되는 일을 막습니다.
+      */}
       <MonthPickerModal
-        isOpen={showMonthPicker}
-        value={month}
+        isOpen={monthPicker !== null}
+        value={
+          monthPicker === "FROM" ? rangeFrom || month : monthPicker === "TO" ? rangeTo || month : month
+        }
         counts={monthCounts}
-        onSelect={setMonth}
-        onClose={() => setShowMonthPicker(false)}
+        title={
+          monthPicker === "FROM"
+            ? "시작 월 선택"
+            : monthPicker === "TO"
+              ? "끝 월 선택"
+              : "조회할 연월 선택"
+        }
+        max={monthPicker === "FROM" ? rangeTo || undefined : undefined}
+        min={monthPicker === "TO" ? rangeFrom || undefined : undefined}
+        onSelect={(picked) => {
+          if (monthPicker === "FROM") {
+            setRangeTouched(true);
+            setRangeFrom(picked);
+          } else if (monthPicker === "TO") {
+            setRangeTouched(true);
+            setRangeTo(picked);
+          } else {
+            setMonth(picked);
+          }
+        }}
+        onClose={() => setMonthPicker(null)}
       />
       <ClassifyResultModal summary={summary} onClose={() => setSummary(null)} />
     </>

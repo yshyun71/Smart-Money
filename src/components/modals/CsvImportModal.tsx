@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
+import { MonthPickerModal } from "../transactions/MonthPickerModal";
 import type { Transaction } from "../../types/finance";
 import {
   autoDetectMapping,
@@ -41,6 +42,7 @@ import {
   CheckSquare,
   Square,
   Wand2,
+  CalendarDays,
 } from "lucide-react";
 
 type Step = "PICK" | "MAP" | "REVIEW" | "DONE";
@@ -98,6 +100,7 @@ export const CsvImportModal: React.FC<{
   const [adjustBalance, setAdjustBalance] = useState(false);
   /** The month a card statement bills, when its lines do not each say. */
   const [billingMonth, setBillingMonth] = useState("");
+  const [showBillingPicker, setShowBillingPicker] = useState(false);
   /** Once the user sets it themselves, nothing else touches it. */
   const [billingTouched, setBillingTouched] = useState(false);
   /** Where the column mapping came from, which the user is told. */
@@ -109,6 +112,24 @@ export const CsvImportModal: React.FC<{
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("ALL");
 
   const account = accounts.find((a) => a.id === accountId);
+
+  /*
+    이 카드에 **이미 등록된 결제월**의 건수.
+
+    달마다 몇 건이 들어와 있는지 보이면 "지난달 명세서를 넣었던가"를 그 자리에서
+    알 수 있습니다. 날짜가 아니라 `billingMonth` 로 세는 것이 요점입니다 —
+    고르는 값이 그것이니까요.
+  */
+  const billingCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of allTransactions as Transaction[]) {
+      if (tx.accountId !== accountId) continue;
+      const key = tx.billingMonth;
+      if (!key) continue;
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [allTransactions, accountId]);
 
   const reset = () => {
     setStep("PICK");
@@ -827,15 +848,23 @@ export const CsvImportModal: React.FC<{
                 <label className="text-[11px] font-bold text-slate-700 block">
                   이 명세서의 결제(청구) 년월
                 </label>
-                <input
-                  type="month"
-                  value={billingMonth}
-                  onChange={(e) => {
-                    setBillingTouched(true);
-                    setBillingMonth(e.target.value);
-                  }}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
-                />
+                {/*
+                  연월을 고르는 자리는 모두 같은 창을 씁니다(§12.6). 예전에는
+                  `type="month"` 였는데, 기기마다 다른 모양이 뜨고 이미 등록된
+                  결제월이 어디인지 알 수 없었습니다.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setShowBillingPicker(true)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white hover:border-emerald-400 transition flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <span className="font-bold text-slate-800">
+                    {billingMonth
+                      ? `${billingMonth.slice(0, 4)}년 ${Number(billingMonth.slice(5, 7))}월`
+                      : "결제월 선택"}
+                  </span>
+                  <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                </button>
                 <p className="text-[10px] text-slate-400 leading-relaxed">
                   파일 이름에 적힌 연월, 없으면 <strong>이용일자의 다음 달</strong>로 채워두었습니다.
                   명세서에 적힌 결제월과 다르면 바꿔주세요. 할부처럼 이용한 달과 청구되는 달이
@@ -1259,6 +1288,19 @@ export const CsvImportModal: React.FC<{
           </button>
         </div>
       </div>
+
+      {/* 결제월 직접 선택 — 연월을 고르는 자리는 모두 같은 창입니다 (12.6) */}
+      <MonthPickerModal
+        isOpen={showBillingPicker}
+        value={billingMonth}
+        counts={billingCounts}
+        title="결제(청구) 년월 선택"
+        onSelect={(month) => {
+          setBillingTouched(true);
+          setBillingMonth(month);
+        }}
+        onClose={() => setShowBillingPicker(false)}
+      />
     </div>
   );
 

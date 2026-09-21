@@ -26,6 +26,7 @@ import {
   type TrendPoint,
 } from "../../services/trend";
 import { CategorySpendingModal } from "../modals/CategorySpendingModal";
+import { MonthPickerModal } from "../transactions/MonthPickerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { TrendingUp, TrendingDown, Minus, ChevronRight, CalendarRange } from "lucide-react";
 
@@ -65,6 +66,18 @@ export const PeriodTrendPanel: React.FC = () => {
   /** 막대를 눌러 연 상세 — 그 달 그 카테고리의 내역. */
   const [drill, setDrill] = useState<{ month: string; category: string } | null>(null);
   const [editingTx, setEditingTx] = useState<any>(null);
+  /** 기간의 양끝은 계좌 내역·상단 바와 **같은 창**으로 고릅니다(§12.6). */
+  const [picking, setPicking] = useState<null | "FROM" | "TO">(null);
+
+  /** 달마다 몇 건인지 — 고르는 창에서 빈 달을 가려 줍니다. */
+  const monthCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of spendingTransactions as { date: string }[]) {
+      const key = tx.date.slice(0, 7);
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [spendingTransactions]);
 
   const points: TrendPoint[] = useMemo(
     () => monthlyTrend(spendingTransactions, { from, to, direction, category }),
@@ -124,21 +137,21 @@ export const PeriodTrendPanel: React.FC = () => {
 
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <input
-              type="month"
-              value={from}
-              max={to}
-              onChange={(e) => setFrom(e.target.value || from)}
-              className="flex-1 min-w-0 px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 focus:border-emerald-500 focus:outline-hidden"
-            />
+            <button
+              type="button"
+              onClick={() => setPicking("FROM")}
+              className="flex-1 min-w-0 px-2.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 hover:border-emerald-400 transition truncate cursor-pointer"
+            >
+              {`${from.slice(0, 4)}년 ${Number(from.slice(5, 7))}월`}
+            </button>
             <span className="text-[10px] font-bold text-slate-500 shrink-0">부터</span>
-            <input
-              type="month"
-              value={to}
-              min={from}
-              onChange={(e) => setTo(e.target.value || to)}
-              className="flex-1 min-w-0 px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 focus:border-emerald-500 focus:outline-hidden"
-            />
+            <button
+              type="button"
+              onClick={() => setPicking("TO")}
+              className="flex-1 min-w-0 px-2.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 hover:border-emerald-400 transition truncate cursor-pointer"
+            >
+              {`${to.slice(0, 4)}년 ${Number(to.slice(5, 7))}월`}
+            </button>
             <span className="text-[10px] font-bold text-slate-500 shrink-0">까지</span>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -446,6 +459,21 @@ export const PeriodTrendPanel: React.FC = () => {
         isOpen={editingTx !== null}
         editing={editingTx}
         onClose={() => setEditingTx(null)}
+      />
+
+      {/* 기간의 양끝 — 서로를 넘지 못하게 범위를 줍니다 */}
+      <MonthPickerModal
+        isOpen={picking !== null}
+        value={picking === "TO" ? to : from}
+        counts={monthCounts}
+        title={picking === "TO" ? "끝 월 선택" : "시작 월 선택"}
+        max={picking === "FROM" ? to : undefined}
+        min={picking === "TO" ? from : undefined}
+        onSelect={(picked) => {
+          if (picking === "TO") setTo(picked);
+          else setFrom(picked);
+        }}
+        onClose={() => setPicking(null)}
       />
     </div>
   );

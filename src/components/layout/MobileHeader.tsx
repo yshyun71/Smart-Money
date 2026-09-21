@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { useAuth } from "../../context/AuthContext";
 import { UserSecurityModal } from "../auth/UserSecurityModal";
 import { AIKeyModal } from "../settings/AIKeyModal";
 import { UserManageModal } from "../settings/UserManageModal";
 import { PWAInstallGuideModal } from "../pwa/PWAInstallButton";
+import { MonthPickerModal } from "../transactions/MonthPickerModal";
 import {
   activeProviderLabel,
   hasApiKey,
@@ -16,6 +17,7 @@ import {
   Smartphone,
   Maximize2,
   Calendar,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Bell,
@@ -61,6 +63,7 @@ export const MobileHeader: React.FC<{
   const {
     selectedMonth,
     setSelectedMonth,
+    allTransactions,
     syncAccounts,
     isSyncing,
     viewMode,
@@ -70,6 +73,7 @@ export const MobileHeader: React.FC<{
 
   const { currentUser, users, logout } = useAuth();
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showAIKeyModal, setShowAIKeyModal] = useState(false);
@@ -96,6 +100,19 @@ export const MobileHeader: React.FC<{
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showSettingsMenu]);
+
+  /*
+    달마다 몇 건이 있는지. 고르기 전에 보이면 빈 달을 헛되게 열지 않습니다.
+    상단 바는 가계부 전체를 다루므로 계좌를 가리지 않고 셉니다.
+  */
+  const monthCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of allTransactions as { date: string }[]) {
+      const key = tx.date.slice(0, 7);
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [allTransactions]);
 
   const currentActualMonth = `${new Date().getFullYear()}-${String(
     new Date().getMonth() + 1
@@ -370,10 +387,21 @@ export const MobileHeader: React.FC<{
         </button>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs font-black text-slate-800">
-            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+          {/*
+            연월을 직접 고르는 길. 화살표만 있을 때는 지난 봄 명세서를 보려면
+            아홉 번을 눌러야 했고, 달 이름이 눌릴 것처럼 생겼는데 아무 일도
+            일어나지 않았습니다 — 가장 눌러 보고 싶은 자리입니다.
+          */}
+          <button
+            type="button"
+            onClick={() => setShowMonthPicker(true)}
+            title="연월 직접 선택"
+            className="flex items-center gap-1.5 text-xs font-black text-slate-800 px-1.5 py-0.5 -mx-1.5 rounded-lg hover:bg-white transition active:scale-95 cursor-pointer"
+          >
+            <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span>{formatMonthTitle(selectedMonth)} 가계부</span>
-          </div>
+            <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+          </button>
 
           {!isCurrentMonth && (
             <button
@@ -394,6 +422,15 @@ export const MobileHeader: React.FC<{
         </button>
       </div>
       )}
+
+      {/* 연월 직접 선택 — 연월을 고르는 자리는 모두 이 창을 씁니다 (12.6) */}
+      <MonthPickerModal
+        isOpen={showMonthPicker}
+        value={selectedMonth}
+        counts={monthCounts}
+        onSelect={setSelectedMonth}
+        onClose={() => setShowMonthPicker(false)}
+      />
 
       {/* User Security Modal */}
       <UserSecurityModal

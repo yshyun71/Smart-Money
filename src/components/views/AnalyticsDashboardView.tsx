@@ -364,6 +364,8 @@ export const AnalyticsDashboardView: React.FC<{
                 <span className="text-[10px] text-slate-400 whitespace-nowrap">
                   {monthCounts.get(selectedMonth) || 0}건
                 </span>
+                {/* 눌러서 고를 수 있다는 표시 — 세 자리 모두 같은 모양입니다 */}
+                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
               </button>
 
               <button

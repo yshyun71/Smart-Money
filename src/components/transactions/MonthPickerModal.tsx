@@ -15,6 +15,10 @@ function thisMonthKey(): string {
  *
  * Months carry the number of entries recorded in them, so the year shows at a
  * glance where the ledger actually has something.
+ *
+ * **연월을 고르는 자리는 모두 이 창을 씁니다**(§12.6) — 상단 월 이동 바, 계좌
+ * 내역(월별·기간별 양끝), 소비분석, 기간 추이, 가져오기의 결제월. 자리마다
+ * 다른 방식을 두면 같은 일을 하는 조작기가 화면마다 달라 보입니다.
  */
 export const MonthPickerModal: React.FC<{
   isOpen: boolean;
@@ -22,9 +26,19 @@ export const MonthPickerModal: React.FC<{
   value: string;
   /** How many entries each month holds, keyed the same way. */
   counts: Map<string, number>;
+  /** 무엇을 고르는 자리인지. 기간의 양끝처럼 뜻이 다를 때 바꿉니다. */
+  title?: string;
+  /**
+   * 고를 수 있는 범위 (`YYYY-MM`).
+   *
+   * 기간의 시작·끝을 고를 때 씁니다 — 시작이 끝보다 뒤가 되면 조회 결과가
+   * 조용히 0건이 되므로, 애초에 누를 수 없게 하는 편이 낫습니다.
+   */
+  min?: string;
+  max?: string;
   onSelect: (month: string) => void;
   onClose: () => void;
-}> = ({ isOpen, value, counts, onSelect, onClose }) => {
+}> = ({ isOpen, value, counts, title, min, max, onSelect, onClose }) => {
   const [year, setYear] = useState(() => Number(value.slice(0, 4)) || new Date().getFullYear());
 
   // Open on the year being viewed, however the month was last changed
@@ -64,7 +78,7 @@ export const MonthPickerModal: React.FC<{
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
             <CalendarDays className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>조회할 연월 선택</span>
+            <span>{title || "조회할 연월 선택"}</span>
           </h3>
           <button
             type="button"
@@ -111,21 +125,24 @@ export const MonthPickerModal: React.FC<{
             const count = counts.get(key) || 0;
             const isSelected = key === value;
             const isCurrent = key === current;
+            /* 범위 밖은 누를 수 없습니다 — 고르면 결과가 0건이 되는 달입니다 */
+            const blocked = Boolean((min && key < min) || (max && key > max));
 
             return (
               <button
                 key={key}
                 type="button"
+                disabled={blocked}
                 onClick={() => {
                   onSelect(key);
                   onClose();
                 }}
-                className={`py-2 rounded-xl border text-center transition cursor-pointer ${
+                className={`py-2 rounded-xl border text-center transition cursor-pointer disabled:opacity-40 disabled:cursor-default ${
                   isSelected
                     ? "bg-emerald-600 border-emerald-600 text-white"
                     : count > 0
-                    ? "bg-white border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40"
-                    : "bg-slate-50 border-slate-100 hover:border-slate-300"
+                    ? "bg-white border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 disabled:hover:border-slate-100"
+                    : "bg-slate-50 border-slate-100 hover:border-slate-300 disabled:hover:border-slate-100"
                 }`}
               >
                 <div
@@ -160,11 +177,12 @@ export const MonthPickerModal: React.FC<{
 
         <button
           type="button"
+          disabled={Boolean((min && current < min) || (max && current > max))}
           onClick={() => {
             onSelect(current);
             onClose();
           }}
-          className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer"
+          className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer disabled:opacity-40 disabled:cursor-default"
         >
           이번 달로
         </button>
