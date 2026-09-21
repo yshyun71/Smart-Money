@@ -18,6 +18,7 @@ export type BuiltInCategory =
   | "대출"
   | "기타 금융"
   | "저축"
+  | "이체"
   | "카드대금"
   | "급여"
   | "기타수입"

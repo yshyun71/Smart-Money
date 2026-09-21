@@ -22,6 +22,8 @@ import {
   monthPhase,
   budgetWording,
   categorySpendRows,
+  isAssetMove,
+  spendingRows,
 } from "../src/services/actuals";
 
 let passed = 0;
@@ -529,6 +531,75 @@ section("카테고리 지출 펼쳐 보기 — 합계와 목록이 같은 말을
     "없는 카테고리는 빈 목록",
     categorySpendRows(rows, { month: "2026-08", category: "의료" }).length === 0
   );
+}
+
+// ---------------------------------------------------------------------------
+section("이체 — 옮긴 돈은 쓴 돈이 아닙니다");
+// ---------------------------------------------------------------------------
+{
+  const move = (amount: number, kind: "FIXED" | "VARIABLE" | "INCOME"): any => ({
+    id: `m${serial++}`,
+    accountId: "bank",
+    date: "2026-08-12",
+    time: "12:00",
+    type: kind === "INCOME" ? "INCOME" : "EXPENSE",
+    expenseType: kind,
+    category: "이체",
+    merchant: "카뱅오픈양승현",
+    amount,
+    paymentMethod: "계좌이체",
+  });
+
+  check("일회성 이체는 빠집니다", isAssetMove(move(1_000_000, "VARIABLE")));
+  /*
+    들어온 이체도 빠집니다. 수입에는 고정비라는 것이 없으므로
+    `expenseType !== "FIXED"` 한 줄이 양쪽을 다 덮습니다.
+  */
+  check("받은 이체도 빠집니다", isAssetMove(move(2_000_000, "INCOME")));
+  /*
+    **고정비로 표시한 이체는 남습니다.** 매달 같은 날 같은 금액이 나가는 이체는
+    사람이 "내 고정 지출"이라고 판단한 것이고, 앱이 그 판단을 뒤집지 않습니다.
+  */
+  check("고정 이체는 지출로 셉니다", !isAssetMove(move(500_000, "FIXED")));
+  check(
+    "다른 카테고리는 건드리지 않음",
+    !isAssetMove({ ...move(10_000, "VARIABLE"), category: "식비" })
+  );
+
+  const rows: any[] = [
+    varTx("식비", "2026-08", 200_000),
+    fixedTx("주거", "2026-08", 500_000),
+    move(1_000_000, "VARIABLE"),
+    move(2_000_000, "INCOME"),
+    move(300_000, "FIXED"),
+  ];
+
+  const counted = spendingRows(rows);
+  check("옮긴 돈 2건이 빠짐", counted.length === 3, counted.length);
+
+  // 그 달 수입 — 받은 이체는 수입이 아닙니다
+  check(
+    "수입에 이체가 섞이지 않음",
+    sumActuals(actualRows(counted, { month: "2026-08", kind: "INCOME" })).total === 0
+  );
+
+  // 고정비 — 고정으로 표시한 이체는 들어갑니다
+  check(
+    "고정비에 고정 이체 포함",
+    sumActuals(actualRows(counted, { month: "2026-08", kind: "FIXED" })).total === 800_000,
+    sumActuals(actualRows(counted, { month: "2026-08", kind: "FIXED" }))
+  );
+
+  // 카테고리 지출 펼쳐 보기도 같은 목록을 봅니다
+  const listed = categorySpendRows(counted, { month: "2026-08", category: "이체" });
+  check("이체 카테고리에는 고정 건만", listed.length === 1, listed);
+  check("그 금액", listed[0]?.amount === 300_000, listed);
+
+  /*
+    원본은 건드리지 않습니다 — 계좌 내역·잔액·카드 연결·중복 판정은 실제로
+    오간 모든 줄을 봐야 합니다. 거르는 것은 합계를 낼 때뿐입니다.
+  */
+  check("원본 목록은 그대로", rows.length === 5);
 }
 
 // ---------------------------------------------------------------------------

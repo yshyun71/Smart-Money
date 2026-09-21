@@ -21,6 +21,7 @@ import {
   Trash2,
   Pin,
   Calendar,
+  ArrowLeftRight,
 } from "lucide-react";
 
 const getCategoryIcon = (category: CategoryType) => {
@@ -53,6 +54,8 @@ const getCategoryIcon = (category: CategoryType) => {
       return <PiggyBank className="w-4 h-4 text-sky-600" />;
     case "카드대금":
       return <CreditCard className="w-4 h-4 text-indigo-600" />;
+    case "이체":
+      return <ArrowLeftRight className="w-4 h-4 text-slate-500" />;
     case "급여":
     case "기타수입":
       return <Coins className="w-4 h-4 text-emerald-600" />;
@@ -91,6 +94,8 @@ const getCategoryBg = (category: CategoryType) => {
       return "bg-sky-50";
     case "카드대금":
       return "bg-indigo-50";
+    case "이체":
+      return "bg-slate-100";
     case "급여":
     case "기타수입":
       return "bg-emerald-50";

@@ -16,7 +16,12 @@ export const FixedVsVariableView: React.FC<{
   onNavigateToSavings: () => void;
 }> = ({ onNavigateToSavings }) => {
   const {
-    transactions,
+    /*
+      합계 옆에 목록을 나란히 놓는 화면이라, 합계가 세는 것과 **같은 목록**을
+      써야 합니다. 내 계좌 사이에서 옮긴 돈은 지출 합계에 들어가지 않으므로
+      변동비 목록에도 나오지 않습니다 — 그 줄은 계좌 내역에서 봅니다(6.5).
+    */
+    monthlySpending: transactions,
     fixedExpenseTotal,
     variableExpenseTotal,
     totalExpense,

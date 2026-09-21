@@ -45,6 +45,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   "대출": "#7C3AED", // violet
   "기타 금융": "#4F46E5", // indigo
   "카드대금": "#6366F1", // indigo
+  "이체": "#64748B", // slate — 쓴 돈이 아니라 옮긴 돈
   "기타지출": "#94A3B8", // gray
 };
 

@@ -1,5 +1,5 @@
 import type { ConnectedAccount, Transaction } from "../types/finance";
-import { SAVINGS_CATEGORY } from "../constants/categories";
+import { SAVINGS_CATEGORY, TRANSFER_CATEGORY } from "../constants/categories";
 
 /**
  * 예산 화면의 세 칸이 무엇을 실적으로 보는가 — 그리고 그 달이 끝났는가.
@@ -10,6 +10,40 @@ import { SAVINGS_CATEGORY } from "../constants/categories";
  * 정의가 갈라지면 세 곳이 서로 다른 금액을 말하고, 그러면 사용자는 어느 쪽이
  * 맞는지 알 수 없습니다 — 실제로 고정비 칸에서 그런 일이 있었습니다(아래).
  */
+
+/**
+ * 쓴 돈이 아니라 **옮긴 돈**인가.
+ *
+ * `이체` 카테고리이면서 고정비가 **아닌** 줄입니다. 내 계좌 사이를 오간 돈은
+ * 가계부를 떠나지 않았으므로 수입에도 지출에도 세지 않습니다 — 세면 그 달
+ * 수입과 지출이 함께 부풀고, 예산·소비분석·AI 진단이 전부 그 위에서 계산됩니다.
+ *
+ * **고정비로 표시한 이체는 뺍니다.** 매달 같은 날 같은 금액이 나가는 이체는
+ * 사람이 "이건 내 고정 지출"이라고 판단한 것이고, 그 판단을 앱이 뒤집을 이유가
+ * 없습니다. 판단을 담는 칸을 새로 만들지 않고 이미 있는 고정비 여부를 쓰는 것이
+ * 요점입니다.
+ *
+ * 수입에는 고정비라는 것이 없으므로(`expenseType === "INCOME"`) 이 한 줄이
+ * 양쪽을 모두 덮습니다 — 들어온 이체는 언제나 빠집니다.
+ *
+ * **잔액은 이 판정과 무관합니다**(§8). 옮긴 돈도 그 통장에서는 실제로 나갔고,
+ * 계좌 내역 화면의 입출금 합계도 그대로입니다. 여기서 가리는 것은 "소비로
+ * 세느냐"뿐입니다.
+ */
+export function isAssetMove(tx: Transaction): boolean {
+  return tx.category === TRANSFER_CATEGORY && tx.expenseType !== "FIXED";
+}
+
+/**
+ * 소비·수입으로 세는 줄만 남깁니다.
+ *
+ * 합계를 내는 모든 자리가 이 목록을 씁니다 — 월 총수입·총지출, 소비분석,
+ * 카테고리 예산, 내역 기반 배분, AI 분석 입력. 한 곳이라도 원본 목록을 쓰면
+ * 그 화면만 다른 금액을 말하게 됩니다.
+ */
+export function spendingRows(transactions: Transaction[]): Transaction[] {
+  return transactions.filter((tx) => !isAssetMove(tx));
+}
 
 export type ActualKind = "INCOME" | "FIXED" | "SAVINGS";
 

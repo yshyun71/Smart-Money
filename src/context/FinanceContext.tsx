@@ -52,7 +52,7 @@ import {
   planCardLinks,
   settlesFromBank,
 } from "../services/cardLink";
-import { actualRows, sumActuals } from "../services/actuals";
+import { actualRows, spendingRows, sumActuals } from "../services/actuals";
 import { basisOf, driftSince, type AnalysisDrift } from "../services/analysisFreshness";
 import {
   BUDGET_EXCLUDED_CATEGORIES,
@@ -96,6 +96,13 @@ interface FinanceContextType {
   accounts: ConnectedAccount[];
   transactions: Transaction[];
   allTransactions: Transaction[];
+  /**
+   * 그 달에서 **소비·수입으로 세는** 줄만 (6.5).
+   *
+   * 합계와 나란히 목록을 보여 주는 화면은 이것을 써야 합계와 목록이 같은 말을
+   * 합니다 — 옮긴 돈은 어느 쪽에도 들어가지 않습니다.
+   */
+  monthlySpending: Transaction[];
   selectedMonth: string;
   setSelectedMonth: (month: string) => void;
   aiAnalysis: AISpendingAnalysis | null;
@@ -504,9 +511,30 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // Derived metrics for the selected month
   // -------------------------------------------------------------------------
 
+  /*
+    소비·수입으로 세는 줄만 남긴 목록.
+
+    내 계좌 사이에서 옮긴 돈(`이체`, 고정비 아님)은 가계부를 떠나지 않았으므로
+    합계에서 뺍니다. 원본 `transactions` 는 그대로 두어야 합니다 — 계좌 내역·
+    잔액·카드 연결·중복 판정은 실제로 오간 모든 줄을 봐야 합니다(§6.5).
+  */
+  const countedTransactions = useMemo(() => spendingRows(transactions), [transactions]);
+
+  /*
+    화면에 뿌리는 목록 — 그 달에 실제로 오간 **모든** 줄입니다.
+
+    옮긴 돈도 통장에는 찍혀 있고, 내역 화면에서 사라지면 "가져오기가 빠뜨렸나"
+    싶어집니다. 감추는 것이 아니라 **세지 않는 것**이 요점입니다.
+  */
   const monthlyTransactions = useMemo(
     () => transactions.filter((tx) => tx.date.startsWith(selectedMonth)),
     [transactions, selectedMonth]
+  );
+
+  /** 합계로 세는 줄만 — 옮긴 돈을 뺀 그 달의 목록. */
+  const monthlySpending = useMemo(
+    () => countedTransactions.filter((tx) => tx.date.startsWith(selectedMonth)),
+    [countedTransactions, selectedMonth]
   );
 
   /*
@@ -519,16 +547,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   */
   const totalIncome = useMemo(
     () =>
-      sumActuals(actualRows(transactions, { month: selectedMonth, kind: "INCOME" })).total,
-    [transactions, selectedMonth]
+      sumActuals(actualRows(countedTransactions, { month: selectedMonth, kind: "INCOME" }))
+        .total,
+    [countedTransactions, selectedMonth]
   );
 
   const totalExpense = useMemo(
     () =>
-      monthlyTransactions
+      monthlySpending
         .filter((tx) => tx.type === "EXPENSE")
         .reduce((acc, cur) => acc + cur.amount, 0),
-    [monthlyTransactions]
+    [monthlySpending]
   );
 
   /*
@@ -541,8 +570,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   */
   const fixedExpenseTotal = useMemo(
     () =>
-      sumActuals(actualRows(transactions, { month: selectedMonth, kind: "FIXED" })).total,
-    [transactions, selectedMonth]
+      sumActuals(actualRows(countedTransactions, { month: selectedMonth, kind: "FIXED" }))
+        .total,
+    [countedTransactions, selectedMonth]
   );
 
   /**
@@ -555,17 +585,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const savingsActualTotal = useMemo(
     () =>
       sumActuals(
-        actualRows(transactions, { month: selectedMonth, kind: "SAVINGS", accounts })
+        actualRows(countedTransactions, { month: selectedMonth, kind: "SAVINGS", accounts })
       ).total,
-    [transactions, selectedMonth, accounts]
+    [countedTransactions, selectedMonth, accounts]
   );
 
   const variableExpenseTotal = useMemo(
     () =>
-      monthlyTransactions
+      monthlySpending
         .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "VARIABLE")
         .reduce((acc, cur) => acc + cur.amount, 0),
-    [monthlyTransactions]
+    [monthlySpending]
   );
 
   const netSavings = totalIncome - totalExpense;
@@ -574,7 +604,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const categoryExpenses = useMemo(() => {
     const map: Record<string, number> = {};
-    monthlyTransactions
+    monthlySpending
       .filter((tx) => tx.type === "EXPENSE")
       .forEach((tx) => {
         map[tx.category] = (map[tx.category] || 0) + tx.amount;
@@ -587,7 +617,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         percentage: totalExpense > 0 ? (amount / totalExpense) * 100 : 0,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [monthlyTransactions, totalExpense]);
+  }, [monthlySpending, totalExpense]);
 
   const implementedSavingsTotal = useMemo(() => {
     if (!aiAnalysis?.savingsRecommendations) return 0;
@@ -619,7 +649,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     for (let offset = 5; offset >= 0; offset--) {
       const date = new Date(year, month - 1 - offset, 1);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const totals = summarise(transactions.filter((tx) => tx.date.startsWith(key)));
+      const totals = summarise(
+        countedTransactions.filter((tx) => tx.date.startsWith(key))
+      );
       items.push({
         month: key,
         displayMonth: `${date.getMonth() + 1}월`,
@@ -628,11 +660,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     return items;
-  }, [transactions, selectedMonth]);
+  }, [countedTransactions, selectedMonth]);
 
   const yearlyHistoricalData = useMemo<YearlyHistoricalItem[]>(() => {
     const byYear = new Map<string, Transaction[]>();
-    transactions.forEach((tx) => {
+    countedTransactions.forEach((tx) => {
       const year = tx.date.slice(0, 4);
       if (!byYear.has(year)) byYear.set(year, []);
       byYear.get(year)!.push(tx);
@@ -659,7 +691,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
         return { year, ...totals, categories };
       });
-  }, [transactions]);
+  }, [countedTransactions]);
 
   // -------------------------------------------------------------------------
   // Budget
@@ -696,7 +728,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const budgetStatusList = useMemo<CategoryBudgetStatus[]>(() => {
     const categorySpentMap: Record<string, number> = {};
-    monthlyTransactions
+    monthlySpending
       .filter((t) => t.type === "EXPENSE")
       .forEach((t) => {
         categorySpentMap[t.category] = (categorySpentMap[t.category] || 0) + t.amount;
@@ -738,7 +770,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         return { category, budget, spent, remaining, percentage, status };
       })
       .sort((a, b) => b.percentage - a.percentage);
-  }, [monthlyTransactions, budgetConfig]);
+  }, [monthlySpending, budgetConfig]);
 
   const budgetAlerts = useMemo<BudgetAlert[]>(() => {
     if (!budgetConfig.enablePushAlerts) return [];
@@ -821,18 +853,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     () =>
       aiAnalysis
         ? driftSince({
-            transactions,
+            transactions: countedTransactions,
             month: selectedMonth,
             basis: aiAnalysis.basis,
             savedAt: aiAnalysis.analyzedAtIso,
           })
         : null,
-    [aiAnalysis, transactions, selectedMonth]
+    [aiAnalysis, countedTransactions, selectedMonth]
   );
 
   const fixedBaselineList = useMemo(
-    () => fixedBaselines(transactions, { months: 6, upTo: selectedMonth }),
-    [transactions, selectedMonth]
+    () => fixedBaselines(countedTransactions, { months: 6, upTo: selectedMonth }),
+    [countedTransactions, selectedMonth]
   );
 
   const underFixedList = useMemo(
@@ -1092,7 +1124,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     fixed: number,
     savingsTarget: number
   ): { changed: number; months: number } => {
-    const plan = historyAllocate(transactions, {
+    const plan = historyAllocate(countedTransactions, {
       spare: spareOf({ income, fixed, savings: savingsTarget }),
       months: 6,
       // 진행 중인 달은 반 달치라 평균을 끌어내립니다
@@ -1558,7 +1590,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsAnalyzingAI(true);
     setAiError(null);
     try {
-      const fixedItems = monthlyTransactions
+      const fixedItems = monthlySpending
         .filter((tx) => tx.type === "EXPENSE" && tx.expenseType === "FIXED")
         .map((t) => ({ merchant: t.merchant, amount: t.amount, category: t.category }));
 
@@ -1570,7 +1602,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         variableExpenseTotal,
         fixedItems,
         variableTopCategories: categoryExpenses.slice(0, 5),
-        recentTransactions: monthlyTransactions.slice(0, 15),
+        recentTransactions: monthlySpending.slice(0, 15),
       });
 
       const result: AISpendingAnalysis = {
@@ -1595,7 +1627,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
           견줄 수 없으므로 ISO 를 따로 둡니다(11.6).
         */
         analyzedAtIso: new Date().toISOString(),
-        basis: basisOf(transactions, selectedMonth),
+        basis: basisOf(countedTransactions, selectedMonth),
       };
 
       setAiAnalysis(result);
@@ -1695,6 +1727,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         accounts,
         transactions: monthlyTransactions,
         allTransactions: transactions,
+        monthlySpending,
         selectedMonth,
         setSelectedMonth,
         aiAnalysis,

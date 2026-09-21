@@ -5,7 +5,7 @@ import { formatAmountInput, parseAmountInput } from "../../utils/format";
 import { CategoryType, ExpenseType, Transaction, TransactionType } from "../../types/finance";
 import { suggestPattern } from "../../services/categoryRules";
 import { matchCardForBill, isCardAccount, settlesFromBank } from "../../services/cardLink";
-import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
+import { CARD_PAYMENT_CATEGORY, TRANSFER_CATEGORY } from "../../constants/categories";
 import {
   noteReach,
   planNote,
@@ -461,6 +461,36 @@ export const AddTransactionModal: React.FC<{
             {ruleHint && ruleHint !== category && (
               <p className="text-[10px] text-slate-400 mt-1">
                 등록된 규칙은 이 내역명을 <strong>{ruleHint}</strong>로 봅니다.
+              </p>
+            )}
+
+            {/*
+              `이체`를 고르면 합계에서 빠집니다. 말하지 않으면 그 달 지출이
+              갑자기 줄어든 이유를 알 수 없습니다 — 그리고 고정비로 표시하면
+              도로 세어진다는 것도 여기서 알려 줍니다(6.5).
+            */}
+            {category === TRANSFER_CATEGORY && (
+              <p
+                className={`text-[10px] mt-1.5 px-2.5 py-2 rounded-xl border leading-relaxed ${
+                  formType === "FIXED"
+                    ? "bg-indigo-50 border-indigo-200/70 text-indigo-800"
+                    : "bg-slate-50 border-slate-200/70 text-slate-600"
+                }`}
+              >
+                {formType === "FIXED" ? (
+                  <>
+                    <strong>고정비로 표시했으므로 지출로 셉니다.</strong> 매달
+                    빠져나가는 이체는 사실상 고정 지출이라, 합계·예산·분석에 그대로
+                    들어갑니다.
+                  </>
+                ) : (
+                  <>
+                    내 계좌 사이에서 <strong>옮긴 돈</strong>으로 보고 월 합계·소비분석·
+                    AI 분석에서 <strong>뺍니다</strong>. 통장 잔액과 계좌 내역은 그대로입니다.
+                    {formType === "VARIABLE" &&
+                      " 매달 같은 금액이 나가는 이체라면 위에서 [고정비]로 바꾸세요 — 그때는 지출로 셉니다."}
+                  </>
+                )}
               </p>
             )}
 
