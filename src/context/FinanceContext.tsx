@@ -121,6 +121,20 @@ interface FinanceContextType {
   // On-device database
   isDbReady: boolean;
   /**
+   * 홈 화면의 앱 설치 안내를 이번 로그인 동안 감췄는가.
+   *
+   * 배너는 `HomeView` 안에 있어 탭을 옮기면 언마운트됩니다. 닫힘 상태를 그
+   * 안에 두었더니 다른 탭에 다녀오기만 해도 다시 나타났습니다 — 닫는다는 것은
+   * "지금은 됐다"는 뜻이고, 그 뜻이 화면 하나의 수명보다 길어야 합니다.
+   *
+   * **저장하지 않습니다.** 세션(`currentUserId`)은 메모리에만 있어 새로 열면
+   * 로그인부터 다시 하므로, 이 상태도 그때 함께 사라지는 것이 "다음 로그인
+   * 까지"와 정확히 같습니다. 설치는 설정 메뉴에 언제나 있으므로 영구히 숨겨
+   * 무언가를 잃는 일도 없습니다.
+   */
+  installBannerHidden: boolean;
+  hideInstallBanner: () => void;
+  /**
    * Set when the stored ledger could not be opened. Distinct from "no data":
    * an empty screen and an unreachable one mean opposite things.
    */
@@ -344,6 +358,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const { currentUserId } = useAuth();
   const [isDbReady, setIsDbReady] = useState(false);
+  const [installBannerHidden, setInstallBannerHidden] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -500,6 +515,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_DISMISSED_ALERTS, JSON.stringify(dismissedAlertIds));
   }, [dismissedAlertIds]);
+
+  /* 사람이 바뀌면 다시 보여 줍니다 — 닫아 둔 것은 그 사람의 이번 로그인뿐입니다 */
+  useEffect(() => {
+    setInstallBannerHidden(false);
+  }, [currentUserId]);
 
   const syncStats = useCallback(() => {
     try {
@@ -1748,6 +1768,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         viewMode,
         setViewMode,
         isDbReady,
+        installBannerHidden,
+        hideInstallBanner: () => setInstallBannerHidden(true),
         dbError,
         dbStats,
         refreshDbData,

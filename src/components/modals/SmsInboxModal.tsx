@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput, won } from "../../utils/format";
 import { CategorySelect } from "../transactions/CategorySelect";
+import { INSTALL_FEATURE_NAME } from "../pwa/PWAInstallButton";
 import {
   MessageSquareText,
   X,
@@ -272,8 +273,8 @@ export const SmsInboxModal: React.FC<{
                 읽어서 담기
               </button>
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                <strong>공유</strong>로 보내려면 앱을 홈 화면에 설치한 뒤(설정 → 스마트폰
-                앱 설치), 문자 앱에서 <strong>[텍스트 선택]</strong> → 글을 고르고 → 선택
+                <strong>공유</strong>로 보내려면 앱을 홈 화면에 설치한 뒤(설정 →{" "}
+                {INSTALL_FEATURE_NAME}), 문자 앱에서 <strong>[텍스트 선택]</strong> → 글을 고르고 → 선택
                 도구의 공유를 쓰세요. 말풍선을 길게 눌렀을 때 나오는 메뉴에는 공유가
                 없습니다 — 삼성 메시지는 거기서 공유 시트를 띄우지 않습니다.
               </p>

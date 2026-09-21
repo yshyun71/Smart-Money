@@ -4,7 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { UserSecurityModal } from "../auth/UserSecurityModal";
 import { AIKeyModal } from "../settings/AIKeyModal";
 import { UserManageModal } from "../settings/UserManageModal";
-import { PWAInstallGuideModal } from "../pwa/PWAInstallButton";
+import { INSTALL_FEATURE_NAME, PWAInstallGuideModal } from "../pwa/PWAInstallButton";
 import { MonthPickerModal } from "../transactions/MonthPickerModal";
 import {
   activeProviderLabel,
@@ -178,7 +178,7 @@ export const MobileHeader: React.FC<{
     },
     {
       icon: Smartphone,
-      label: "스마트폰에 '스마트 머니' 전용앱 설치",
+      label: INSTALL_FEATURE_NAME,
       description: "설치 안내 및 모바일 전용 링크·QR 코드",
       badge: undefined,
       danger: false,
