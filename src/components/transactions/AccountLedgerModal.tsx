@@ -158,6 +158,7 @@ export const AccountLedgerModal: React.FC<{
   onImport: () => void;
 }> = ({ isOpen, accountId, onClose, onEdit, onAdd, onImport }) => {
   const {
+    selectedMonth,
     accounts,
     allTransactions,
     updateTransactions,
@@ -272,6 +273,30 @@ export const AccountLedgerModal: React.FC<{
       setRangeTo(newest);
     }
   }, [isOpen, accountId, accountEntries, rangeTouched, basis]);
+
+  /*
+    **열 때는 사용자가 고른 달을 먼저 존중합니다.**
+
+    위 효과는 "내역이 있는 가장 최근 달"로 착지합니다 — `카드·계좌` 화면에는 월
+    이동 바가 없어(§12) 그것이 유일하게 뜻이 있는 기본값입니다. 그런데 홈 화면의
+    자산 요약에서 열면 사정이 다릅니다: 사용자가 상단에서 **8월을 골라 두고**
+    카드를 눌렀는데 9월이 열렸습니다. 방금 한 선택을 앱이 못 본 척한 셈입니다.
+
+    그래서 그 달에 이 계좌의 내역이 있으면 그 달로 엽니다. 없으면 빈 화면을
+    띄우는 대신 위 규칙(가장 최근 달)으로 물러섭니다 — 8월을 보다가 아직
+    명세서를 넣지 않은 카드를 열었을 때 "내역 없음"만 보여 주는 것은 답이
+    아닙니다.
+
+    의존성이 `[isOpen, accountId]` 뿐인 이유: **열리는 순간에만** 정해야 합니다.
+    열려 있는 동안 명세서를 가져와 `accountEntries` 가 바뀌었다고 읽던 달을
+    빼앗으면 안 되고, 위 효과가 그 경우를 이미 맡고 있습니다(§14.7).
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+    const months = accountEntries.map((tx) => monthOf(tx, basis)).sort();
+    if (months.includes(selectedMonth)) setMonth(selectedMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, accountId]);
 
   // Escape to close, and no scrolling behind the sheet
   useEffect(() => {
