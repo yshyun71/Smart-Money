@@ -1,5 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { useFinance } from "../../context/FinanceContext";
+import { CategorySpendingModal } from "../modals/CategorySpendingModal";
+import { AddTransactionModal } from "../transactions/AddTransactionModal";
+import { PeriodTrendPanel } from "./PeriodTrendPanel";
+import { monthPeriod, yearPeriod } from "../../services/trend";
 import { shortWon } from "../../utils/format";
 import {
   PieChart as PieIcon,
@@ -7,7 +11,10 @@ import {
   TrendingUp,
   TrendingDown,
   Calendar,
+  CalendarRange,
   Layers,
+  ChevronDown,
+  ChevronRight,
   ArrowUpRight,
   ArrowDownRight,
   Sparkles,
@@ -71,7 +78,20 @@ export const AnalyticsDashboardView: React.FC<{
     aiAnalysis,
   } = useFinance();
 
-  const [timeframeMode, setTimeframeMode] = useState<"MONTHLY" | "YEARLY">("MONTHLY");
+  const [timeframeMode, setTimeframeMode] = useState<"MONTHLY" | "YEARLY" | "PERIOD">(
+    "MONTHLY"
+  );
+  /*
+    카테고리 순위표는 접어 둡니다.
+
+    위의 도넛 범례와 같은 숫자를 다시 말하므로, 처음부터 둘 다 펼쳐 두면 화면의
+    절반이 같은 내용입니다. 순위·비중·막대는 "전부 훑어볼 때" 쓰는 것이니
+    그때 펼치면 됩니다.
+  */
+  const [showRanking, setShowRanking] = useState(false);
+  /** 카테고리 금액을 눌러 연 상세 — 어느 카테고리인지만 기억하면 됩니다. */
+  const [drillCategory, setDrillCategory] = useState<string | null>(null);
+  const [editingTx, setEditingTx] = useState<any>(null);
   const [activeChartType, setActiveChartType] = useState<"PIE" | "BAR" | "AREA">("PIE");
   const [selectedYear, setSelectedYear] = useState<string>("2026년 (예상 누적)");
 
@@ -149,12 +169,28 @@ export const AnalyticsDashboardView: React.FC<{
   }, [categoryExpenses]);
 
   // Yearly data lookup
+  /*
+    고른 해의 집계.
+
+    예전에는 못 찾으면 `yearlyHistoricalData[1]` 로 떨어졌는데, 한 해 분량만
+    있는 기기에서는 그것이 `undefined` 이고 아래에서 `.income` 을 읽는 순간
+    화면이 죽습니다. 기본값을 `선택 → 가장 최근 해 → 빈 집계` 로 두어, 데이터가
+    없으면 0과 `–` 가 보이게 합니다(§17.1).
+  */
   const currentYearlyData = useMemo(() => {
     return (
-      yearlyHistoricalData.find((y) => y.year === selectedYear) ||
-      yearlyHistoricalData[1]
+      yearlyHistoricalData.find((y: { year: string }) => y.year === selectedYear) ||
+      yearlyHistoricalData[yearlyHistoricalData.length - 1] || {
+        year: selectedMonth.slice(0, 4),
+        income: 0,
+        expense: 0,
+        fixed: 0,
+        variable: 0,
+        savings: 0,
+        categories: [],
+      }
     );
-  }, [yearlyHistoricalData, selectedYear]);
+  }, [yearlyHistoricalData, selectedYear, selectedMonth]);
 
   // Yearly pie data
   const yearlyPieData = useMemo(() => {
@@ -185,13 +221,13 @@ export const AnalyticsDashboardView: React.FC<{
               소비 현황 시각 분석 대시보드
             </h2>
             <p className="text-[11px] text-slate-500">
-              월별·연도별 지출 비중과 소비 추이를 다양한 차트로 확인합니다.
+                  월별·연도별 비중과 고른 기간의 변동 추이를 차트로 확인합니다.
             </p>
           </div>
         </div>
 
         {/* Timeframe Switcher Tabs */}
-        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
+        <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-2xl">
           <button
             onClick={() => setTimeframeMode("MONTHLY")}
             className={`py-2.5 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 ${
@@ -200,8 +236,8 @@ export const AnalyticsDashboardView: React.FC<{
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Calendar className="w-3.5 h-3.5" />
-            <span>월별 소비 분석 ({selectedMonth.split("-")[1]}월)</span>
+            <Calendar className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">월별 ({Number(selectedMonth.split("-")[1])}월)</span>
           </button>
 
           <button
@@ -212,8 +248,24 @@ export const AnalyticsDashboardView: React.FC<{
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>연도별 비교 분석</span>
+            <Layers className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">연도별 비교</span>
+          </button>
+
+          {/*
+            한 달도 한 해도 아닌 질문에 답하는 자리입니다 — "작년 3월부터 올해
+            2월까지 식비가 어떻게 움직였나".
+          */}
+          <button
+            onClick={() => setTimeframeMode("PERIOD")}
+            className={`py-2.5 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 ${
+              timeframeMode === "PERIOD"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <CalendarRange className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">기간 추이</span>
           </button>
         </div>
 
@@ -240,6 +292,14 @@ export const AnalyticsDashboardView: React.FC<{
         )}
       </div>
 
+      {/*
+        기간 추이는 아래의 월·연도 분석을 **대신합니다.** 같은 화면에 겹쳐 놓으면
+        어느 숫자가 어느 기간의 것인지 알 수 없습니다.
+      */}
+      {timeframeMode === "PERIOD" ? (
+        <PeriodTrendPanel />
+      ) : (
+        <>
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-3 gap-2">
         <div className="bg-white rounded-2xl p-3 border border-slate-200/90 shadow-2xs">
@@ -364,9 +424,14 @@ export const AnalyticsDashboardView: React.FC<{
                     outerRadius={88}
                     paddingAngle={3}
                     dataKey="value"
+                    /* 조각을 눌러도 같은 상세가 열립니다 */
+                    onClick={(entry: any) => {
+                      const name = entry?.name || entry?.payload?.name;
+                      if (name) setDrillCategory(name);
+                    }}
                   >
                     {activePieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+                      <Cell key={`cell-${index}`} fill={entry.color} cursor="pointer" />
                     ))}
                   </Pie>
                   <Tooltip
@@ -399,10 +464,13 @@ export const AnalyticsDashboardView: React.FC<{
 
             {/* Custom Interactive Legend with percentages */}
             <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+              {/* 금액을 누르면 그 카테고리의 내역이 열립니다 (11.7) */}
               {activePieData.map((item) => (
-                <div
+                <button
                   key={item.name}
-                  className="flex items-center justify-between p-1.5 rounded-xl hover:bg-slate-50 transition text-xs"
+                  type="button"
+                  onClick={() => setDrillCategory(item.name)}
+                  className="flex items-center justify-between p-1.5 rounded-xl hover:bg-slate-100 transition text-xs text-left cursor-pointer"
                 >
                   <div className="flex items-center gap-1.5 truncate">
                     <span
@@ -417,11 +485,11 @@ export const AnalyticsDashboardView: React.FC<{
                     <span className="font-bold text-slate-900 ml-1">
                       {item.percentage}%
                     </span>
-                    <span className="text-[10px] text-slate-600 block">
+                    <span className="text-[10px] text-slate-600 block underline decoration-slate-300 underline-offset-2">
                       {formatShortKRW(item.value)}
                     </span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -599,23 +667,50 @@ export const AnalyticsDashboardView: React.FC<{
         )}
       </div>
 
-      {/* Category Spending Rank Table */}
-      <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold text-slate-900">
-            {timeframeMode === "MONTHLY" ? "카테고리별 지출 순위 & 비중" : "연간 카테고리별 지출 현황"}
-          </h3>
-          <span className="text-[10px] text-slate-400">지출액 기준 정렬</span>
-        </div>
+      {/*
+        카테고리 순위표.
 
-        <div className="space-y-2">
+        위의 도넛 범례가 같은 숫자를 이미 말하므로 **접어 둡니다.** 처음부터 둘 다
+        펼치면 화면의 절반이 같은 내용이고, 스크롤을 내리는 사람에게는 아래쪽이
+        새 정보처럼 보입니다. 순위·비중 막대는 "전부 훑어볼 때" 쓰는 것이니
+        그때 펼치면 됩니다.
+      */}
+      <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs space-y-3">
+        <button
+          type="button"
+          onClick={() => setShowRanking((prev) => !prev)}
+          className="w-full flex items-center justify-between gap-2 text-left cursor-pointer"
+        >
+          <div className="min-w-0">
+            <h3 className="text-xs font-bold text-slate-900 truncate">
+              {timeframeMode === "MONTHLY" ? "카테고리별 지출 순위 & 비중" : "연간 카테고리별 지출 현황"}
+            </h3>
+            <span className="text-[10px] text-slate-400">
+              {showRanking
+                ? "지출액 기준 정렬 · 금액을 누르면 내역이 열립니다"
+                : `${activePieData.length}개 카테고리 · 순위와 비중 보기`}
+            </span>
+          </div>
+          <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition rounded-full px-2.5 py-1 whitespace-nowrap">
+            {showRanking ? "접기" : "카테고리 전체 보기"}
+            {showRanking ? (
+              <ChevronDown className="w-3 h-3 rotate-180" />
+            ) : (
+              <ChevronDown className="w-3 h-3" />
+            )}
+          </span>
+        </button>
+
+        <div className={`space-y-2 ${showRanking ? "" : "hidden"}`}>
           {activePieData.map((item, idx) => {
             const isHighest = idx === 0;
 
             return (
-              <div
+              <button
                 key={item.name}
-                className="p-2.5 rounded-2xl bg-slate-50/80 border border-slate-100 flex items-center justify-between text-xs"
+                type="button"
+                onClick={() => setDrillCategory(item.name)}
+                className="w-full p-2.5 rounded-2xl bg-slate-50/80 border border-slate-100 flex items-center justify-between text-xs text-left hover:bg-slate-100 transition cursor-pointer"
               >
                 <div className="flex items-center gap-2.5">
                   <span
@@ -643,8 +738,9 @@ export const AnalyticsDashboardView: React.FC<{
                 </div>
 
                 <div className="text-right">
-                  <span className="font-extrabold text-slate-900 block">
+                  <span className="font-extrabold text-slate-900 flex items-center justify-end gap-0.5">
                     {formatKRW(item.value)}
+                    <ChevronRight className="w-3 h-3 text-slate-400" />
                   </span>
                   <div className="w-20 h-1.5 bg-slate-200 rounded-full mt-1 overflow-hidden ml-auto">
                     <div
@@ -656,11 +752,37 @@ export const AnalyticsDashboardView: React.FC<{
                     />
                   </div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
       </div>
+
+        </>
+      )}
+
+      {/*
+        카테고리 금액을 누르면 열리는 상세. **기간은 보고 있는 모드가 정합니다** —
+        월별에서는 그 달, 연도별에서는 그 해. 같은 창이 두 곳에 쓰입니다(11.7).
+      */}
+      <CategorySpendingModal
+        isOpen={drillCategory !== null}
+        category={drillCategory}
+        period={
+          timeframeMode === "YEARLY"
+            ? yearPeriod((currentYearlyData.year || "").slice(0, 4))
+            : monthPeriod(selectedMonth)
+        }
+        suspended={editingTx !== null}
+        onClose={() => setDrillCategory(null)}
+        onPick={(transaction) => setEditingTx(transaction)}
+      />
+
+      <AddTransactionModal
+        isOpen={editingTx !== null}
+        editing={editingTx}
+        onClose={() => setEditingTx(null)}
+      />
 
       {/* Quick Action Navigation to Budget and Savings */}
       <div className="grid grid-cols-2 gap-2">

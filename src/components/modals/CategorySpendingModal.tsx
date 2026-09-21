@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { won, withCommas } from "../../utils/format";
 import { categorySpendRows } from "../../services/actuals";
+import type { Period } from "../../services/trend";
 import type { Transaction, ConnectedAccount } from "../../types/finance";
 import { X, Calendar, Lock, ChevronRight, ArrowUpDown, CreditCard, Landmark } from "lucide-react";
 
@@ -21,22 +22,51 @@ export const CategorySpendingModal: React.FC<{
   isOpen: boolean;
   /** 어느 카테고리인가. */
   category: string | null;
-  /** 어느 달인가 (YYYY-MM). */
-  month: string;
-  /** 그 달 이 카테고리의 한도. 0이면 정하지 않은 것입니다. */
+  /**
+   * 어느 기간인가.
+   *
+   * 달이 아니라 기간을 받는 이유: 같은 창이 예산 화면(한 달), 소비분석의
+   * 월별·연도별, 기간 추이에서 모두 쓰입니다. 부르는 쪽이 `monthPeriod` ·
+   * `yearPeriod` · `rangePeriod` 로 만들어 넘깁니다.
+   */
+  period: Period | null;
+  /** 수입 카테고리를 볼 때만 `INCOME`. 기본은 지출입니다. */
+  direction?: "INCOME" | "EXPENSE";
+  /** 그 달 이 카테고리의 한도. 0이면 정하지 않은 것입니다. 한 달을 볼 때만 뜻이 있습니다. */
   budget?: number;
   /** 위에 거래 수정 화면이 떠 있는가 — 그때는 Escape 를 가로채지 않습니다(14.4). */
   suspended?: boolean;
   onClose: () => void;
   /** 한 건을 골랐습니다. 부모가 거래 수정 화면을 엽니다. */
   onPick: (transaction: Transaction) => void;
-}> = ({ isOpen, category, month, budget = 0, suspended = false, onClose, onPick }) => {
-  const { allTransactions, accounts } = useFinance();
+}> = ({
+  isOpen,
+  category,
+  period,
+  direction = "EXPENSE",
+  budget = 0,
+  suspended = false,
+  onClose,
+  onPick,
+}) => {
+  /*
+    합계가 세는 것과 **같은 목록**을 봅니다 — 내 계좌 사이에서 옮긴 돈은
+    어느 합계에도 들어가지 않으므로 이 목록에도 나오지 않습니다(§6.5).
+  */
+  const { spendingTransactions, accounts } = useFinance();
   const [sortBy, setSortBy] = useState<"AMOUNT" | "DATE">("AMOUNT");
 
+  /* props 가 `any` 로 내려오므로(§14.1) 쓰기 전에 좁혀 둡니다 */
+  const dir: "INCOME" | "EXPENSE" = direction === "INCOME" ? "INCOME" : "EXPENSE";
+
   const rows: Transaction[] = useMemo(() => {
-    if (!category) return [];
-    const found = categorySpendRows(allTransactions, { month, category });
+    if (!category || !period) return [];
+    const found = categorySpendRows(spendingTransactions, {
+      category,
+      start: period.start,
+      end: period.end,
+      direction: dir,
+    });
     return found
       .slice()
       .sort((a: Transaction, b: Transaction) =>
@@ -44,7 +74,7 @@ export const CategorySpendingModal: React.FC<{
           ? b.amount - a.amount
           : `${b.date} ${b.time || ""}`.localeCompare(`${a.date} ${a.time || ""}`)
       );
-  }, [allTransactions, month, category, sortBy]);
+  }, [spendingTransactions, period, category, dir, sortBy]);
 
   /*
     큰 것부터 봅니다 — 줄일 것을 찾으러 열었을 가능성이 가장 높고, 그때
@@ -53,7 +83,7 @@ export const CategorySpendingModal: React.FC<{
   useEffect(() => {
     if (!isOpen) return;
     setSortBy("AMOUNT");
-  }, [isOpen, category, month]);
+  }, [isOpen, category, period?.start]);
 
   useEffect(() => {
     if (!isOpen || suspended) return;
@@ -64,10 +94,12 @@ export const CategorySpendingModal: React.FC<{
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, suspended, onClose]);
 
-  if (!isOpen || !category) return null;
+  if (!isOpen || !category || !period) return null;
 
   const total = rows.reduce((sum, tx) => sum + tx.amount, 0);
-  const monthName = `${Number(month.slice(5, 7)) || ""}월`;
+  const what = dir === "INCOME" ? "수입" : "지출";
+  /* 기간이 길면 날짜만으로는 어느 달인지 알 수 없으므로 줄마다 연월을 답니다 */
+  const longSpan = period.start.slice(0, 7) !== period.end.slice(0, 7);
   const over = budget > 0 ? total - budget : 0;
 
   const accountOf = (id: string): ConnectedAccount | undefined =>
@@ -85,7 +117,7 @@ export const CategorySpendingModal: React.FC<{
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-slate-900 truncate">
-              {monthName} {category} 지출
+              {period.label} {category} {what}
             </h3>
             <p className="text-[10px] text-slate-400">
               {rows.length}건 · 누르면 그 내역을 고칠 수 있습니다
@@ -105,7 +137,7 @@ export const CategorySpendingModal: React.FC<{
           <div className="py-8 text-center space-y-1.5">
             <Calendar className="w-8 h-8 mx-auto text-slate-300" />
             <p className="text-xs font-bold text-slate-500">
-              {monthName}에 기록된 {category} 지출이 없습니다
+              {period.label}에 기록된 {category} {what}이 없습니다
             </p>
             <p className="text-[11px] text-slate-400 leading-relaxed">
               카드·계좌 내역을 가져오면 이 목록이 채워집니다.
@@ -176,7 +208,7 @@ export const CategorySpendingModal: React.FC<{
                         )}
                       </div>
                       <div className="text-[10px] text-slate-400 truncate">
-                        {tx.date.slice(5).replace("-", "/")}
+                        {longSpan ? tx.date.replace(/-/g, ".") : tx.date.slice(5).replace("-", "/")}
                         {account ? ` · ${account.name}` : ""}
                         {tx.note ? ` · ${tx.note}` : tx.memo ? ` · ${tx.memo}` : ""}
                       </div>

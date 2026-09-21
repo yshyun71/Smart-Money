@@ -103,6 +103,8 @@ interface FinanceContextType {
    * 합니다 — 옮긴 돈은 어느 쪽에도 들어가지 않습니다.
    */
   monthlySpending: Transaction[];
+  /** 달에 매이지 않은 같은 목록 — 기간 추이와 카테고리 상세 조회가 씁니다. */
+  spendingTransactions: Transaction[];
   selectedMonth: string;
   setSelectedMonth: (month: string) => void;
   aiAnalysis: AISpendingAnalysis | null;
@@ -1728,6 +1730,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         transactions: monthlyTransactions,
         allTransactions: transactions,
         monthlySpending,
+        spendingTransactions: countedTransactions,
         selectedMonth,
         setSelectedMonth,
         aiAnalysis,

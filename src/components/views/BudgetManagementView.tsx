@@ -11,6 +11,7 @@ import {
 import { BudgetPolicyModal } from "../modals/BudgetPolicyModal";
 import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { CategorySpendingModal } from "../modals/CategorySpendingModal";
+import { monthPeriod } from "../../services/trend";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { spareOf } from "../../services/budgetPolicy";
 import {
@@ -1059,7 +1060,7 @@ export const BudgetManagementView: React.FC<{
       <CategorySpendingModal
         isOpen={spending !== null}
         category={spending}
-        month={selectedMonth}
+        period={monthPeriod(selectedMonth)}
         budget={budgetConfig.categoryBudgets?.[spending || ""] || 0}
         /* 위에 수정 화면이 떠 있으면 Escape 를 가로채지 않습니다 (14.4) */
         suspended={editingTx !== null}

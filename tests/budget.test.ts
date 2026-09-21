@@ -25,6 +25,7 @@ import {
   isAssetMove,
   spendingRows,
 } from "../src/services/actuals";
+import { monthPeriod } from "../src/services/trend";
 
 let passed = 0;
 const failures: string[] = [];
@@ -485,7 +486,7 @@ section("카테고리 지출 펼쳐 보기 — 합계와 목록이 같은 말을
     },
   ];
 
-  const food = categorySpendRows(rows, { month: "2026-08", category: "식비" });
+  const food = categorySpendRows(rows, { category: "식비", ...monthPeriod("2026-08") });
   check("그 달 그 카테고리만", food.length === 3, food.length);
   check(
     "합계",
@@ -517,7 +518,7 @@ section("카테고리 지출 펼쳐 보기 — 합계와 목록이 같은 말을
     });
 
   for (const category of Object.keys(grouped)) {
-    const listed = categorySpendRows(rows, { month: "2026-08", category }).reduce(
+    const listed = categorySpendRows(rows, { category, ...monthPeriod("2026-08") }).reduce(
       (sum: number, tx: any) => sum + tx.amount,
       0
     );
@@ -529,7 +530,7 @@ section("카테고리 지출 펼쳐 보기 — 합계와 목록이 같은 말을
 
   check(
     "없는 카테고리는 빈 목록",
-    categorySpendRows(rows, { month: "2026-08", category: "의료" }).length === 0
+    categorySpendRows(rows, { category: "의료", ...monthPeriod("2026-08") }).length === 0
   );
 }
 
@@ -591,7 +592,7 @@ section("이체 — 옮긴 돈은 쓴 돈이 아닙니다");
   );
 
   // 카테고리 지출 펼쳐 보기도 같은 목록을 봅니다
-  const listed = categorySpendRows(counted, { month: "2026-08", category: "이체" });
+  const listed = categorySpendRows(counted, { category: "이체", ...monthPeriod("2026-08") });
   check("이체 카테고리에는 고정 건만", listed.length === 1, listed);
   check("그 금액", listed[0]?.amount === 300_000, listed);
 
