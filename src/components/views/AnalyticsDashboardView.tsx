@@ -4,6 +4,7 @@ import { CategorySpendingModal } from "../modals/CategorySpendingModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { PeriodTrendPanel } from "./PeriodTrendPanel";
 import { monthPeriod, yearPeriod } from "../../services/trend";
+import { MonthPickerModal } from "../transactions/MonthPickerModal";
 import { shortWon } from "../../utils/format";
 import {
   PieChart as PieIcon,
@@ -12,6 +13,7 @@ import {
   TrendingDown,
   Calendar,
   CalendarRange,
+  ChevronLeft,
   Layers,
   ChevronDown,
   ChevronRight,
@@ -65,6 +67,7 @@ export const AnalyticsDashboardView: React.FC<{
   const {
     selectedMonth,
     setSelectedMonth,
+    allTransactions,
     totalIncome,
     totalExpense,
     fixedExpenseTotal,
@@ -92,8 +95,26 @@ export const AnalyticsDashboardView: React.FC<{
   /** 카테고리 금액을 눌러 연 상세 — 어느 카테고리인지만 기억하면 됩니다. */
   const [drillCategory, setDrillCategory] = useState<string | null>(null);
   const [editingTx, setEditingTx] = useState<any>(null);
+  /** 연월 직접 고르기 — 계좌 내역과 같은 창을 씁니다(월별 건수까지 보여 줍니다). */
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [activeChartType, setActiveChartType] = useState<"PIE" | "BAR" | "AREA">("PIE");
   const [selectedYear, setSelectedYear] = useState<string>("2026년 (예상 누적)");
+
+  /** 달을 앞뒤로 옮깁니다. `Date` 가 연말을 넘겨 주므로 12월+1 이 다음 해 1월이 됩니다. */
+  const shiftMonth = (month: string, step: number) => {
+    const at = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1 + step, 1);
+    return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}`;
+  };
+
+  /** 달마다 몇 건이 있는지 — 고르기 전에 보여 주면 빈 달을 헛되게 열지 않습니다. */
+  const monthCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of allTransactions) {
+      const key = tx.date.slice(0, 7);
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [allTransactions]);
 
   // Format currency
   const formatKRW = (val: number) => `${val.toLocaleString()}원`;
@@ -268,6 +289,56 @@ export const AnalyticsDashboardView: React.FC<{
             <span className="truncate">기간 추이</span>
           </button>
         </div>
+
+        {/*
+          월별 모드의 달 선택.
+
+          연도(아래 칩)와 기간(기간 추이 탭의 입력칸)은 이미 화면 안에서 고르는데
+          달만 화면 밖 위쪽 바에서 골랐습니다. 셋 중 하나만 규칙이 달랐고, 나머지
+          두 모드에서는 그 바가 아무 일도 하지 않았습니다. 그래서 상단 바를
+          이 탭에서 감추고(`MONTHLESS_TABS`) 선택을 여기로 옮겼습니다.
+
+          고른 달은 전역 `selectedMonth` 에 그대로 씁니다 — 상단 바로 바꾸던 것과
+          똑같이 동작하고, 예산·홈·AI절약도 같은 달을 따릅니다.
+        */}
+        {timeframeMode === "MONTHLY" && (
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-500 font-medium shrink-0">분석 기준 월</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setSelectedMonth(shiftMonth(selectedMonth, -1))}
+                aria-label="이전 달"
+                className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowMonthPicker(true)}
+                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-xs font-bold whitespace-nowrap">
+                  {selectedMonth.slice(0, 4)}년 {Number(selectedMonth.slice(5, 7))}월
+                </span>
+                <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                  {monthCounts.get(selectedMonth) || 0}건
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedMonth(shiftMonth(selectedMonth, 1))}
+                aria-label="다음 달"
+                className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition cursor-pointer"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Year Selector (if Yearly mode) */}
         {timeframeMode === "YEARLY" && (
@@ -782,6 +853,15 @@ export const AnalyticsDashboardView: React.FC<{
         isOpen={editingTx !== null}
         editing={editingTx}
         onClose={() => setEditingTx(null)}
+      />
+
+      {/* 연월 직접 고르기 — 계좌 내역이 쓰는 창을 그대로 씁니다 */}
+      <MonthPickerModal
+        isOpen={showMonthPicker}
+        value={selectedMonth}
+        counts={monthCounts}
+        onSelect={setSelectedMonth}
+        onClose={() => setShowMonthPicker(false)}
       />
 
       {/* Quick Action Navigation to Budget and Savings */}
