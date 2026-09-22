@@ -8,11 +8,7 @@ import {
   buildDrafts,
   chooseMapping,
   draftToTransaction,
-  duplicateKey,
-  findSimilarEntry,
   EMPTY_MAPPING,
-  instalmentMarker,
-  isInstalment,
   loadStatementFile,
   guessBillingMonth,
   parseDelimited,
@@ -26,6 +22,18 @@ import { recallMapping, rememberMapping } from "../../services/statementFormats"
 import { detectStatementColumns } from "../../services/aiClient";
 import { hasApiKey } from "../../services/ai";
 import { planBalanceAdjustment } from "../../services/balance";
+import {
+  activeIndex,
+  markQueue,
+  queueFrom,
+  queueLabel,
+  queueReady,
+  queueSummary,
+  splitDrafts,
+  type Decision,
+  type DuplicateItem,
+  type QueuedFile,
+} from "../../services/importQueue";
 import {
   X,
   Upload,
@@ -53,14 +61,6 @@ const REVIEW_FILTERS: { value: ReviewFilter; label: string }[] = [
   { value: "NEW", label: "추가" },
   { value: "DUP", label: "중복" },
 ];
-type Decision = "SKIP" | "OVERWRITE";
-
-interface DuplicateItem {
-  draft: DraftRow;
-  existing: Transaction;
-  decision: Decision;
-}
-
 const won = (value: number) => `${value.toLocaleString()}원`;
 
 export const CsvImportModal: React.FC<{
@@ -117,6 +117,23 @@ export const CsvImportModal: React.FC<{
   const [detectNote, setDetectNote] = useState<string | null>(null);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("ALL");
 
+  /*
+    여러 파일을 한 번에 (§7.10).
+
+    은행 하나와 카드 세 장을 쓰면 매달 파일이 네 개입니다. 파일을 고르는 자리만
+    한 개짜리였을 뿐, 뒤의 세 단계는 파일마다 그대로 반복해도 되는 것이었습니다.
+    그래서 **대기줄**을 두고 한 파일씩 같은 길을 걷습니다 — 한 파일이 끝나면
+    다음 파일의 계좌로 갈아 끼우고 처음 단계로 돌아갑니다.
+
+    `queue` 가 비어 있으면 예전과 똑같이 한 파일짜리입니다. 그 길을 바꾸지 않은
+    이유는 대부분의 가져오기가 여전히 파일 하나이기 때문입니다.
+  */
+  const [queue, setQueue] = useState<QueuedFile[]>([]);
+  const [queueFiles, setQueueFiles] = useState<File[]>([]);
+  /** 지금 걷고 있는 파일. 한 파일짜리일 때는 `-1`. */
+  const [queueAt, setQueueAt] = useState(-1);
+
+
   const account = accounts.find((a) => a.id === accountId);
 
   /*
@@ -158,6 +175,10 @@ export const CsvImportModal: React.FC<{
     setIsDetecting(false);
     setDetectNote(null);
     setReviewFilter("ALL");
+    setSaveFailure(null);
+    setQueue([]);
+    setQueueFiles([]);
+    setQueueAt(-1);
   };
 
   const handleClose = () => {
@@ -375,6 +396,63 @@ export const CsvImportModal: React.FC<{
     }
   };
 
+  /** 한 파일 몫만 지웁니다 — 대기줄과 고른 계좌는 그대로. */
+  const resetFile = () => {
+    setFileName("");
+    setFileError(null);
+    setIsReading(false);
+    setSourceFile(null);
+    setSheetNames([]);
+    setUsedSheet(null);
+    setTable(null);
+    setMapping(EMPTY_MAPPING);
+    setDuplicates([]);
+    setFresh([]);
+    setSkippedRows([]);
+    setResult(null);
+    setAdjustBalance(false);
+    setBillingMonth("");
+    setBillingTouched(false);
+    setMappingSource("RULES");
+    setIsDetecting(false);
+    setDetectNote(null);
+    setReviewFilter("ALL");
+    setSaveFailure(null);
+  };
+
+  /**
+   * 대기줄의 한 파일을 엽니다.
+   *
+   * 대기줄을 **인자로 받습니다.** 방금 갱신한 상태를 곧바로 읽으면 이전 값이
+   * 잡히고, 그러면 끝난 파일을 다시 열게 됩니다.
+   */
+  const openQueued = (items: QueuedFile[], index: number) => {
+    const file = queueFiles[index];
+    if (!file) return;
+
+    resetFile();
+    setStep("PICK");
+    setQueueAt(index);
+    setAccountId(items[index].accountId);
+    void handleFile(file);
+  };
+
+  /** 이 파일을 여기서 끝내고 다음 파일로. 없으면 현황을 보여 줍니다. */
+  const finishQueued = (patch: Partial<QueuedFile>) => {
+    const next = markQueue(queue, queueAt, patch);
+    setQueue(next);
+
+    const following = activeIndex(next);
+    if (following >= 0) {
+      openQueued(next, following);
+      return;
+    }
+
+    resetFile();
+    setQueueAt(-1);
+    setStep("DONE");
+  };
+
   /** Asks the model again, for when the rules or a remembered format are wrong. */
   const redetectWithAi = async () => {
     if (!table || !hasApiKey() || isDetecting) return;
@@ -415,74 +493,15 @@ export const CsvImportModal: React.FC<{
     if (table) rememberMapping(table.headers, mapping);
 
     /*
-      Only this account's own entries count as duplicates. The same shop, the
-      same day and the same amount on a different card is a different payment,
-      and treating it as already registered silently dropped whole statements.
+      가르는 판정은 `services/importQueue.splitDrafts` 가 합니다(§7.6·§7.8) —
+      그 계좌 안에서만 견주기, 회차 없는 할부를 중복으로 보지 않기, 문자로 넣어
+      둔 줄을 명세서가 대체하기. 화면은 그 결과를 보여 주기만 합니다.
     */
-    const existingByKey = new Map<string, Transaction>();
-    for (const tx of allTransactions) {
-      if (tx.accountId !== accountId) continue;
-      const key = duplicateKey(tx);
-      if (!existingByKey.has(key)) existingByKey.set(key, tx);
-    }
-
-    const dup: DuplicateItem[] = [];
-    const fresh: DraftRow[] = [];
-
-    for (const draft of drafts) {
-      /*
-        An instalment is billed again every month, repeating the purchase date,
-        the shop and the amount. Where the statement numbers them ("8/10") the
-        number is part of the key and the months tell themselves apart; where
-        it only says 할부 there is nothing to tell which month this is, so it
-        is never counted as already registered.
-      */
-      const unnumbered =
-        isInstalment(draft.memo) && instalmentMarker(draft.memo) === "";
-      const exact = unnumbered ? undefined : existingByKey.get(duplicateKey(draft));
-
-      if (exact) {
-        dup.push({ draft, existing: exact, decision: "SKIP" });
-        continue;
-      }
-
-      /*
-        문자로 넣어 둔 임시 줄을 명세서가 대체합니다.
-
-        `duplicateKey` 는 내역명이 같아야 중복으로 보는데, 문자와 명세서 사이
-        에서는 이름이 거의 언제나 다릅니다 — 문자 `스타벅스 강남R점` / 명세서
-        `스타벅스강남알`. 그대로 두면 같은 결제가 두 줄이 되어 그 달 합계가
-        두 배로 잡히고, 카드대금 자동 연결(9.2)까지 어긋납니다.
-
-        그래서 **같은 계좌·같은 날짜·같은 금액**이면서 그 줄이 문자에서 온
-        것일 때만 같은 건으로 보고, 기본값을 **덮어쓰기**로 둡니다. 명세서가
-        더 정확한 기록이기 때문입니다. 사람이 넣은 줄이나 다른 명세서 줄은
-        건드리지 않습니다 — 같은 날 같은 금액을 다른 곳에서 쓴 것일 수 있고,
-        근거 없이 합치지 않습니다(17.2).
-      */
-      const claimed = new Set(dup.map((item) => item.existing.id));
-      const similar = findSimilarEntry(
-        allTransactions,
-        {
-          date: draft.date,
-          merchant: draft.merchant,
-          amount: draft.amount,
-          type: draft.type,
-          accountId,
-        },
-        { ignoreIds: claimed }
-      );
-
-      if (similar?.origin === "SMS") {
-        const existing = allTransactions.find((tx: Transaction) => tx.id === similar.id);
-        if (existing) {
-          dup.push({ draft, existing, decision: "OVERWRITE" });
-          continue;
-        }
-      }
-
-      fresh.push(draft);
-    }
+    const { fresh, duplicates: dup } = splitDrafts({
+      drafts,
+      existing: allTransactions,
+      accountId,
+    });
 
     setDuplicates(dup);
     setFresh(fresh);
@@ -556,26 +575,51 @@ export const CsvImportModal: React.FC<{
         setAccountBalance(accountId, moved.next, moved.asOf, "AUTO");
       }
 
-      setResult({
+      const tally = {
         added: inserts.length,
         replaced: overwrites.length,
         skipped: duplicates.length - overwrites.length,
+      };
+
+      setResult({
+        ...tally,
         balance: moved
           ? { counted: moved.counted, next: moved.next, asOf: moved.asOf }
           : undefined,
       });
+
+      /* 대기줄이 있으면 다음 파일로 넘어갑니다 — 결과는 항목에 적어 둡니다 */
+      if (queueAt >= 0) {
+        finishQueued({ state: "DONE", ...tally });
+        return;
+      }
       setStep("DONE");
     } catch {
       /* 내역은 저장됐고 잔액 조정만 실패한 경우 — 그 사실만 알립니다 */
+      if (queueAt >= 0) {
+        finishQueued({
+          state: "DONE",
+          added: inserts.length,
+          replaced: overwrites.length,
+          skipped: duplicates.length - overwrites.length,
+          reason: "내역은 저장했지만 잔액을 조정하지 못했습니다",
+        });
+        return;
+      }
       setStep("DONE");
       setFileError("내역은 저장했지만 잔액을 조정하지 못했습니다.");
     }
   };
 
+  /* 파일마다 같은 네 단계를 걷게 되므로 어디쯤인지가 제목에 있어야 합니다 */
+  const where = queueAt >= 0 ? queueLabel(queue, queueAt, accounts) : "";
   const headings: Record<Step, { title: string; sub: string }> = {
-    PICK: { title: "내역 가져오기", sub: "은행·카드사에서 받은 엑셀·CSV 파일" },
+    PICK: {
+      title: "내역 가져오기",
+      sub: where || "은행·카드사에서 받은 엑셀·CSV 파일",
+    },
     MAP: {
-      title: "항목 확인",
+      title: where ? `항목 확인 · ${where}` : "항목 확인",
       /*
         Which sheet the rows came from, and 전체 when they came from all of
         them — a statement split across sheets is read whole, and without
@@ -589,8 +633,17 @@ export const CsvImportModal: React.FC<{
             : ""
       } · ${table?.rows.length ?? 0}줄`,
     },
-    REVIEW: { title: "중복 확인", sub: `새 내역 ${fresh.length}건 · 중복 ${duplicates.length}건` },
-    DONE: { title: "가져오기 완료", sub: "가계부에 반영되었습니다" },
+    REVIEW: {
+      title: where ? `중복 확인 · ${where}` : "중복 확인",
+      sub: `새 내역 ${fresh.length}건 · 중복 ${duplicates.length}건`,
+    },
+    DONE: {
+      title: "가져오기 완료",
+      sub:
+        queue.length > 1
+          ? `파일 ${queue.length}개를 처리했습니다`
+          : "가계부에 반영되었습니다",
+    },
   };
 
   const columnSelect = (
@@ -656,10 +709,41 @@ export const CsvImportModal: React.FC<{
           </button>
         </div>
 
+        {/*
+          대기줄을 걷는 동안 어디쯤인지, 그리고 **빠져나갈 길**.
+
+          한 파일이 읽히지 않는다고 나머지 세 파일까지 멈추면 여러 파일을 한 번에
+          넣는 뜻이 없어집니다. 건너뛴 파일은 현황에 까닭과 함께 남습니다(§7.9).
+        */}
+        {queueAt >= 0 && (
+          <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-bold text-indigo-900 truncate">
+                {queueLabel(queue, queueAt, accounts)}
+              </div>
+              <div className="text-[10px] text-indigo-700/90 truncate">
+                {queue[queueAt]?.name}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                finishQueued({
+                  state: "FAILED",
+                  reason: fileError || "건너뛰었습니다",
+                })
+              }
+              className="px-2.5 py-1.5 rounded-lg bg-white border border-indigo-200 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 transition shrink-0 cursor-pointer whitespace-nowrap"
+            >
+              이 파일 건너뛰기
+            </button>
+          </div>
+        )}
+
         {/* ---------------- PICK ---------------- */}
         {step === "PICK" && (
           <>
-            <div>
+            <div className={queue.length > 0 ? "hidden" : ""}>
               <label className="text-[11px] font-bold text-slate-700 block mb-1.5">
                 어느 카드·계좌의 내역인가요?
               </label>
@@ -705,13 +789,32 @@ export const CsvImportModal: React.FC<{
               </div>
               <input
                 type="file"
+                multiple
                 accept=".csv,.txt,.xls,.xlsx,.xlsm,.xlsb,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 disabled={accounts.length === 0 || isReading}
                 className="hidden"
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
+                  const picked = Array.from(e.target.files || []);
                   e.target.value = "";
-                  if (file) void handleFile(file);
+                  if (picked.length === 0) return;
+
+                  /*
+                    파일이 하나면 예전 그대로입니다. 여럿이면 대기줄을 만들고
+                    계좌를 파일 이름에서 추측해 둡니다 — 모르는 것은 비워 두고
+                    사람이 고릅니다(§17.2).
+                  */
+                  if (picked.length === 1) {
+                    setQueue([]);
+                    setQueueFiles([]);
+                    setQueueAt(-1);
+                    void handleFile(picked[0]);
+                    return;
+                  }
+
+                  setQueueFiles(picked);
+                  setQueue(queueFrom(picked.map((file) => file.name), accounts));
+                  setQueueAt(-1);
+                  setFileError(null);
                 }}
               />
             </label>
@@ -721,6 +824,85 @@ export const CsvImportModal: React.FC<{
                 {fileError}
               </div>
             )}
+
+            {queue.length > 0 && queueAt < 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold text-slate-700">
+                    파일 {queue.length}개 · 각각 어느 카드·계좌인가요?
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQueue([]);
+                      setQueueFiles([]);
+                    }}
+                    className="text-[10px] font-bold text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
+                  >
+                    다시 고르기
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  {queue.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="p-2.5 rounded-xl border border-slate-200 bg-white space-y-1.5"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="text-[11px] font-bold text-slate-800 truncate">
+                          {item.name}
+                        </span>
+                      </div>
+                      <select
+                        value={item.accountId}
+                        onChange={(e) =>
+                          setQueue((prev) =>
+                            markQueue(prev, index, { accountId: e.target.value })
+                          )
+                        }
+                        className={`w-full px-2.5 py-2 text-xs rounded-xl border bg-white focus:outline-none ${
+                          item.accountId
+                            ? "border-slate-200 focus:border-emerald-400"
+                            : "border-amber-300 bg-amber-50/60 focus:border-amber-400"
+                        }`}
+                      >
+                        {/*
+                          이름에서 카드사를 못 읽었거나 그 카드사 카드가 두 장이면
+                          비워 둡니다 — 골라 두면 이미 정해진 줄 알고 넘깁니다
+                        */}
+                        <option value="">고르지 않음</option>
+                        {accounts.map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.type === "BANK" ? "🏦" : "💳"} {acc.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  파일 이름에 카드사가 적혀 있으면 미리 골라 두었습니다. 나머지는
+                  직접 고르세요. 시작하면 <strong>한 파일씩</strong> 항목 확인과 중복
+                  확인을 거칩니다.
+                </p>
+
+                <button
+                  type="button"
+                  disabled={!queueReady(queue) || isReading}
+                  onClick={() => openQueued(queue, 0)}
+                  className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-xs transition cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                >
+                  {queueReady(queue)
+                    ? `${queue.length}개 파일 가져오기 시작`
+                    : "계좌를 고르지 않은 파일이 있습니다"}
+                  {queueReady(queue) && <ArrowRight className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            )}
+
 
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-[10px] text-slate-500 leading-relaxed space-y-1">
               <div>
@@ -1285,8 +1467,90 @@ export const CsvImportModal: React.FC<{
           </>
         )}
 
+        {/* ---------------- DONE · 여러 파일 ---------------- */}
+        {step === "DONE" && queue.length > 0 && (
+          <>
+            <div className="py-4 flex flex-col items-center gap-2 text-center">
+              <CheckCircle2 className="w-10 h-10 text-emerald-500" />
+              <div className="text-sm font-bold text-slate-900">
+                파일 {queueSummary(queue).files}개 중 {queueSummary(queue).done}개를
+                반영했습니다
+              </div>
+              {queueSummary(queue).failed > 0 && (
+                <div className="text-[11px] font-bold text-amber-700">
+                  {queueSummary(queue).failed}개는 건너뛰었습니다
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100">
+                <div className="text-[10px] text-emerald-700">추가</div>
+                <div className="text-sm font-black text-emerald-800">
+                  {queueSummary(queue).added}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100">
+                <div className="text-[10px] text-indigo-700">덮어씀</div>
+                <div className="text-sm font-black text-indigo-800">
+                  {queueSummary(queue).replaced}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="text-[10px] text-slate-500">건너뜀</div>
+                <div className="text-sm font-black text-slate-700">
+                  {queueSummary(queue).skipped}
+                </div>
+              </div>
+            </div>
+
+            {/* 파일마다 무엇이 되었는지 — 숫자만으로는 어느 파일이 빠졌는지 모릅니다 */}
+            <div className="space-y-1.5">
+              {queue.map((item, index) => {
+                const where = accounts.find((acc: any) => acc.id === item.accountId);
+                const ok = item.state === "DONE";
+                return (
+                  <div
+                    key={`${item.name}-${index}`}
+                    className={`p-2.5 rounded-xl border flex items-start gap-2 ${
+                      ok
+                        ? "bg-white border-slate-200"
+                        : "bg-amber-50/70 border-amber-200"
+                    }`}
+                  >
+                    {ok ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-bold text-slate-800 truncate">
+                        {item.name}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {where?.name ? `${where.name} · ` : ""}
+                        {ok
+                          ? `추가 ${item.added || 0} · 덮어씀 ${item.replaced || 0} · 건너뜀 ${item.skipped || 0}`
+                          : item.reason || "건너뛰었습니다"}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={reset}
+              className="w-full py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+            >
+              다른 파일 가져오기
+            </button>
+          </>
+        )}
+
         {/* ---------------- DONE ---------------- */}
-        {step === "DONE" && result && (
+        {step === "DONE" && result && queue.length === 0 && (
           <>
             <div className="py-4 flex flex-col items-center gap-2 text-center">
               <CheckCircle2 className="w-10 h-10 text-emerald-500" />
