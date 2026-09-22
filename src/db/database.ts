@@ -2,8 +2,8 @@ import initSqlJs, { type Database } from "sql.js";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import {
   DEFAULT_CATEGORIES,
-  MIGRATIONS,
-  SCHEMA_VERSION,
+  migrate,
+  readSchemaVersion,
   repairMissingColumns,
   repairMissingTables,
 } from "./schema";
@@ -106,31 +106,6 @@ async function idbWrite(bytes: Uint8Array, key: string = IDB_KEY): Promise<void>
 // ---------------------------------------------------------------------------
 // Migrations
 // ---------------------------------------------------------------------------
-
-function readSchemaVersion(target: Database): number {
-  const result = target.exec("PRAGMA user_version");
-  const value = result[0]?.values?.[0]?.[0];
-  return typeof value === "number" ? value : 0;
-}
-
-/**
- * Brings an existing device database up to SCHEMA_VERSION without touching the
- * rows already in it. A brand new database starts at version 0 and simply runs
- * every migration in order.
- */
-function migrate(target: Database): { from: number; to: number } {
-  const from = readSchemaVersion(target);
-  if (from >= SCHEMA_VERSION) return { from, to: from };
-
-  for (const migration of MIGRATIONS) {
-    if (migration.version <= from) continue;
-    console.log(`[DB] 마이그레이션 v${migration.version}: ${migration.description}`);
-    migration.up(target);
-  }
-
-  target.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-  return { from, to: SCHEMA_VERSION };
-}
 
 /**
  * Rows the app cannot run without — the default categories, and nothing else.

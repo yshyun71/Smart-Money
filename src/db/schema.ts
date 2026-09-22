@@ -681,6 +681,31 @@ export const MIGRATIONS: Migration[] = [
  * A budget line cannot be split; one figure covered the lot, so it carries
  * over to the fallback and the amounts can be moved from the budget screen.
  */
+export function readSchemaVersion(target: Database): number {
+  const result = target.exec("PRAGMA user_version");
+  const value = result[0]?.values?.[0]?.[0];
+  return typeof value === "number" ? value : 0;
+}
+
+/**
+ * Brings an existing device database up to SCHEMA_VERSION without touching the
+ * rows already in it. A brand new database starts at version 0 and simply runs
+ * every migration in order.
+ */
+export function migrate(target: Database): { from: number; to: number } {
+  const from = readSchemaVersion(target);
+  if (from >= SCHEMA_VERSION) return { from, to: from };
+
+  for (const migration of MIGRATIONS) {
+    if (migration.version <= from) continue;
+    console.log(`[DB] 마이그레이션 v${migration.version}: ${migration.description}`);
+    migration.up(target);
+  }
+
+  target.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  return { from, to: SCHEMA_VERSION };
+}
+
 function applySplit(db: Database, split: CategorySplit): void {
   const move = (table: string, column: string) => {
     for (const { category, words } of split.rules) {
