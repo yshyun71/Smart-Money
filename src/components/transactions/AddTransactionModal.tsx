@@ -16,6 +16,7 @@ import {
 import { CategorySelect } from "./CategorySelect";
 import { ConfirmModal } from "../modals/ConfirmModal";
 import { SearchModal } from "../modals/SearchModal";
+import { checkTransaction, describeProblems } from "../../services/validate";
 import {
   X,
   Plus,
@@ -28,6 +29,7 @@ import {
   Square,
   Tag,
   MessageSquareText,
+  AlertTriangle,
 } from "lucide-react";
 
 export const AddTransactionModal: React.FC<{
@@ -61,6 +63,8 @@ export const AddTransactionModal: React.FC<{
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [recurringDay, setRecurringDay] = useState("5");
   const [memo, setMemo] = useState("");
+  /** 저장을 막은 까닭 — 칸 아래에 그대로 보입니다(§12.8: OS 대화창을 쓰지 않습니다). */
+  const [formError, setFormError] = useState<string | null>(null);
   /*
     설명은 memo와 다른 칸입니다. memo에는 명세서가 적어 준 구분과 할부 회차가
     들어 있고 그것이 중복 판정의 근거라, 사람이 쓰는 글은 따로 받습니다.
@@ -245,12 +249,9 @@ export const AddTransactionModal: React.FC<{
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const numAmount = parseInt(amount.replace(/[^0-9]/g, ""), 10);
-    if (!numAmount || isNaN(numAmount) || !merchant.trim()) {
-      alert("금액과 가맹점/내역명을 입력해주세요.");
-      return;
-    }
+    setFormError(null);
 
+    const numAmount = parseInt(amount.replace(/[^0-9]/g, ""), 10);
     const selectedAcc = accounts.find((a) => a.id === selectedAccountId);
     const paymentMethod = selectedAcc ? selectedAcc.name : "현금/기타";
 
@@ -282,6 +283,21 @@ export const AddTransactionModal: React.FC<{
       // statement an entry belongs to.
       billingMonth: editing?.billingMonth,
     };
+
+    /*
+      **저장하기 전에 검증합니다** (§17.7). 예전에는 금액과 내역명만 보고
+      `alert` 로 말했습니다 — OS 대화창은 앱과 전혀 다르게 뜨고 설치한 PWA 에서는
+      주소까지 노출하며(§12.8), 무엇보다 **날짜를 보지 않았습니다.** 날짜가 이상한
+      줄은 어느 달 합계에도 들어가지 않아 찾을 길이 없어집니다.
+    */
+    const problems = checkTransaction({
+      ...payload,
+      amount: Number.isNaN(numAmount) ? Number.NaN : numAmount,
+    });
+    if (problems.length > 0) {
+      setFormError(describeProblems(problems));
+      return;
+    }
 
     // Saved first so the entry itself is never overwritten by its own rule
     if (makeRule && canOfferRule && rulePattern.trim()) {
@@ -810,6 +826,16 @@ export const AddTransactionModal: React.FC<{
               </div>
             )}
           </div>
+
+          {/* 막은 까닭은 버튼 바로 위에 — 누른 자리에서 보여야 합니다 */}
+          {formError && (
+            <div className="mt-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+              <span className="text-[11px] font-bold text-rose-700 leading-relaxed">
+                {formError}
+              </span>
+            </div>
+          )}
 
           {/* Submit Button */}
           <button

@@ -2,7 +2,14 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { describeUndo, DEFAULT_UNDO_DAYS } from "../../services/undo";
-import { Undo2, X, Settings2, Trash2 } from "lucide-react";
+import {
+  Undo2,
+  X,
+  Settings2,
+  Trash2,
+  ShieldCheck,
+  ChevronRight,
+} from "lucide-react";
 
 /** 언제 한 일인지 — 목록에서 가장 먼저 읽히는 값입니다. */
 function whenLabel(iso: string): string {
@@ -28,7 +35,9 @@ function whenLabel(iso: string): string {
 export const MiscSettingsModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-}> = ({ isOpen, onClose }) => {
+  /** 데이터 점검 창은 거래 수정으로 이어지므로 부모가 띄웁니다(§14.4 층위). */
+  onOpenCheck: () => void;
+}> = ({ isOpen, onClose, onOpenCheck }) => {
   const {
     undoEntries,
     undo,
@@ -91,6 +100,28 @@ export const MiscSettingsModal: React.FC<{
             {notice}
           </div>
         )}
+
+        {/*
+          데이터 점검 — 새로 들어오는 값은 저장 전에 걸러지지만(§17.7), **그 전에
+          들어온 것**은 그대로 남아 있습니다. 실제로 어느 달 합계에도 잡히지 않는
+          줄이 46건 있었습니다.
+        */}
+        <button
+          type="button"
+          onClick={() => onOpenCheck()}
+          className="w-full p-3 rounded-2xl bg-white border border-slate-200 hover:bg-slate-50 transition cursor-pointer flex items-center gap-2 text-left"
+        >
+          <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="text-[11px] font-bold text-slate-800 block">데이터 점검</span>
+            <span className="text-[10px] text-slate-400 leading-relaxed">
+              있을 수 없는 날짜·없는 계좌·잘못 붙은 분류를 찾습니다
+            </span>
+          </div>
+          <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+        </button>
 
         {/* 보관 기간 */}
         <div className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200/60 space-y-2">

@@ -142,6 +142,8 @@ export const CsvImportModal: React.FC<{
   const [queueFiles, setQueueFiles] = useState<File[]>([]);
   /** 지금 걷고 있는 파일. 한 파일짜리일 때는 `-1`. */
   const [queueAt, setQueueAt] = useState(-1);
+  /** 값이 말이 안 되어 들이지 않은 건 (§17.7). */
+  const [refused, setRefused] = useState<{ count: number; why: string } | null>(null);
   /** 이미 고른 파일을 또 골랐을 때의 한 줄. */
   const [duplicateNote, setDuplicateNote] = useState<string | null>(null);
   /** 파일을 열어 알아보는 중 — 몇 번째까지 읽었는지. */
@@ -192,6 +194,7 @@ export const CsvImportModal: React.FC<{
     setDetectNote(null);
     setReviewFilter("ALL");
     setSaveFailure(null);
+    setRefused(null);
     setQueue([]);
     setQueueFiles([]);
     setQueueAt(-1);
@@ -434,6 +437,7 @@ export const CsvImportModal: React.FC<{
     setDetectNote(null);
     setReviewFilter("ALL");
     setSaveFailure(null);
+    setRefused(null);
   };
 
   /**
@@ -683,6 +687,11 @@ export const CsvImportModal: React.FC<{
       return;
     }
     setSaveFailure(null);
+    setRefused(
+      outcome.refused
+        ? { count: outcome.refused, why: outcome.refusedWhy || "값이 올바르지 않습니다" }
+        : null
+    );
 
     /*
       **넣은 뒤에** 이 명세서가 자기 카드를 뭐라고 부르는지 적어 둡니다(§7.10).
@@ -1867,6 +1876,22 @@ export const CsvImportModal: React.FC<{
                 <div className="text-sm font-black text-slate-700">{result.skipped}</div>
               </div>
             </div>
+
+            {/*
+              값이 말이 안 되어 **들이지 않은** 건이 있으면 말합니다(§17.7).
+              저장 실패와 다릅니다 — 나머지는 들어갔고 이것만 빠졌습니다.
+              조용히 빠지면 있어야 할 건이 없을 때 알아차릴 방법이 없습니다.
+            */}
+            {refused && (
+              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200/70 space-y-0.5">
+                <div className="text-[11px] font-bold text-amber-900">
+                  {refused.count}건은 들이지 않았습니다
+                </div>
+                <div className="text-[10px] text-amber-800/90 leading-relaxed">
+                  {refused.why} · 값이 올바르지 않은 줄은 가계부에 넣지 않습니다.
+                </div>
+              </div>
+            )}
 
             {result.balance && (
               <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/70 text-[11px] text-emerald-900 space-y-0.5">

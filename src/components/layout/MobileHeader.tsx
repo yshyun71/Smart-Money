@@ -61,7 +61,9 @@ export const MobileHeader: React.FC<{
   onNavigateTab?: (tab: NavTab) => void;
   /** 월 이동 바를 띄울지 정하는 데 씁니다. */
   activeTab?: NavTab;
-}> = ({ onNavigateTab, activeTab }) => {
+  /** 데이터 점검 — 거래 수정으로 이어지므로 `App` 이 띄웁니다. */
+  onOpenDataCheck?: () => void;
+}> = ({ onNavigateTab, activeTab, onOpenDataCheck }) => {
   const {
     selectedMonth,
     setSelectedMonth,
@@ -440,6 +442,14 @@ export const MobileHeader: React.FC<{
       <MiscSettingsModal
         isOpen={showMiscSettings}
         onClose={() => setShowMiscSettings(false)}
+        /*
+          점검 창은 거래 수정으로 이어지고, 그 창은 `App` 이 들고 있습니다.
+          여기서 띄우면 아래에 깔려 고칠 수가 없습니다(§14.4).
+        */
+        onOpenCheck={() => {
+          setShowMiscSettings(false);
+          onOpenDataCheck?.();
+        }}
       />
 
       {/* 연월 직접 선택 — 연월을 고르는 자리는 모두 이 창을 씁니다 (12.6) */}

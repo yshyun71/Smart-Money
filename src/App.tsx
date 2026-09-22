@@ -25,6 +25,7 @@ import { BudgetManagementView } from "./components/views/BudgetManagementView";
 import { AddTransactionModal } from "./components/transactions/AddTransactionModal";
 import { AccountLedgerModal } from "./components/transactions/AccountLedgerModal";
 import { CsvImportModal } from "./components/modals/CsvImportModal";
+import { DataCheckModal } from "./components/settings/DataCheckModal";
 import { SmsInboxModal } from "./components/modals/SmsInboxModal";
 import { OfflineIndicator } from "./components/pwa/PWAInstallButton";
 import { Wifi, Signal } from "lucide-react";
@@ -43,6 +44,7 @@ const MainContent: React.FC = () => {
   */
   const [ledgerAccountId, setLedgerAccountId] = useState<string | null>(null);
   const [editingTx, setEditingTx] = useState<any>(null);
+  const [showDataCheck, setShowDataCheck] = useState(false);
   const [addForAccount, setAddForAccount] = useState<string | undefined>(undefined);
   const [csvAccountId, setCsvAccountId] = useState<string | null>(null);
   const [isSMSModalOpen, setIsSMSModalOpen] = useState(false);
@@ -216,7 +218,11 @@ const MainContent: React.FC = () => {
         )}
 
         {/* App Header */}
-        <MobileHeader onNavigateTab={setActiveTab} activeTab={activeTab} />
+        <MobileHeader
+          onNavigateTab={setActiveTab}
+          activeTab={activeTab}
+          onOpenDataCheck={() => setShowDataCheck(true)}
+        />
 
         {/* Scrollable View Content - Using flex-1 with smooth scrolling */}
         <main
@@ -269,6 +275,13 @@ const MainContent: React.FC = () => {
             setIsAddModalOpen(true);
           }}
           onImport={() => setCsvAccountId(ledgerAccountId)}
+        />
+
+        {/* 데이터 점검 — 고칠 줄을 누르면 거래 수정으로 이어집니다 (§17.7) */}
+        <DataCheckModal
+          isOpen={showDataCheck}
+          onClose={() => setShowDataCheck(false)}
+          onEdit={(tx) => setEditingTx(tx)}
         />
 
         <CsvImportModal

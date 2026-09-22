@@ -50,6 +50,11 @@ import {
 import { actualRows, spendingRows, sumActuals } from "../services/actuals";
 import { pendingNotifications, showNotifications } from "../services/notify";
 import { forgetAccountLabels } from "../services/cardLabels";
+import {
+  checkTransaction,
+  describeProblems,
+  siftTransactions,
+} from "../services/validate";
 import { categoryBreakdown, monthlyHistory, yearlyHistory } from "../services/history";
 import { budgetAlertsFor, categoryStatuses } from "../services/budgetStatus";
 import {
@@ -84,6 +89,14 @@ export interface ImportOutcome {
   /** 실패했을 때 시도한 건수. */
   total?: number;
   message?: string;
+  /**
+   * 값이 말이 안 되어 **들이지 않은** 건수 (§17.7).
+   *
+   * 저장 실패(`ok: false`)와 다릅니다 — 나머지는 저장됐고 이것만 빠졌습니다.
+   * 조용히 빠지면 사용자가 알아차릴 방법이 없어 화면이 말해야 합니다.
+   */
+  refused?: number;
+  refusedWhy?: string;
 }
 
 interface MonthlyHistoricalItem {
@@ -1160,13 +1173,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     if (inserts.length === 0 && updates.length === 0) return { added: 0, replaced: 0 };
 
     try {
-      importTransactions(inserts, updates);
+      /* 들이지 않은 건이 있으면 그만큼 적게 등록됩니다 — 실제 결과를 돌려줍니다 */
+      const outcome = importTransactions(inserts, updates);
       repo.setSmsInboxStatus(
         items.map((item) => item.id),
         "REGISTERED"
       );
       setSmsInbox(readSmsInbox());
-      return { added: inserts.length, replaced: updates.length };
+      return { added: outcome.added, replaced: outcome.replaced };
     } catch (error) {
       console.error("문자 내역을 등록하지 못했습니다:", error);
       return { added: 0, replaced: 0 };
@@ -1363,8 +1377,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     return next.map((tx) => updates.find((update) => update.id === tx.id) ?? tx);
   };
 
+  /*
+    쓰기 직전의 마지막 관문 (§17.7).
+
+    파서를 고친 것은 **가져오기 한 경로**뿐입니다. 직접 입력·문자 등록·일괄 수정·
+    되돌리기 복원은 그 규칙을 지나지 않습니다. 그래서 규칙을 `services/validate.ts`
+    한 곳에 두고 **모든 쓰기가 여기를 지나게** 합니다 — 말이 안 되는 값이 DB 에
+    닿으면 어느 달 합계에도 잡히지 않는 줄이 되고, 그것을 찾을 길이 없습니다.
+
+    **조용히 버리지 않습니다.** 막은 것은 `console.error` 와 화면이 함께 말합니다.
+  */
+  const refuse = (what: string, tx: Partial<Transaction>): boolean => {
+    const problems = checkTransaction(tx);
+    if (problems.length === 0) return false;
+    console.error(`${what}: ${describeProblems(problems)}`, tx);
+    return true;
+  };
+
   const addTransaction = (tx: Omit<Transaction, "id">) => {
     const newTx: Transaction = { ...tx, id: newId("tx") };
+    if (refuse("거래를 저장하지 않았습니다", newTx)) return;
     try {
       repo.insertTransaction(newTx);
       setTransactions((prev) => [newTx, ...prev]);
@@ -1376,10 +1408,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const addTransactions = (txs: Omit<Transaction, "id">[]) => {
-    const newItems: Transaction[] = txs.map((tx, idx) => ({
+    const built: Transaction[] = txs.map((tx, idx) => ({
       ...withRule(tx),
       id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
     }));
+    /* 한 줄이 틀렸다고 나머지를 막지 않습니다 — 들일 것만 들이고 세어 알립니다 */
+    const { ok: newItems, rejected } = siftTransactions(built);
+    if (rejected.length > 0) {
+      console.error(
+        `${rejected.length}건을 들이지 않았습니다: ${describeProblems(rejected[0].problems)}`,
+        rejected.map((entry) => entry.row)
+      );
+    }
+    if (newItems.length === 0) return;
     try {
       repo.insertTransactions(newItems);
       setTransactions((prev) => [...newItems, ...prev]);
@@ -1391,6 +1432,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const updateTransaction = (tx: Transaction) => {
+    if (refuse("거래를 수정하지 않았습니다", tx)) return;
     try {
       repo.updateTransaction(tx);
       setTransactions((prev) => prev.map((t) => (t.id === tx.id ? tx : t)));
@@ -1399,7 +1441,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const updateTransactions = (txs: Transaction[]) => {
+  const updateTransactions = (incoming: Transaction[]) => {
+    const { ok: txs, rejected } = siftTransactions(incoming);
+    if (rejected.length > 0) {
+      console.error(
+        `${rejected.length}건을 수정하지 않았습니다: ${describeProblems(rejected[0].problems)}`,
+        rejected.map((entry) => entry.row)
+      );
+    }
     if (txs.length === 0) return;
 
     /*
@@ -1484,11 +1533,33 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     inserts: Omit<Transaction, "id">[],
     updates: Transaction[]
   ): ImportOutcome => {
-    const withIds: Transaction[] = inserts.map((tx, idx) => ({
+    const built: Transaction[] = inserts.map((tx, idx) => ({
       ...withRule(tx),
       id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
     }));
-    const rewritten = updates.map(withRule);
+
+    /*
+      말이 안 되는 값은 여기서 멈춥니다(§17.7). **한 줄 때문에 299줄을 막지
+      않습니다** — 들일 것은 들이고 못 들인 것을 숫자와 까닭으로 돌려줍니다.
+    */
+    const sifted = siftTransactions(built);
+    const siftedUpdates = siftTransactions(updates.map(withRule));
+    const withIds = sifted.ok;
+    const rewritten = siftedUpdates.ok;
+    const refusedRows = [...sifted.rejected, ...siftedUpdates.rejected];
+    const refusal =
+      refusedRows.length > 0
+        ? {
+            refused: refusedRows.length,
+            refusedWhy: describeProblems(refusedRows[0].problems),
+          }
+        : {};
+    if (refusedRows.length > 0) {
+      console.error(
+        `${refusedRows.length}건을 들이지 않았습니다: ${refusal.refusedWhy}`,
+        refusedRows.map((entry) => entry.row)
+      );
+    }
     const total = withIds.length + rewritten.length;
 
     let lastError: unknown = null;
@@ -1512,6 +1583,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
           added: withIds.length,
           replaced: rewritten.length,
           attempts: attempt,
+          ...refusal,
         };
       } catch (error) {
         lastError = error;
@@ -1525,6 +1597,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       replaced: 0,
       attempts: IMPORT_ATTEMPTS,
       total,
+      ...refusal,
       message:
         lastError instanceof Error
           ? lastError.message
