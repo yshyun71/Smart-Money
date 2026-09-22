@@ -8,7 +8,6 @@ import { HomeView } from "./components/views/HomeView";
 import { LedgerView } from "./components/views/LedgerView";
 import { FixedVsVariableView } from "./components/views/FixedVsVariableView";
 import { AISavingsCoachView } from "./components/views/AISavingsCoachView";
-import { ConnectedAssetsView } from "./components/views/ConnectedAssetsView";
 /*
   차트 화면은 **그 탭을 열 때** 내려받습니다.
 
@@ -16,6 +15,30 @@ import { ConnectedAssetsView } from "./components/views/ConnectedAssetsView";
   있었습니다. 홈만 보는 사용자도 전부 받던 셈입니다 — `xlsx`·AI SDK 와 같은
   처리입니다(§13.3).
 */
+/*
+  카드·계좌 화면도 **그 탭을 열 때** 받습니다.
+
+  1,200줄이 넘고 계좌 등록 폼·DB 관리·백업 암호까지 들고 있는데, 홈만 보는
+  사용자에게는 한 번도 그려지지 않습니다. 차트 화면과 같은 처리입니다(§13.3).
+*/
+/*
+  가져오기 창도 **열 때** 받습니다.
+
+  1,900줄이 넘는 네 단계 화면인데, 명세서를 넣지 않는 날에는 한 번도 그려지지
+  않습니다. `isOpen` 만으로 여닫으면 늘 마운트돼 있어 `React.lazy` 가 뜻이 없으므로
+  **열렸을 때만 그립니다** — 그러면 닫을 때 상태가 함께 사라져 §14.7 의 함정도
+  생기지 않습니다.
+*/
+const CsvImportModal = React.lazy(() =>
+  import("./components/modals/CsvImportModal").then((m) => ({ default: m.CsvImportModal }))
+);
+
+const ConnectedAssetsView = React.lazy(() =>
+  import("./components/views/ConnectedAssetsView").then((m) => ({
+    default: m.ConnectedAssetsView,
+  }))
+);
+
 const AnalyticsDashboardView = React.lazy(() =>
   import("./components/views/AnalyticsDashboardView").then((m) => ({
     default: m.AnalyticsDashboardView,
@@ -24,7 +47,6 @@ const AnalyticsDashboardView = React.lazy(() =>
 import { BudgetManagementView } from "./components/views/BudgetManagementView";
 import { AddTransactionModal } from "./components/transactions/AddTransactionModal";
 import { AccountLedgerModal } from "./components/transactions/AccountLedgerModal";
-import { CsvImportModal } from "./components/modals/CsvImportModal";
 import { DataCheckModal } from "./components/settings/DataCheckModal";
 import { SmsInboxModal } from "./components/modals/SmsInboxModal";
 import { OfflineIndicator } from "./components/pwa/PWAInstallButton";
@@ -142,9 +164,16 @@ const MainContent: React.FC = () => {
         return <AISavingsCoachView />;
       case "assets":
         return (
-          <ConnectedAssetsView
-            onOpenSMSModal={() => setIsSMSModalOpen(true)}
-          />
+          /* 내려받는 동안 자리를 지킵니다 — 빈 화면이 깜빡이지 않게 */
+          <React.Suspense
+            fallback={
+              <div className="py-16 text-center text-xs text-slate-400">
+                카드·계좌를 준비하고 있습니다...
+              </div>
+            }
+          >
+            <ConnectedAssetsView onOpenSMSModal={() => setIsSMSModalOpen(true)} />
+          </React.Suspense>
         );
       default:
         return (
@@ -285,11 +314,15 @@ const MainContent: React.FC = () => {
           onEdit={setEditingTx}
         />
 
-        <CsvImportModal
-          isOpen={csvAccountId !== null}
-          defaultAccountId={csvAccountId || undefined}
-          onClose={() => setCsvAccountId(null)}
-        />
+        {csvAccountId !== null && (
+          <React.Suspense fallback={null}>
+            <CsvImportModal
+              isOpen
+              defaultAccountId={csvAccountId || undefined}
+              onClose={() => setCsvAccountId(null)}
+            />
+          </React.Suspense>
+        )}
 
         <SmsInboxModal
           isOpen={isSMSModalOpen}

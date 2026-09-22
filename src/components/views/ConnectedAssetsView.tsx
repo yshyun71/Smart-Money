@@ -7,7 +7,6 @@ import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { ConfirmModal } from "../modals/ConfirmModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
-import { CsvImportModal } from "../modals/CsvImportModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
 import { accountTone } from "../../utils/accountTone";
 import { describeBill, pendingBill, type PendingBill } from "../../services/cardLink";
@@ -65,6 +64,18 @@ function buildLabel(): string {
     return "-";
   }
 }
+
+/*
+  가져오기 창도 **열 때** 받습니다.
+
+  1,900줄이 넘는 네 단계 화면인데, 명세서를 넣지 않는 날에는 한 번도 그려지지
+  않습니다. `isOpen` 만으로 여닫으면 늘 마운트돼 있어 `React.lazy` 가 뜻이 없으므로
+  **열렸을 때만 그립니다** — 그러면 닫을 때 상태가 함께 사라져 §14.7 의 함정도
+  생기지 않습니다.
+*/
+const CsvImportModal = React.lazy(() =>
+  import("../modals/CsvImportModal").then((m) => ({ default: m.CsvImportModal }))
+);
 
 const PRESET_BANKS = [
   { name: "카카오뱅크", color: "#FEE500", textColor: "#000000" },
@@ -1256,11 +1267,15 @@ export const ConnectedAssetsView: React.FC<{
       />
 
       {/* Statement import */}
-      <CsvImportModal
-        isOpen={csvAccountId !== null}
-        defaultAccountId={csvAccountId || undefined}
-        onClose={() => setCsvAccountId(null)}
-      />
+      {csvAccountId !== null && (
+        <React.Suspense fallback={null}>
+          <CsvImportModal
+            isOpen
+            defaultAccountId={csvAccountId || undefined}
+            onClose={() => setCsvAccountId(null)}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 };
