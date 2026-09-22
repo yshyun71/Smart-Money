@@ -214,7 +214,7 @@ export const MIGRATIONS: Migration[] = [
         CREATE TABLE IF NOT EXISTS accounts (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
-          type TEXT NOT NULL, -- 'BANK', 'CREDIT_CARD', 'CHECK_CARD'
+          type TEXT NOT NULL, -- 'BANK' 또는 'CARD' (§4.4)
           institution TEXT NOT NULL,
           identifier TEXT NOT NULL,
           balance_or_billed REAL NOT NULL DEFAULT 0,
@@ -764,7 +764,7 @@ export const SAMPLE_ACCOUNTS = [
   {
     id: "acc-3",
     name: "현대카드 M (신용)",
-    type: "CREDIT_CARD",
+    type: "CARD",
     institution: "현대카드",
     identifier: "4221-****-****-8392",
     balanceOrBilled: 948000,
@@ -773,7 +773,7 @@ export const SAMPLE_ACCOUNTS = [
   {
     id: "acc-4",
     name: "신한카드 Mr.Life (신용)",
-    type: "CREDIT_CARD",
+    type: "CARD",
     institution: "신한카드",
     identifier: "9410-****-****-1029",
     balanceOrBilled: 582000,

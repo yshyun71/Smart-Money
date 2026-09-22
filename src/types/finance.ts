@@ -39,7 +39,18 @@ export type ValueSource = "USER" | "AUTO";
 export interface ConnectedAccount {
   id: string;
   name: string;
-  type: "BANK" | "CREDIT_CARD" | "CHECK_CARD";
+  /**
+   * `"BANK"`(통장) 또는 `"CARD"`(카드).
+   *
+   * 예전 선언은 `"BANK" | "CREDIT_CARD" | "CHECK_CARD"` 였는데 **저장되는 값은
+   * 처음부터 `BANK`·`CARD` 였습니다.** 타입이 거짓을 말하고 있었고, 그래서
+   * `type IN ('CREDIT_CARD','CHECK_CARD')` 로 카드를 찾던 SQL 이 **한 건도 맞히지
+   * 못한 채** 조용히 아무 일도 하지 않았습니다(카드 청구액이 갱신되지 않던 원인).
+   *
+   * `@types/react` 를 설치하자 이 거짓말이 여섯 곳에서 한꺼번에 드러났습니다.
+   * 판별은 `type === "BANK"` / `!== "BANK"` 로 합니다.
+   */
+  type: "BANK" | "CARD";
   institution: string; // e.g. "카카오뱅크", "KB국민", "신한", "현대"
   identifier: string; // e.g. "3333-**-****" or "****-1234"
   balanceOrBilled: number; // For bank: current balance; for card: current billing amount

@@ -387,7 +387,7 @@ function balanceStatements(tx: Transaction, userId: string) {
       {
         sql: `UPDATE accounts SET balance_or_billed = balance_or_billed + ?,
                 balance_as_of = ?, balance_source = 'AUTO'
-              WHERE id = ? AND user_id = ? AND type IN ('CREDIT_CARD', 'CHECK_CARD')`,
+              WHERE id = ? AND user_id = ? AND type != 'BANK'`,
         params: [amount, new Date().toISOString(), tx.accountId, userId],
       },
       {

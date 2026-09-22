@@ -16,11 +16,6 @@ export class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   State
 > {
-  // The project has no React type definitions, so the base class carries none
-  // of its own members through — these say what is inherited.
-  declare props: { children: React.ReactNode };
-  declare setState: (state: Partial<State>) => void;
-
   state: State = { error: null, info: "" };
 
   static getDerivedStateFromError(error: Error): Partial<State> {

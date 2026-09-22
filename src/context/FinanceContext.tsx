@@ -1,11 +1,4 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, useRef } from "react";
 import {
   ConnectedAccount,
   Transaction,
@@ -40,6 +33,8 @@ import {
   databaseFailure,
   getDbStats,
   importDatabaseBytes,
+  watchSaveFailure,
+  type SaveFailure,
 } from "../db/database";
 import * as repo from "../db/repository";
 import { useAuth } from "./AuthContext";
@@ -53,6 +48,7 @@ import {
   settlesFromBank,
 } from "../services/cardLink";
 import { actualRows, spendingRows, sumActuals } from "../services/actuals";
+import { pendingNotifications, showNotifications } from "../services/notify";
 import { basisOf, driftSince, type AnalysisDrift } from "../services/analysisFreshness";
 import {
   BUDGET_EXCLUDED_CATEGORIES,
@@ -60,6 +56,23 @@ import {
   CARD_PAYMENT_CATEGORY,
   FIXED_BUDGET_CATEGORIES,
 } from "../constants/categories";
+
+/**
+ * 가져오기 한 번의 결과.
+ *
+ * 실패했을 때 **저장된 것은 0건**입니다 — 쓰기가 한 트랜잭션이므로 절반만
+ * 남는 상태가 없습니다. 그래서 화면은 "무엇이 실패했는지" 줄을 쏟아낼 필요가
+ * 없고, **몇 건을 시도했고 몇 번 다시 해 봤는지**만 말하면 됩니다.
+ */
+export interface ImportOutcome {
+  ok: boolean;
+  added: number;
+  replaced: number;
+  attempts: number;
+  /** 실패했을 때 시도한 건수. */
+  total?: number;
+  message?: string;
+}
 
 interface MonthlyHistoricalItem {
   month: string;
@@ -135,6 +148,13 @@ interface FinanceContextType {
   installBannerHidden: boolean;
   hideInstallBanner: () => void;
   /**
+   * 기기에 저장하지 못한 상태 (§4.8).
+   *
+   * 메모리에 썼다는 것과 남았다는 것은 다른 사실입니다. 이것이 채워져 있으면
+   * 지금 하는 입력이 **새로 열면 사라집니다** — 화면이 반드시 말해야 합니다.
+   */
+  saveFailure: SaveFailure | null;
+  /**
    * Set when the stored ledger could not be opened. Distinct from "no data":
    * an empty screen and an unreachable one mean opposite things.
    */
@@ -158,7 +178,16 @@ interface FinanceContextType {
   /** Removes a whole selection at once. */
   deleteTransactions: (ids: string[]) => void;
   /** Applies a statement import: new rows inserted, chosen duplicates rewritten. */
-  importTransactions: (inserts: Omit<Transaction, "id">[], updates: Transaction[]) => void;
+  /**
+   * 가져온 내역을 저장합니다 — **전부 아니면 전무**, 실패하면 다시 시도.
+   *
+   * 결과를 던지지 않고 돌려주는 이유: 화면이 "무엇이 얼마나 저장됐는지"를
+   * 말해야 하고, 실패한 줄을 쏟아내는 대신 **현황**을 보여야 합니다(§7.9).
+   */
+  importTransactions: (
+    inserts: Omit<Transaction, "id">[],
+    updates: Transaction[]
+  ) => ImportOutcome;
   addAccount: (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => void;
   deleteAccount: (id: string) => void;
   /** Corrects the name, institution, number or kind of an account. */
@@ -169,6 +198,9 @@ interface FinanceContextType {
       institution: string;
       identifier: string;
       type: ConnectedAccount["type"];
+      /* 카드의 결제 계좌 — repository 는 처음부터 받고 있었는데 이 선언에만 없었습니다 */
+      paymentAccountId?: string;
+      paymentAccountLabel?: string;
     }
   ) => void;
   /** Records a balance together with the moment it is true as of. */
@@ -359,6 +391,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const { currentUserId } = useAuth();
   const [isDbReady, setIsDbReady] = useState(false);
   const [installBannerHidden, setInstallBannerHidden] = useState(false);
+  const [saveFailure, setSaveFailure] = useState<SaveFailure | null>(null);
+
+  /* 저장 실패는 DB 계층이 알려 줍니다 — 화면은 구독만 합니다 */
+  useEffect(() => watchSaveFailure(setSaveFailure), []);
   const [dbError, setDbError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -845,6 +881,38 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
     return alerts;
   }, [budgetStatusList, budgetConfig.enablePushAlerts, dismissedAlertIds, selectedMonth]);
+
+  /*
+    한도를 넘긴 순간 **기기 알림으로도** 한 번 띄웁니다.
+
+    예전에는 설정 이름이 `푸시 알림`인데 `Notification` 을 쓰는 곳은 테스트
+    버튼뿐이었습니다 — 한도를 넘겨도 아무것도 발송되지 않고 앱을 열어야 배너로
+    보였습니다. 이제 앱이 열려 있는 동안에는 실제로 알립니다(앱이 완전히 닫힌
+    뒤에는 서버 없이 보낼 방법이 없습니다 — §1).
+
+    `sentAlertIds` 로 같은 알림을 두 번 띄우지 않습니다. 예산 상태는 렌더마다
+    다시 계산되므로 걸러내지 않으면 화면을 만질 때마다 쏟아집니다.
+  */
+  const sentAlertIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!budgetConfig.enablePushAlerts) return;
+
+    const fresh = pendingNotifications(
+      budgetAlerts.map((alert) => ({
+        id: alert.id,
+        title:
+          alert.type === "EXCEEDED"
+            ? `${alert.category} 예산 초과`
+            : `${alert.category} 예산 ${Math.round(alert.percentage)}% 소진`,
+        body: alert.message,
+      })),
+      sentAlertIds.current
+    );
+    if (fresh.length === 0) return;
+
+    for (const id of showNotifications(fresh)) sentAlertIds.current.add(id);
+  }, [budgetAlerts, budgetConfig.enablePushAlerts]);
 
   const persistBudget = (next: MonthlyBudgetConfig) => {
     try {
@@ -1373,34 +1441,66 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  /*
+    가져오기 저장.
+
+    쓰기는 한 트랜잭션이라 **실패하면 아무것도 남지 않습니다**(§4.8). 그래서
+    같은 입력으로 다시 시도해도 절반이 중복으로 들어가는 일이 없습니다 —
+    재시도가 안전한 것은 원자성 덕입니다. 순간적인 실패는 세 번 안에 대개
+    넘어가고, 계속 실패하면 **현황을 돌려줘** 화면이 말하게 합니다.
+  */
+  const IMPORT_ATTEMPTS = 3;
+
   const importTransactions = (
     inserts: Omit<Transaction, "id">[],
     updates: Transaction[]
-  ) => {
+  ): ImportOutcome => {
     const withIds: Transaction[] = inserts.map((tx, idx) => ({
       ...withRule(tx),
       id: `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
     }));
     const rewritten = updates.map(withRule);
-    try {
-      repo.applyImport(withIds, rewritten);
-      setTransactions((prev) => {
-        const replaced = prev.map(
-          (t) => rewritten.find((u) => u.id === t.id) ?? t
-        );
-        const merged = [...withIds, ...replaced].sort((a, b) =>
-          `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)
-        );
-        return reconcileCardBills(
-          merged,
-          Array.from(new Set([...withIds, ...rewritten].map((tx) => tx.accountId)))
-        );
-      });
-      syncStats();
-    } catch (error) {
-      console.error("가져오기를 저장하지 못했습니다:", error);
-      throw error;
+    const total = withIds.length + rewritten.length;
+
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= IMPORT_ATTEMPTS; attempt++) {
+      try {
+        repo.applyImport(withIds, rewritten);
+        setTransactions((prev) => {
+          const replaced = prev.map((t) => rewritten.find((u) => u.id === t.id) ?? t);
+          const merged = [...withIds, ...replaced].sort((a, b) =>
+            `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)
+          );
+          return reconcileCardBills(
+            merged,
+            Array.from(new Set([...withIds, ...rewritten].map((tx) => tx.accountId)))
+          );
+        });
+        syncStats();
+        return {
+          ok: true,
+          added: withIds.length,
+          replaced: rewritten.length,
+          attempts: attempt,
+        };
+      } catch (error) {
+        lastError = error;
+        console.error(`가져오기를 저장하지 못했습니다 (${attempt}/${IMPORT_ATTEMPTS}):`, error);
+      }
     }
+
+    return {
+      ok: false,
+      added: 0,
+      replaced: 0,
+      attempts: IMPORT_ATTEMPTS,
+      total,
+      message:
+        lastError instanceof Error
+          ? lastError.message
+          : "기기 내 데이터베이스에 저장하지 못했습니다.",
+    };
   };
 
   const addAccount = (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => {
@@ -1770,6 +1870,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         isDbReady,
         installBannerHidden,
         hideInstallBanner: () => setInstallBannerHidden(true),
+        saveFailure,
         dbError,
         dbStats,
         refreshDbData,
