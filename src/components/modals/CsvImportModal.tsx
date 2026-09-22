@@ -766,8 +766,12 @@ export const CsvImportModal: React.FC<{
               )}
             </div>
 
+            {/*
+              대기줄을 걷는 중에는 파일을 새로 고르는 자리를 감춥니다 — 여기서
+              고른 파일은 대기줄 바깥의 것이라 어느 계좌로 갈지 정해지지 않습니다.
+            */}
             <label
-              className={`block p-6 rounded-2xl border-2 border-dashed text-center transition ${
+              className={`${queueAt >= 0 ? "hidden" : "block"} p-6 rounded-2xl border-2 border-dashed text-center transition ${
                 accounts.length === 0
                   ? "border-slate-200 opacity-50"
                   : "border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/40 cursor-pointer"
