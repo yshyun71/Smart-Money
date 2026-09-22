@@ -21,6 +21,12 @@ DB Backup/
 *.sqlite
 *.smbk
 
+# 점검·평가 보고서는 저장소의 일이 아닙니다. 이름이 아니라 모양으로 거릅니다
+# — 다음 보고서는 다른 이름일 것이고, 백업 규칙이 그렇게 만들어졌습니다.
+*.docx
+*.pptx
+*.xlsx
+
 # PWA dev service worker output
 dev-dist/
 
