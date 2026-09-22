@@ -12,6 +12,12 @@ import { BudgetPolicyModal } from "../modals/BudgetPolicyModal";
 import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { CategorySpendingModal } from "../modals/CategorySpendingModal";
 import { monthPeriod } from "../../services/trend";
+import {
+  askNotifyPermission,
+  notifyPermission,
+  showNotifications,
+  type NotifyPermission,
+} from "../../services/notify";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { remainingSpare, spareOf } from "../../services/budgetPolicy";
 import {
@@ -27,7 +33,6 @@ import {
   Plus,
   Minus,
   RefreshCw,
-  HelpCircle,
   TrendingDown,
   ChevronRight,
   X,
@@ -48,7 +53,6 @@ export const BudgetManagementView: React.FC<{
     totalIncome,
     fixedExpenseTotal,
     savingsActualTotal,
-    disposableIncome,
     totalBudgeted,
     selectedMonth,
     budgetPolicy,
@@ -276,18 +280,35 @@ export const BudgetManagementView: React.FC<{
     setCategoryBudget(category, nextVal);
   };
 
-  // Send a test browser notification if supported
+  /*
+    알림 권한을 켜고, 되는지 한 번 보여 줍니다.
+
+    권한은 **사용자가 직접 누른 순간에만** 묻습니다 — 아무 때나 뜨는 창은 대개
+    거절되고, 한 번 거절되면 브라우저가 다시 묻지 않습니다.
+  */
+  const [permission, setPermission] = useState<NotifyPermission>(() => notifyPermission());
+
   const handleTestNotification = async () => {
-    if ("Notification" in window) {
-      const permission = await Notification.requestPermission();
-      if (permission === "granted") {
-        new Notification("스마트 머니 예산 알림", {
-          body: "[식비] 예산의 85%를 소진했습니다! 오늘 저녁엔 포장 또는 냉파를 추천합니다.",
-          icon: "/pwa-192x192.png",
-        });
-      }
+    const granted = await askNotifyPermission();
+    setPermission(granted);
+
+    if (granted !== "granted") {
+      triggerToast(
+        granted === "unsupported"
+          ? "이 브라우저는 알림을 지원하지 않습니다. 앱 안의 경고는 그대로 동작합니다."
+          : "알림이 차단되어 있습니다. 브라우저 설정에서 이 사이트의 알림을 허용해주세요."
+      );
+      return;
     }
-    triggerToast("🔔 테스트 예산 경고 푸시 알림이 발송되었습니다.");
+
+    showNotifications([
+      {
+        id: `test-${Date.now()}`,
+        title: "스마트 머니 예산 알림",
+        body: "한도를 넘기면 이렇게 알려 드립니다.",
+      },
+    ]);
+    triggerToast("알림을 켰습니다. 한도를 넘기면 이렇게 알려 드립니다.");
   };
 
   /*
@@ -1165,17 +1186,43 @@ export const BudgetManagementView: React.FC<{
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
-            <span className="text-[11px] text-slate-500">
-              안드로이드 모바일 푸시 및 브라우저 알림 테스트
-            </span>
-            <button
-              onClick={handleTestNotification}
-              className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-800 text-[11px] font-bold hover:bg-slate-100 transition flex items-center gap-1"
-            >
-              <Bell className="w-3 h-3 text-emerald-600" />
-              <span>테스트 알림 발송</span>
-            </button>
+          {/*
+            **할 수 있는 것만 적습니다.**
+
+            예전 문구는 `안드로이드 모바일 푸시`였는데, 서버가 없으므로 앱이 닫힌
+            뒤에는 보낼 방법이 없습니다(웹푸시는 발송 서버와 VAPID 키를 요구하고,
+            로컬 예약 API 는 브라우저에 없습니다 — §1). 앱이 열려 있는 동안에는
+            실제로 띄웁니다(§11.8).
+          */}
+          <div className="pt-2 border-t border-slate-200/60 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="text-[11px] font-bold text-slate-700 block">
+                  기기 알림
+                  {permission === "granted" && (
+                    <span className="ml-1 text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-full">
+                      켜짐
+                    </span>
+                  )}
+                  {permission === "denied" && (
+                    <span className="ml-1 text-[9px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded-full">
+                      차단됨
+                    </span>
+                  )}
+                </span>
+                <span className="text-[10px] text-slate-400 leading-relaxed">
+                  한도를 넘기면 알림을 띄웁니다. <strong>앱이 열려 있는 동안</strong>만
+                  동작합니다 — 앱을 닫은 뒤에는 오지 않습니다.
+                </span>
+              </div>
+              <button
+                onClick={handleTestNotification}
+                className="shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-800 text-[11px] font-bold hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+              >
+                <Bell className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span>{permission === "granted" ? "알림 보내 보기" : "알림 켜기"}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
