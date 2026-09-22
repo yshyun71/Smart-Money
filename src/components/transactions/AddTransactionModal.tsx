@@ -295,7 +295,16 @@ export const AddTransactionModal: React.FC<{
       amount: Number.isNaN(numAmount) ? Number.NaN : numAmount,
     });
     if (problems.length > 0) {
-      setFormError(describeProblems(problems));
+      /*
+        계좌가 하나도 없으면 고를 상자 자체가 비어 있습니다 — 그때 `어느 카드·계좌인지
+        정해야 합니다` 라고만 하면 이 화면에서 할 수 있는 일이 없습니다. 무엇을 먼저
+        해야 하는지 말합니다(§12.11 의 첫 걸음과 같은 안내).
+      */
+      setFormError(
+        accounts.length === 0
+          ? "먼저 카드·계좌를 등록해주세요. 카드·계좌 탭에서 등록할 수 있습니다."
+          : describeProblems(problems)
+      );
       return;
     }
 
