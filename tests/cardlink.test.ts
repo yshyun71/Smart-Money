@@ -41,7 +41,7 @@ const kb: any = {
 };
 
 let serial = 0;
-const use = (cardId: string, month: string, amount: number, date?: string): any => ({
+const spend = (cardId: string, month: string, amount: number, date?: string): any => ({
   id: `u${serial++}`,
   accountId: cardId,
   date: date || `${month}-05`,
@@ -67,7 +67,7 @@ const pay = (amount: number, date: string, extra: any = {}): any => ({
 section("어느 쪽이 들어와도 연결된다");
 // ---------------------------------------------------------------------------
 {
-  const june = use("kb", "2026-06", 281_894);
+  const june = spend("kb", "2026-06", 281_894);
   const payment = pay(281_894, "2026-06-25");
 
   // 카드 명세서가 나중에 들어온 경우 — 카드 쪽이 바뀌었다
@@ -99,7 +99,7 @@ section("금액이 정확히 같을 때만");
 // ---------------------------------------------------------------------------
 {
   // 수수료 46원이 빠졌던 7월이 이 모양이었다
-  const july = use("kb", "2026-07", 281_848);
+  const july = spend("kb", "2026-07", 281_848);
   const payment = pay(281_894, "2026-07-25");
 
   const plan = planCardLinks([bank, kb], [july, payment], ["kb"], CARD_PAYMENT);
@@ -107,7 +107,7 @@ section("금액이 정확히 같을 때만");
 
   const exact = planCardLinks(
     [bank, kb],
-    [use("kb", "2026-07", 281_894), payment],
+    [spend("kb", "2026-07", 281_894), payment],
     ["kb"],
     CARD_PAYMENT
   );
@@ -128,7 +128,7 @@ section("명세서가 사라지면 연결도 풀린다");
   check("연결과 결제월을 함께", !plan[0]?.linkedAccountId && !plan[0]?.billingMonth, plan[0]);
 
   // 다른 달은 그대로 둔다
-  const may = use("kb", "2026-05", 100_000);
+  const may = spend("kb", "2026-05", 100_000);
   const mayPaid = pay(100_000, "2026-05-25", {
     linkedAccountId: "kb",
     billingMonth: "2026-05",
@@ -154,8 +154,8 @@ section("한 출금은 한 명세서에만");
 // ---------------------------------------------------------------------------
 {
   const entries = [
-    use("kb", "2026-06", 50_000),
-    use("kb", "2026-07", 50_000),
+    spend("kb", "2026-06", 50_000),
+    spend("kb", "2026-07", 50_000),
     pay(50_000, "2026-06-25"),
     pay(50_000, "2026-07-25"),
   ];
@@ -179,8 +179,8 @@ section("다른 카드가 가져간 출금은 빼앗지 않는다");
   };
 
   const entries = [
-    use("kb", "2026-06", 70_000),
-    use("kb2", "2026-06", 70_000),
+    spend("kb", "2026-06", 70_000),
+    spend("kb2", "2026-06", 70_000),
     pay(70_000, "2026-06-25", { linkedAccountId: "kb2", billingMonth: "2026-06" }),
   ];
 
@@ -193,7 +193,7 @@ section("결제 계좌를 등록하지 않은 카드");
 // ---------------------------------------------------------------------------
 {
   const loose: any = { id: "kb3", name: "KB국민카드", institution: "KB국민카드", type: "CARD" };
-  const june = use("kb3", "2026-06", 281_894);
+  const june = spend("kb3", "2026-06", 281_894);
   const payment = { ...pay(281_894, "2026-06-25"), accountId: "bank" };
 
   const plan = planCardLinks([bank, loose], [june, payment], ["bank"], CARD_PAYMENT);
@@ -221,7 +221,7 @@ section("합계와 달 고르기");
 // ---------------------------------------------------------------------------
 {
   const totals = billingTotalsFor(
-    [use("kb", "2026-06", 10_000), use("kb", "2026-06", 5_000), use("kb", "2026-07", 3_000)],
+    [spend("kb", "2026-06", 10_000), spend("kb", "2026-06", 5_000), spend("kb", "2026-07", 3_000)],
     "kb"
   );
   check("결제월별 합계", totals.get("2026-06") === 15_000 && totals.get("2026-07") === 3_000, [
@@ -231,8 +231,8 @@ section("합계와 달 고르기");
   // 환불은 그 달에서 빠진다
   const refunded = billingTotalsFor(
     [
-      use("kb", "2026-06", 10_000),
-      { ...use("kb", "2026-06", 4_000), type: "INCOME" },
+      spend("kb", "2026-06", 10_000),
+      { ...spend("kb", "2026-06", 4_000), type: "INCOME" },
     ],
     "kb"
   );
@@ -272,7 +272,7 @@ section("카드 내역은 명세서와 연결되지 않는다");
     category: CARD_PAYMENT,
     merchant: "차감-[청구할인] 청호나이스 KB국민카드 장기할부",
   };
-  const usage = use("kb", "2026-09", 10_000);
+  const usage = spend("kb", "2026-09", 10_000);
 
   const plan = planCardLinks([bank, kb], [usage, discount], ["kb"], CARD_PAYMENT);
   check("카드 안의 카드대금 건은 연결 대상이 아님", plan.length === 0, plan);
@@ -282,7 +282,7 @@ section("카드 내역은 명세서와 연결되지 않는다");
   const own = { ...discount, accountId: "kb9" };
   const loosePlan = planCardLinks(
     [bank, loose],
-    [use("kb9", "2026-09", 10_000), own],
+    [spend("kb9", "2026-09", 10_000), own],
     ["kb9"],
     CARD_PAYMENT
   );
@@ -290,7 +290,7 @@ section("카드 내역은 명세서와 연결되지 않는다");
 
   // 이미 잘못 걸린 자기 연결은 청구예정액 계산에서 무시한다
   const selfLinked = { ...discount, linkedAccountId: "kb" };
-  const bill = pendingBill("kb", [use("kb", "2026-09", 50_000), selfLinked]);
+  const bill = pendingBill("kb", [spend("kb", "2026-09", 50_000), selfLinked]);
   check("자기 연결은 정산으로 치지 않음", bill.basis !== "AFTER_PAYMENT", bill);
 }
 
@@ -300,10 +300,10 @@ section("차감은 그 달 청구액에서 빠진다");
 {
   const totals = billingTotalsFor(
     [
-      use("kb", "2026-09", 53_888),
-      use("kb", "2026-09", 15_300),
-      { ...use("kb", "2026-09", 10_000), type: "INCOME" },
-      { ...use("kb", "2026-09", 7_000), type: "INCOME" },
+      spend("kb", "2026-09", 53_888),
+      spend("kb", "2026-09", 15_300),
+      { ...spend("kb", "2026-09", 10_000), type: "INCOME" },
+      { ...spend("kb", "2026-09", 7_000), type: "INCOME" },
     ],
     "kb"
   );
@@ -319,7 +319,7 @@ section("낸 대금은 낸 것으로 보입니다");
     쓰지 않은 카드처럼 읽히지, 정산된 카드로 읽히지 않습니다 — 얼마를 어느 달에
     냈는지가 더 쓸모 있는 사실입니다.
   */
-  const august = [use("kb", "2026-08", 120_000), use("kb", "2026-08", 80_000)];
+  const august = [spend("kb", "2026-08", 120_000), spend("kb", "2026-08", 80_000)];
   const paid = pay(200_000, "2026-09-25", { linkedAccountId: "kb", billingMonth: "2026-08" });
 
   const settled = pendingBill("kb", [...august, paid]);
@@ -328,7 +328,7 @@ section("낸 대금은 낸 것으로 보입니다");
   check("낸 금액도 알려 줌", settled.settledAmount === 200_000, settled);
 
   // 낸 뒤에 또 썼다면 그 금액은 아직 낼 돈입니다
-  const after = pendingBill("kb", [...august, paid, use("kb", "2026-09", 59_290)]);
+  const after = pendingBill("kb", [...august, paid, spend("kb", "2026-09", 59_290)]);
   check("이후 이용분은 청구예정", after.amount === 59_290, after);
   check("그래도 정산 사실은 유지", after.settledMonth === "2026-08", after);
 
@@ -342,16 +342,16 @@ section("낸 대금은 낸 것으로 보입니다");
   const behind = pendingBill("kb", [
     ...august,
     paid,
-    use("kb", "2026-09", 50_000),
-    use("kb", "2026-10", 70_000),
+    spend("kb", "2026-09", 50_000),
+    spend("kb", "2026-10", 70_000),
   ]);
   check("밀린 경우도 정산 달을 알려 줌", behind.settledMonth === "2026-08", behind);
   check("보여 주는 금액은 최신 명세서", behind.basis === "LATEST_STATEMENT", behind);
 
   // 환불은 그 달 합계에서 빠지므로, 정산 금액도 순액입니다
   const refunded = pendingBill("kb", [
-    use("kb", "2026-08", 120_000),
-    { ...use("kb", "2026-08", 20_000), type: "INCOME" },
+    spend("kb", "2026-08", 120_000),
+    { ...spend("kb", "2026-08", 20_000), type: "INCOME" },
     pay(100_000, "2026-09-25", { linkedAccountId: "kb", billingMonth: "2026-08" }),
   ]);
   check("환불을 뺀 금액으로 정산", refunded.settledAmount === 100_000, refunded);

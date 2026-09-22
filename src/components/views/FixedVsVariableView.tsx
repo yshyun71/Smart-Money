@@ -7,9 +7,6 @@ import {
   Calendar,
   AlertTriangle,
   Sparkles,
-  CheckCircle2,
-  TrendingDown,
-  ChevronRight,
 } from "lucide-react";
 
 export const FixedVsVariableView: React.FC<{
@@ -24,7 +21,6 @@ export const FixedVsVariableView: React.FC<{
     monthlySpending: transactions,
     fixedExpenseTotal,
     variableExpenseTotal,
-    totalExpense,
     totalIncome,
     fixedRatio,
     variableRatio,

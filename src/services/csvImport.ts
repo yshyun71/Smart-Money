@@ -953,7 +953,7 @@ export function normaliseTime(raw: string): string {
 
 /** Returns the absolute value; the sign is reported separately. */
 export function normaliseAmount(raw: string): { value: number; negative: boolean } {
-  const text = (raw || "").replace(/[^0-9.\-]/g, "");
+  const text = (raw || "").replace(/[^0-9.-]/g, "");
   if (!text) return { value: 0, negative: false };
   const parsed = Number(text);
   if (Number.isNaN(parsed)) return { value: 0, negative: false };

@@ -23,16 +23,12 @@ import {
   Building,
   RefreshCw,
   Plus,
-  Receipt,
   RotateCcw,
   CheckCircle,
-  ExternalLink,
   ShieldCheck,
   Trash2,
   X,
-  Sparkles,
   Smartphone,
-  Check,
   Database,
   Download,
   Upload,
@@ -138,7 +134,6 @@ export const ConnectedAssetsView: React.FC<{
   // A balance is only meaningful together with the moment it is true as of
   const [balanceDate, setBalanceDate] = useState(() => asOfParts(new Date().toISOString()).date);
   const [balanceHour, setBalanceHour] = useState(() => asOfParts(new Date().toISOString()).hour);
-  const [syncMode, setSyncMode] = useState<"SMS" | "OPEN_BANKING">("OPEN_BANKING");
   /** For a card: the account its bill is taken from. */
   const [payMode, setPayMode] = useState<"REGISTERED" | "MANUAL">("REGISTERED");
   const [payAccountId, setPayAccountId] = useState("");

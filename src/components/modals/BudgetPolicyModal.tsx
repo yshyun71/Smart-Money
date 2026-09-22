@@ -80,7 +80,7 @@ export const BudgetPolicyModal: React.FC<{
     setMode(budgetPolicy.mode);
     setRules(asText(budgetPolicy));
     setNotice(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isOpen, budgetPolicy]);
 
   useEffect(() => {

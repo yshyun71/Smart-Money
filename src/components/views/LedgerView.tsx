@@ -3,7 +3,6 @@ import { useFinance } from "../../context/FinanceContext";
 import { TransactionItem } from "../transactions/TransactionItem";
 import {
   Search,
-  Filter,
   Plus,
   Pin,
   ShoppingBag,

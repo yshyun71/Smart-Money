@@ -3,9 +3,7 @@ import {
   Home,
   BarChart3,
   Sliders,
-  PieChart,
   Sparkles,
-  ReceiptText,
   CreditCard,
 } from "lucide-react";
 import { useFinance } from "../../context/FinanceContext";

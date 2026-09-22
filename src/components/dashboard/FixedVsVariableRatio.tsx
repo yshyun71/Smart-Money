@@ -1,6 +1,6 @@
 import React from "react";
 import { useFinance } from "../../context/FinanceContext";
-import { Pin, ShoppingBag, Info, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Pin, ShoppingBag, AlertCircle, CheckCircle2 } from "lucide-react";
 
 export const FixedVsVariableRatio: React.FC<{
   onTabSelect?: (tab: "fixed_variable" | "ai_coach") => void;
@@ -8,7 +8,6 @@ export const FixedVsVariableRatio: React.FC<{
   const {
     fixedExpenseTotal,
     variableExpenseTotal,
-    totalExpense,
     fixedRatio,
     variableRatio,
     aiAnalysis,

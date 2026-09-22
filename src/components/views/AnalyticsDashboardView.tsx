@@ -10,7 +10,6 @@ import {
   PieChart as PieIcon,
   BarChart3,
   TrendingUp,
-  TrendingDown,
   Calendar,
   CalendarRange,
   ChevronLeft,
@@ -18,9 +17,7 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowUpRight,
-  ArrowDownRight,
   Sparkles,
-  Info,
   SlidersHorizontal,
 } from "lucide-react";
 import {
@@ -70,11 +67,8 @@ export const AnalyticsDashboardView: React.FC<{
     allTransactions,
     totalIncome,
     totalExpense,
-    fixedExpenseTotal,
-    variableExpenseTotal,
     netSavings,
     fixedRatio,
-    variableRatio,
     categoryExpenses,
     monthlyHistoricalData,
     yearlyHistoricalData,
@@ -263,12 +257,6 @@ export const AnalyticsDashboardView: React.FC<{
 
   // Active pie data based on mode
   const activePieData = timeframeMode === "MONTHLY" ? monthlyPieData : yearlyPieData;
-
-  // Compare with previous month (August) for insight badge
-  const prevMonthExpense = 2470000;
-  const currentMonthProjected = totalExpense;
-  const monthDiff = currentMonthProjected - prevMonthExpense;
-  const monthDiffPercent = Math.round((monthDiff / prevMonthExpense) * 100);
 
   return (
     <div className="space-y-4 pt-1">

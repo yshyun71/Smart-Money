@@ -6,7 +6,6 @@ import {
   LogOut,
   X,
   UserRound,
-  Phone,
   CalendarClock,
   KeyRound,
   Pencil,

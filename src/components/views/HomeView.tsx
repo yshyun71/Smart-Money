@@ -18,12 +18,8 @@ import {
   LayoutGrid,
   ChevronDown,
   ArrowRight,
-  TrendingDown,
-  ShieldAlert,
   BarChart3,
   Sliders,
-  AlertTriangle,
-  AlertCircle,
   PiggyBank,
 } from "lucide-react";
 import { accountTone } from "../../utils/accountTone";
@@ -48,9 +44,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     accounts,
     budgetConfig,
     budgetAlerts,
-    budgetStatusList,
     totalVariableSpent,
-    totalBudgeted,
     selectedMonth,
     allTransactions,
   } = useFinance();

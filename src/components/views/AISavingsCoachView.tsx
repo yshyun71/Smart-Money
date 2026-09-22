@@ -13,8 +13,6 @@ import {
   Send,
   MessageSquare,
   Flame,
-  ArrowUpRight,
-  ShieldCheck,
   Zap,
 } from "lucide-react";
 
