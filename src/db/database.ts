@@ -172,7 +172,7 @@ async function initDatabase(): Promise<Database> {
     So a read that fails stops here. The app says so instead of pretending to
     be empty, and nothing is written until someone decides what to do.
   */
-  let stored: Uint8Array | null = null;
+  let stored: Uint8Array | null;
   try {
     stored = await idbRead();
   } catch (error) {
@@ -263,15 +263,82 @@ export function databaseFailure(): DatabaseUnavailable | null {
 }
 
 /** Writes the current database bytes to IndexedDB. */
+/**
+ * 저장이 실패한 상태.
+ *
+ * 예전에는 `console.error` 한 줄로 끝났습니다. 화면은 "등록 완료"를 보여 주는데
+ * 실제로는 IndexedDB 에 한 바이트도 쓰이지 않은 채 — 용량 초과, 사생활 보호
+ * 모드, 디스크 꽉 참 — 다시 열면 그 작업이 전부 사라집니다. **메모리에 썼다는
+ * 것과 남았다는 것은 다른 사실입니다.**
+ */
+export interface SaveFailure {
+  attempts: number;
+  message: string;
+  at: string;
+}
+
+let saveFailure: SaveFailure | null = null;
+const saveWatchers = new Set<(failure: SaveFailure | null) => void>();
+
+/** 저장 상태가 바뀔 때 알려 줍니다 — 화면이 띠를 띄울 수 있게. */
+export function watchSaveFailure(listener: (failure: SaveFailure | null) => void): () => void {
+  saveWatchers.add(listener);
+  listener(saveFailure);
+  return () => saveWatchers.delete(listener);
+}
+
+export function currentSaveFailure(): SaveFailure | null {
+  return saveFailure;
+}
+
+function announceSave(failure: SaveFailure | null): void {
+  saveFailure = failure;
+  for (const listener of saveWatchers) {
+    try {
+      listener(failure);
+    } catch {
+      /* 한 구독자가 실패해도 나머지에게는 알려야 합니다 */
+    }
+  }
+}
+
+const SAVE_ATTEMPTS = 3;
+
+/**
+ * IndexedDB 에 지금 상태를 씁니다 — **실패하면 다시 시도하고, 그래도 안 되면
+ * 말합니다.**
+ *
+ * 일시적인 실패(백그라운드 전환 중의 쓰기 충돌 등)는 재시도로 넘어갑니다.
+ * 계속 실패하는 것은 용량·권한 문제이므로 사용자가 알아야 합니다 — 그 상태에서
+ * 계속 입력하면 전부 잃습니다.
+ */
 export async function persist(): Promise<void> {
   // Never write over a ledger that could not be read — it is still the only copy
   if (!db || openFailure) return;
-  try {
-    await idbWrite(db.export());
-    lastSavedAt = new Date().toISOString();
-  } catch (error) {
-    console.error("[DB] 저장에 실패했습니다:", error);
+
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= SAVE_ATTEMPTS; attempt++) {
+    try {
+      await idbWrite(db.export());
+      lastSavedAt = new Date().toISOString();
+      if (saveFailure) announceSave(null); // 되살아났으면 띠를 내립니다
+      return;
+    } catch (error) {
+      lastError = error;
+      console.error(`[DB] 저장에 실패했습니다 (${attempt}/${SAVE_ATTEMPTS}):`, error);
+      // 마지막 시도가 아니면 잠깐 쉬고 다시 — 순간적인 충돌은 이것으로 넘어갑니다
+      if (attempt < SAVE_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+      }
+    }
   }
+
+  announceSave({
+    attempts: SAVE_ATTEMPTS,
+    message:
+      lastError instanceof Error ? lastError.message : "기기에 저장하지 못했습니다.",
+    at: new Date().toISOString(),
+  });
 }
 
 /**
@@ -342,12 +409,46 @@ export function run(sql: string, params: any[] = []): void {
   scheduleSave();
 }
 
-/** Runs several writes under a single save. */
+/**
+ * 여러 쓰기를 **한 트랜잭션**으로, 한 번의 저장으로.
+ *
+ * 예전에는 트랜잭션 없이 순차 실행했습니다. 명세서 300건을 넣다가 중간에
+ * 실패하면 **절반만 적용된 채** 남았고, 다시 시도하면 앞쪽이 중복으로
+ * 들어갔습니다. `BEGIN`/`COMMIT` 으로 감싸면 "전부 아니면 전무"가 되어
+ * **재시도가 안전해집니다** — 가져오기 재시도(§7.9)가 이것에 기대고 있습니다.
+ *
+ * 깊이를 세는 이유: 바깥 배치가 도는 중에 다시 배치가 시작되면 `BEGIN` 이 두 번
+ * 불려 오류가 납니다. 가장 바깥만 트랜잭션을 엽니다.
+ */
+let batchDepth = 0;
+
 export function runBatch(statements: { sql: string; params?: any[] }[]): void {
   const target = requireDb();
-  for (const statement of statements) {
-    target.run(statement.sql, statement.params ?? []);
+  const outermost = batchDepth === 0;
+
+  if (outermost) target.run("BEGIN");
+  batchDepth += 1;
+
+  try {
+    for (const statement of statements) {
+      target.run(statement.sql, statement.params ?? []);
+    }
+    batchDepth -= 1;
+    if (outermost) target.run("COMMIT");
+  } catch (error) {
+    batchDepth -= 1;
+    if (outermost) {
+      try {
+        target.run("ROLLBACK");
+      } catch (rollbackError) {
+        // 되돌리기까지 실패하면 메모리 상태를 믿을 수 없습니다 — 저장하지 않습니다
+        console.error("[DB] 되돌리지 못했습니다:", rollbackError);
+      }
+    }
+    /* 되돌렸으므로 저장할 것이 없습니다 — 부르는 쪽이 다시 시도할 수 있습니다 */
+    throw error;
   }
+
   scheduleSave();
 }
 

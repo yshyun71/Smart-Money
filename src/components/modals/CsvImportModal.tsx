@@ -101,6 +101,12 @@ export const CsvImportModal: React.FC<{
   /** The month a card statement bills, when its lines do not each say. */
   const [billingMonth, setBillingMonth] = useState("");
   const [showBillingPicker, setShowBillingPicker] = useState(false);
+  /** 저장이 계속 실패했을 때의 현황. 줄 목록이 아니라 숫자와 까닭입니다. */
+  const [saveFailure, setSaveFailure] = useState<{
+    attempts: number;
+    total?: number;
+    message?: string;
+  } | null>(null);
   /** Once the user sets it themselves, nothing else touches it. */
   const [billingTouched, setBillingTouched] = useState(false);
   /** Where the column mapping came from, which the user is told. */
@@ -177,7 +183,7 @@ export const CsvImportModal: React.FC<{
         return { ...draft, category: ruled || draft.category, billingMonth: billed };
       }),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [table, mapping, accountId, categoryForMerchant, billingMonth]);
 
   /**
@@ -523,9 +529,21 @@ export const CsvImportModal: React.FC<{
         };
       });
 
-    try {
-      importTransactions(inserts, overwrites);
+    /*
+      저장은 **전부 아니면 전무**이고, 실패하면 세 번까지 다시 시도합니다(§4.8).
+      그래도 안 되면 **실패한 줄을 쏟아내지 않고 현황을 말합니다** — 사용자가
+      할 수 있는 일은 다시 시도하거나 여유를 만드는 것뿐이고, 300줄의 목록은
+      그 결정에 도움이 되지 않습니다.
+    */
+    const outcome = importTransactions(inserts, overwrites);
 
+    if (!outcome.ok) {
+      setSaveFailure(outcome);
+      return;
+    }
+    setSaveFailure(null);
+
+    try {
       // Worked out from the entries, so the figure is tagged as such
       const moved =
         adjustBalance &&
@@ -548,7 +566,9 @@ export const CsvImportModal: React.FC<{
       });
       setStep("DONE");
     } catch {
-      setFileError("가져온 내역을 저장하지 못했습니다.");
+      /* 내역은 저장됐고 잔액 조정만 실패한 경우 — 그 사실만 알립니다 */
+      setStep("DONE");
+      setFileError("내역은 저장했지만 잔액을 조정하지 못했습니다.");
     }
   };
 
@@ -945,6 +965,41 @@ export const CsvImportModal: React.FC<{
         {/* ---------------- REVIEW ---------------- */}
         {step === "REVIEW" && (
           <>
+            {/*
+              저장이 계속 실패했을 때의 **현황**.
+
+              실패한 줄을 나열하지 않습니다 — 저장은 전부 아니면 전무이므로
+              "어느 줄이 실패했는가"라는 질문 자체가 성립하지 않고(0건 저장),
+              사용자가 할 수 있는 일은 다시 시도하거나 기기 여유를 만드는
+              것뿐입니다. 300줄의 목록은 그 결정에 도움이 되지 않습니다.
+            */}
+            {saveFailure && (
+              <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-rose-900">
+                      저장하지 못했습니다 — <strong>0건 반영</strong>
+                    </div>
+                    <p className="text-[11px] text-rose-800 mt-0.5 leading-relaxed">
+                      {saveFailure.total ?? 0}건을 {saveFailure.attempts}번 시도했지만
+                      기기에 쓰지 못했습니다. <strong>절반만 저장된 상태는 없습니다</strong> —
+                      다시 눌러도 중복되지 않습니다.
+                    </p>
+                    {saveFailure.message && (
+                      <p className="text-[10px] text-rose-700/80 mt-1 break-words">
+                        까닭: {saveFailure.message}
+                      </p>
+                    )}
+                    <p className="text-[10px] text-rose-700/80 mt-1 leading-relaxed">
+                      계속 실패하면 기기 저장 공간을 확보하거나, 사생활 보호 모드가
+                      아닌 창에서 다시 열어보세요.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2">
               <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/70 text-center">
                 <div className="text-[10px] text-emerald-700">새로 추가</div>
