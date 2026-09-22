@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { AiAdapter, CallContext, JsonRequest, TextRequest } from "./providers";
 import { parseJsonLoosely } from "./providers";
 
@@ -12,8 +12,17 @@ import { parseJsonLoosely } from "./providers";
  */
 const MAX_TOKENS = 16000;
 
-function client(apiKey: string): Anthropic {
-  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+/*
+  SDK 는 **부를 때** 내려받습니다.
+
+  정적 import 였을 때는 이 SDK 가 주 청크에 들어가, **AI 키가 없는 사용자도**
+  전부 내려받았습니다. 타입만 `import type` 으로 남기면 번들에 코드가 들어가지
+  않고, 실제 호출 순간에 별도 청크로 받습니다 — `xlsx` 를 이미 그렇게 다루고
+  있습니다(§7.2).
+*/
+async function client(apiKey: string): Promise<Anthropic> {
+  const { default: Sdk } = await import("@anthropic-ai/sdk");
+  return new Sdk({ apiKey, dangerouslyAllowBrowser: true });
 }
 
 /**
@@ -26,7 +35,7 @@ export const anthropicAdapter: AiAdapter = {
   async generateJson(request: JsonRequest, { apiKey, model }: CallContext) {
     const toolName = request.schemaName;
 
-    const response = await client(apiKey).messages.create({
+    const response = await (await client(apiKey)).messages.create({
       model,
       max_tokens: MAX_TOKENS,
       system: request.system,
@@ -71,7 +80,7 @@ export const anthropicAdapter: AiAdapter = {
   },
 
   async generateText(request: TextRequest, { apiKey, model }: CallContext) {
-    const response = await client(apiKey).messages.create({
+    const response = await (await client(apiKey)).messages.create({
       model,
       max_tokens: MAX_TOKENS,
       system: request.system,

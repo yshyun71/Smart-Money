@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { usePWAInstall, useOnlineStatus } from "../../hooks/usePWAInstall";
 import { useFinance } from "../../context/FinanceContext";
 import {
@@ -26,9 +26,34 @@ export const PWAInstallGuideModal: React.FC<{
   const directAppUrl = typeof window !== "undefined" ? window.location.origin : "";
   const isLocalOrigin = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(directAppUrl);
 
-  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-    directAppUrl
-  )}&bgcolor=ffffff&color=0f172a&margin=2`;
+  /*
+    QR 은 **이 기기에서** 만듭니다.
+
+    예전에는 `api.qrserver.com` 에 주소를 넘겨 이미지를 받아 왔습니다. 두 가지가
+    걸립니다 — **오프라인에서 깨진 이미지가 뜨고**(PWA 인데), 이 앱의 전제인
+    "서버가 없습니다"(§1)와 어긋납니다. 남에게 보낼 필요가 없는 일입니다.
+  */
+  const [qrImageUrl, setQrImageUrl] = useState("");
+
+  useEffect(() => {
+    if (!isOpen || !directAppUrl) return;
+    let alive = true;
+    /* 라이브러리는 이 창을 열 때만 내려받습니다 — 주 청크를 늘리지 않게 */
+    import("qrcode")
+      .then((qr) =>
+        qr.toDataURL(directAppUrl, { width: 180, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } })
+      )
+      .then((url) => {
+        if (alive) setQrImageUrl(url);
+      })
+      .catch((error) => {
+        console.error("QR 을 만들지 못했습니다:", error);
+        /* 만들지 못하면 아래의 주소 복사 버튼이 그 역할을 합니다 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isOpen, directAppUrl]);
 
   const handleCopyLink = async () => {
     try {
@@ -99,11 +124,16 @@ export const PWAInstallGuideModal: React.FC<{
         {/* QR Code & Direct Link */}
         <div className="mt-3 p-4 bg-slate-50 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row items-center gap-4">
           <div className="w-32 h-32 bg-white p-2 rounded-xl border border-slate-200 shadow-2xs shrink-0 flex items-center justify-center">
-            <img
-              src={qrImageUrl}
-              alt="QR Code"
-              className="w-full h-full object-contain"
-            />
+            {qrImageUrl ? (
+              <img src={qrImageUrl} alt="QR Code" className="w-full h-full object-contain" />
+            ) : (
+              /* 만드는 중이거나 실패 — 지어낸 그림을 보여 주지 않습니다 */
+              <span className="text-[10px] text-slate-400 text-center leading-relaxed px-2">
+                QR 준비 중
+                <br />
+                아래 주소 복사를 쓰세요
+              </span>
+            )}
           </div>
 
           <div className="flex-1 space-y-2 text-left w-full">

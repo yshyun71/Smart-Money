@@ -9,7 +9,18 @@ import { LedgerView } from "./components/views/LedgerView";
 import { FixedVsVariableView } from "./components/views/FixedVsVariableView";
 import { AISavingsCoachView } from "./components/views/AISavingsCoachView";
 import { ConnectedAssetsView } from "./components/views/ConnectedAssetsView";
-import { AnalyticsDashboardView } from "./components/views/AnalyticsDashboardView";
+/*
+  차트 화면은 **그 탭을 열 때** 내려받습니다.
+
+  `recharts` 는 이 탭(과 그 안의 기간 추이 패널)에서만 쓰는데 주 청크에 들어가
+  있었습니다. 홈만 보는 사용자도 전부 받던 셈입니다 — `xlsx`·AI SDK 와 같은
+  처리입니다(§13.3).
+*/
+const AnalyticsDashboardView = React.lazy(() =>
+  import("./components/views/AnalyticsDashboardView").then((m) => ({
+    default: m.AnalyticsDashboardView,
+  }))
+);
 import { BudgetManagementView } from "./components/views/BudgetManagementView";
 import { AddTransactionModal } from "./components/transactions/AddTransactionModal";
 import { AccountLedgerModal } from "./components/transactions/AccountLedgerModal";
@@ -94,10 +105,19 @@ const MainContent: React.FC = () => {
         );
       case "analytics":
         return (
-          <AnalyticsDashboardView
-            onNavigateToBudget={() => setActiveTab("budget")}
-            onNavigateToSavings={() => setActiveTab("ai_coach")}
-          />
+          /* 내려받는 동안 자리를 지킵니다 — 빈 화면이 깜빡이지 않게 */
+          <React.Suspense
+            fallback={
+              <div className="py-16 text-center text-xs text-slate-400">
+                차트를 준비하고 있습니다...
+              </div>
+            }
+          >
+            <AnalyticsDashboardView
+              onNavigateToBudget={() => setActiveTab("budget")}
+              onNavigateToSavings={() => setActiveTab("ai_coach")}
+            />
+          </React.Suspense>
         );
       case "budget":
         return (
@@ -264,9 +284,38 @@ const MainContent: React.FC = () => {
           onClose={() => setIsSMSModalOpen(false)}
         />
 
+        {/*
+          기기에 저장하지 못했다면 **가장 먼저** 말해야 합니다 — 메모리에는
+          들어가 화면이 정상으로 보이지만 새로 열면 사라집니다(§4.8).
+        */}
+        <SaveFailureBanner />
+
         {/* Offline notification banner */}
         <OfflineIndicator />
       </div>
+    </div>
+  );
+};
+
+/**
+ * 저장 실패 띠.
+ *
+ * 오프라인 표시와 같은 자리를 쓰되 위에 놓습니다 — 오프라인은 견딜 수 있는
+ * 상태이고, 저장 실패는 **지금 한 일이 사라진다**는 뜻입니다. 닫을 수 있게
+ * 두지 않았습니다(§4.8).
+ */
+const SaveFailureBanner: React.FC = () => {
+  const { saveFailure } = useFinance();
+  if (!saveFailure) return null;
+
+  return (
+    <div className="fixed bottom-32 left-4 right-4 z-50 rounded-2xl bg-rose-600/95 backdrop-blur-sm px-3.5 py-2.5 text-white shadow-lg">
+      <div className="text-xs font-bold">기기에 저장하지 못했습니다</div>
+      <p className="text-[11px] text-rose-100 mt-0.5 leading-relaxed">
+        {saveFailure.attempts}번 시도했습니다. 지금 입력한 내용은 앱을 다시 열면
+        사라집니다 — 저장 공간을 확보하거나, 사생활 보호 모드가 아닌 창에서
+        열어주세요.
+      </p>
     </div>
   );
 };
