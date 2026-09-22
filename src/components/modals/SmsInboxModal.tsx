@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { formatAmountInput, parseAmountInput, won } from "../../utils/format";
 import { CategorySelect } from "../transactions/CategorySelect";
+import type { SmsInboxItem } from "../../context/FinanceContext";
 import { INSTALL_FEATURE_NAME } from "../pwa/PWAInstallButton";
 import {
   MessageSquareText,
@@ -117,7 +118,7 @@ export const SmsInboxModal: React.FC<{
   }, [isOpen, sharedText]);
 
   const shown = useMemo(() => {
-    return smsInbox.filter((item: any) => {
+    return smsInbox.filter((item: SmsInboxItem) => {
       if (filter === "ALL") return true;
       if (filter === "DUPLICATE") return item.match?.kind === "EXACT";
       if (filter === "CHECK") return item.match?.kind === "LIKELY";
@@ -129,9 +130,9 @@ export const SmsInboxModal: React.FC<{
 
   const counts = {
     all: smsInbox.length,
-    fresh: smsInbox.filter((item: any) => !item.match).length,
-    check: smsInbox.filter((item: any) => item.match?.kind === "LIKELY").length,
-    dup: smsInbox.filter((item: any) => item.match?.kind === "EXACT").length,
+    fresh: smsInbox.filter((item: SmsInboxItem) => !item.match).length,
+    check: smsInbox.filter((item: SmsInboxItem) => item.match?.kind === "LIKELY").length,
+    dup: smsInbox.filter((item: SmsInboxItem) => item.match?.kind === "EXACT").length,
   };
 
   const toggle = (id: string) =>
@@ -144,13 +145,13 @@ export const SmsInboxModal: React.FC<{
 
   /** 계좌를 아직 못 고른 건은 등록할 수 없습니다 — 어디에 넣을지 모릅니다. */
   const ready = Array.from(chosen).filter((id) => {
-    const item = smsInbox.find((row: any) => row.id === id);
+    const item = smsInbox.find((row: SmsInboxItem) => row.id === id);
     return item?.parsed.accountId;
   });
 
   const handleRegister = () => {
     const items = ready.map((id) => {
-      const item = smsInbox.find((row: any) => row.id === id)!;
+      const item = smsInbox.find((row: SmsInboxItem) => row.id === id)!;
       return {
         id,
         accountId: item.parsed.accountId as string,
@@ -336,7 +337,7 @@ export const SmsInboxModal: React.FC<{
                 setChosen(
                   chosen.size === shown.length
                     ? new Set()
-                    : new Set(shown.map((item: any) => item.id))
+                    : new Set(shown.map((item: SmsInboxItem) => item.id))
                 )
               }
               className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-200/70 text-[11px] font-bold text-slate-600 hover:bg-slate-100 transition"
@@ -355,7 +356,7 @@ export const SmsInboxModal: React.FC<{
             </button>
 
             <div className="space-y-1.5">
-              {shown.map((item: any) => {
+              {shown.map((item: SmsInboxItem) => {
                 const isChosen = chosen.has(item.id);
                 const isEditing = editing === item.id;
                 const dup = item.match?.kind === "EXACT";

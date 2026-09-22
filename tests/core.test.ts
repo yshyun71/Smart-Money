@@ -36,6 +36,7 @@ import {
   forgetMapping,
 } from "../src/services/statementFormats";
 import { pendingNotifications } from "../src/services/notify";
+import { setupSteps, nextStep, shouldGuide } from "../src/services/onboarding";
 import {
   expiredUndoIds,
   normaliseRetention,
@@ -539,6 +540,57 @@ section("알림 — 같은 것을 두 번 띄우지 않습니다 (§11.8)");
   /* 한 번에 같은 id 가 둘 들어와도 하나만 */
   check("한 묶음 안의 중복도 하나로", pendingNotifications([items[0], items[0]], []).length === 1);
   check("id 가 없으면 띄우지 않음", pendingNotifications([{ id: "", title: "x", body: "y" }], []).length === 0);
+}
+
+// ---------------------------------------------------------------------------
+section("첫 사용 안내 — 데이터가 끝났는지 말합니다 (§12.11)");
+// ---------------------------------------------------------------------------
+{
+  const account: any = { id: "a1", name: "KB", type: "BANK" };
+  const variable: any = { id: "t1", date: "2026-08-01", type: "EXPENSE", expenseType: "VARIABLE", category: "식비", merchant: "x", amount: 1000, accountId: "a1" };
+  const fixed: any = { ...variable, id: "t2", expenseType: "FIXED" };
+
+  const empty = setupSteps({ accounts: [], transactions: [] });
+  check("처음에는 네 걸음 모두 남음", empty.filter((s) => !s.done).length === 4, empty.map((s) => s.done));
+  check("첫 할 일은 계좌 등록", nextStep(empty)?.id === "ACCOUNT");
+  check("안내를 보여 줌", shouldGuide(empty));
+
+  const withAccount = setupSteps({ accounts: [account], transactions: [] });
+  check("계좌가 있으면 끝난 걸음", withAccount[0].done);
+  check("다음은 가져오기", nextStep(withAccount)?.id === "IMPORT");
+  check("건수를 말함", withAccount[0].hint.includes("1개"));
+
+  /*
+    분류가 됐는지는 **고정비 판정이 하나라도 있는가**로 봅니다. 가져온 직후에는
+    전부 변동비 추정이고, AI 자동 분류나 사람의 손이 닿아야 고정비가 생깁니다.
+  */
+  const imported = setupSteps({ accounts: [account], transactions: [variable] });
+  check("변동비만 있으면 분류가 안 된 것", !imported[2].done, imported[2]);
+  const classified = setupSteps({ accounts: [account], transactions: [variable, fixed] });
+  check("고정비가 있으면 끝난 것", classified[2].done, classified[2]);
+
+  const budgeted = setupSteps({
+    accounts: [account],
+    transactions: [variable, fixed],
+    categoryBudgets: { 식비: 300_000 },
+  });
+  check("한도가 있으면 끝", budgeted[3].done);
+  /* 0원은 "정하지 않음"입니다 — §11.5 의 `UNSET` 과 같은 규칙 */
+  check(
+    "0원 한도는 정한 것이 아님",
+    !setupSteps({ accounts: [account], transactions: [], categoryBudgets: { 식비: 0 } })[3].done
+  );
+
+  /*
+    **다 끝나면 사라집니다.** 끝난 목록이 홈에서 가장 값진 자리를 계속 차지할
+    이유가 없습니다.
+  */
+  check("모두 끝나면 안내를 감춤", !shouldGuide(budgeted));
+  check("그때는 다음 할 일도 없음", nextStep(budgeted) === null);
+
+  /* 순서가 곧 의존 관계입니다 — 뒤 걸음이 끝났어도 앞을 먼저 가리킵니다 */
+  const skipped = setupSteps({ accounts: [], transactions: [], categoryBudgets: { 식비: 1 } });
+  check("건너뛴 앞 걸음을 먼저", nextStep(skipped)?.id === "ACCOUNT", skipped.map((s) => s.done));
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { spareOf } from "../../services/budgetPolicy";
+import { setupSteps, nextStep, shouldGuide, type SetupStep } from "../../services/onboarding";
 import { describeBill, pendingBill } from "../../services/cardLink";
 import { asOfLabel } from "../../utils/format";
 import { SummaryCard } from "../dashboard/SummaryCard";
@@ -72,6 +73,25 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const monthName = `${Number((selectedMonth || "").slice(5, 7)) || ""}월`;
 
   /*
+    처음 쓰는 사람에게 무엇부터 하라고 말합니다(§12.11).
+
+    등록을 마치면 빈 화면이었습니다 — 흐름을 스스로 알아내야 했습니다. 판단은
+    `services/onboarding.ts` 가 하고 **데이터가 끝났는지 말합니다**: 사용자가
+    체크하는 목록이 아니라 실제로 되어 있으면 끝난 것입니다.
+  */
+  const steps = useMemo(
+    () =>
+      setupSteps({
+        accounts,
+        transactions: allTransactions,
+        categoryBudgets: budgetConfig.categoryBudgets,
+      }),
+    [accounts, allTransactions, budgetConfig.categoryBudgets]
+  );
+  const guide = shouldGuide(steps);
+  const next = nextStep(steps);
+
+  /*
     바로가기 묶음을 펼쳐 둘지.
 
     여섯 개 모두 **다른 화면으로 가는 버튼**이고 그 자체로는 정보가 없습니다.
@@ -123,6 +143,95 @@ export const HomeView: React.FC<HomeViewProps> = ({
     <div className="space-y-4 pt-1">
       {/* PWA Home Banner (prominently shown on mobile browser until installed) */}
       <PWAHomeBanner />
+
+      {/*
+        준비 단계 안내.
+
+        **다 끝나면 사라집니다.** 끝난 목록이 홈에서 가장 값진 자리를 계속
+        차지할 이유가 없습니다. 결산 카드 **앞**에 두는 이유: 아직 결산할 것이
+        없을 때가 바로 이 안내가 필요한 때입니다.
+      */}
+      {guide && (
+        <div className="bg-white rounded-3xl p-4 border border-emerald-200/80 shadow-2xs space-y-3">
+          <div className="flex items-start gap-2">
+            <div className="w-7 h-7 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+              <Sparkles className="w-3.5 h-3.5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-xs font-bold text-slate-900">
+                {allTransactions.length === 0
+                  ? "가계부를 시작해봅시다"
+                  : "다음 단계로 가볼까요"}
+              </h2>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                {next
+                  ? next.hint
+                  : "네 걸음을 모두 마쳤습니다."}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {steps.map((step: SetupStep, index: number) => {
+              /* 다음에 할 하나만 눌리게 합니다 — 넷을 동시에 권하면 아무것도 못 고릅니다 */
+              const isNext = next?.id === step.id;
+              const go = () => {
+                if (step.id === "ACCOUNT") onNavigateTab("assets");
+                else if (step.id === "IMPORT") onNavigateTab("assets");
+                else if (step.id === "CLASSIFY") onNavigateTab("assets");
+                else onNavigateTab("budget");
+              };
+
+              return (
+                <button
+                  key={step.id}
+                  type="button"
+                  onClick={go}
+                  disabled={step.done}
+                  className={`w-full flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition ${
+                    step.done
+                      ? "bg-slate-50 border-slate-100"
+                      : isNext
+                        ? "bg-emerald-50/70 border-emerald-300 hover:bg-emerald-100/70 cursor-pointer"
+                        : "bg-white border-slate-200 hover:bg-slate-50 cursor-pointer"
+                  }`}
+                >
+                  <span
+                    className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center shrink-0 ${
+                      step.done
+                        ? "bg-emerald-600 text-white"
+                        : isNext
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-200 text-slate-600"
+                    }`}
+                  >
+                    {step.done ? "✓" : index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className={`text-[11px] font-bold truncate ${
+                        step.done ? "text-slate-400 line-through" : "text-slate-900"
+                      }`}
+                    >
+                      {step.title}
+                    </div>
+                    <span className="text-[10px] text-slate-400 truncate block">
+                      {step.hint}
+                    </span>
+                  </div>
+                  {!step.done && (
+                    <ArrowRight
+                      className={`w-3.5 h-3.5 shrink-0 ${
+                        isNext ? "text-emerald-600" : "text-slate-300"
+                      }`}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Top Monthly Summary Card */}
       <SummaryCard onNavigateToSavings={() => onNavigateTab("ai_coach")} />

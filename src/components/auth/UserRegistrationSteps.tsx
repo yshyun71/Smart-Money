@@ -23,6 +23,51 @@ interface Props {
 }
 
 /**
+ * 단계 머리글.
+ *
+ * **컴포넌트 바깥에 둡니다.** 예전에는 `UserRegistrationSteps` 안에서 만들어
+ * 졌는데, 그러면 렌더마다 **새로운 컴포넌트 타입**이 생겨 React 가 이전 것을
+ * 버리고 다시 마운트합니다 — 그 안의 상태(여기서는 없지만 나중에 생기면)와
+ * 포커스가 날아갑니다. 등록 중 입력이 사라지는 종류의 버그이고, eslint 의
+ * `react-hooks/static-components` 가 잡았습니다(§14.9).
+ *
+ * 안에서 읽던 `titlePrefix`·`onCancel` 은 props 로 받습니다.
+ */
+const StepHeader: React.FC<{
+  index: number;
+  icon: React.ReactNode;
+  tone: string;
+  subtitle: string;
+  titlePrefix: string;
+  onBack?: () => void;
+  onCancel?: () => void;
+}> = ({ index, icon, tone, subtitle, titlePrefix, onBack, onCancel }) => (
+  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+    <div className="flex items-center gap-2 min-w-0">
+      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <h2 className="text-sm font-bold text-slate-900 truncate">
+          {titlePrefix} ({index}/3)
+        </h2>
+        <p className="text-[10px] text-slate-400 truncate">{subtitle}</p>
+      </div>
+    </div>
+    {(onBack || onCancel) && (
+      <button
+        type="button"
+        onClick={onBack ?? onCancel}
+        className="p-2 -mr-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0 cursor-pointer"
+        aria-label={onBack ? "이전 단계" : "취소"}
+      >
+        <ArrowLeft className="w-4 h-4" />
+      </button>
+    )}
+  </div>
+);
+
+/**
  * Name and contact, then a PIN, then the PIN again — shared by first-run setup
  * and by adding another user from the settings menu.
  */
@@ -57,38 +102,6 @@ export const UserRegistrationSteps: React.FC<Props> = ({
     setStep("PIN");
   };
 
-  const StepHeader: React.FC<{
-    index: number;
-    icon: React.ReactNode;
-    tone: string;
-    subtitle: string;
-    onBack?: () => void;
-  }> = ({ index, icon, tone, subtitle, onBack }) => (
-    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-      <div className="flex items-center gap-2 min-w-0">
-        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>
-          {icon}
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-sm font-bold text-slate-900 truncate">
-            {titlePrefix} ({index}/3)
-          </h2>
-          <p className="text-[10px] text-slate-400 truncate">{subtitle}</p>
-        </div>
-      </div>
-      {(onBack || onCancel) && (
-        <button
-          type="button"
-          onClick={onBack ?? onCancel}
-          className="p-2 -mr-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
-          aria-label={onBack ? "이전 단계" : "취소"}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-      )}
-    </div>
-  );
-
   if (step === "PROFILE") {
     return (
       <>
@@ -97,6 +110,8 @@ export const UserRegistrationSteps: React.FC<Props> = ({
           icon={<UserRound className="w-4 h-4" />}
           tone="bg-emerald-50 text-emerald-600"
           subtitle="사용자 정보를 입력해주세요"
+          titlePrefix={titlePrefix}
+          onCancel={onCancel}
         />
 
         <form onSubmit={handleProfileSubmit} className="space-y-3">
@@ -171,6 +186,8 @@ export const UserRegistrationSteps: React.FC<Props> = ({
           icon={<KeyRound className="w-4 h-4" />}
           tone="bg-indigo-50 text-indigo-600"
           subtitle={`${name} 님`}
+          titlePrefix={titlePrefix}
+          onCancel={onCancel}
           onBack={() => setStep("PROFILE")}
         />
 
@@ -195,6 +212,8 @@ export const UserRegistrationSteps: React.FC<Props> = ({
         icon={<CheckCircle2 className="w-4 h-4" />}
         tone="bg-indigo-50 text-indigo-600"
         subtitle="한 번 더 입력해주세요"
+        titlePrefix={titlePrefix}
+        onCancel={onCancel}
         onBack={() => {
           setFirstPin("");
           setMismatchError(null);
