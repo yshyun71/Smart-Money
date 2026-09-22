@@ -14,6 +14,7 @@ import {
   type NoteScope,
 } from "../../services/spread";
 import { CategorySelect } from "./CategorySelect";
+import { ConfirmModal } from "../modals/ConfirmModal";
 import {
   X,
   Plus,
@@ -65,6 +66,16 @@ export const AddTransactionModal: React.FC<{
   */
   const [note, setNote] = useState("");
   const [noteScope, setNoteScope] = useState<NoteScope>("ONE");
+  /* 되돌리기 어려운 일은 공용 확인 창으로 묻습니다 (§12.8) */
+  const [ask, setAsk] = useState<{
+    title: string;
+    message?: string;
+    details?: string[];
+    danger?: boolean;
+    confirmLabel?: string;
+    undoable?: boolean;
+    run: () => void;
+  } | null>(null);
   const [noteOverwrite, setNoteOverwrite] = useState(false);
   /** 분류(카테고리·고정비)를 이 건만 바꿀지, 같은 내역명 전체에 쓸지. */
   const [classifyScope, setClassifyScope] = useState<NoteScope>("ONE");
@@ -316,9 +327,15 @@ export const AddTransactionModal: React.FC<{
 
   const handleDelete = () => {
     if (!editing) return;
-    if (!confirm(`'${editing.merchant}' 내역을 삭제할까요?`)) return;
-    deleteTransaction(editing.id);
-    onClose();
+    setAsk({
+      title: `'${editing.merchant}' 내역을 삭제할까요?`,
+      danger: true,
+      undoable: true,
+      run: () => {
+        deleteTransaction(editing.id);
+        onClose();
+      },
+    });
   };
 
   /*
@@ -794,5 +811,20 @@ export const AddTransactionModal: React.FC<{
   );
 
   if (typeof document === "undefined") return null;
-  return createPortal(modalContent, document.body);
+  return (
+    <>
+      {createPortal(modalContent, document.body)}
+      <ConfirmModal
+        isOpen={ask !== null}
+        title={ask?.title ?? ""}
+        message={ask?.message}
+        details={ask?.details}
+        danger={ask?.danger}
+        confirmLabel={ask?.confirmLabel}
+        undoable={ask?.undoable}
+        onConfirm={() => ask?.run()}
+        onClose={() => setAsk(null)}
+      />
+    </>
+  );
 };

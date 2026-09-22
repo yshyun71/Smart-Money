@@ -51,6 +51,16 @@ import { actualRows, spendingRows, sumActuals } from "../services/actuals";
 import { pendingNotifications, showNotifications } from "../services/notify";
 import { categoryBreakdown, monthlyHistory, yearlyHistory } from "../services/history";
 import { budgetAlertsFor, categoryStatuses } from "../services/budgetStatus";
+import {
+  DEFAULT_UNDO_DAYS,
+  canUndo,
+  describeUndo,
+  expiredUndoIds,
+  normaliseRetention,
+  type UndoEntry,
+  type UndoKind,
+  type UndoPayload,
+} from "../services/undo";
 import { basisOf, driftSince, type AnalysisDrift } from "../services/analysisFreshness";
 import {
   BUILT_IN_CATEGORIES,
@@ -155,6 +165,18 @@ interface FinanceContextType {
    * 지금 하는 입력이 **새로 열면 사라집니다** — 화면이 반드시 말해야 합니다.
    */
   saveFailure: SaveFailure | null;
+  /**
+   * 되돌릴 수 있는 최근 작업 (§4.9) — 최신 순.
+   *
+   * 삭제·분류 일괄 변경·예산 자동 배분이 바꾸기 전의 상태를 남깁니다. 담는
+   * 것은 행의 사본이고 역연산이 아니라, 되돌리기가 새 손상이 될 여지가 없습니다.
+   */
+  undoEntries: UndoEntry[];
+  undo: (id: string) => Promise<boolean>;
+  clearUndoHistory: () => void;
+  /** 임시 저장소 보관 기간(일). 1~90, 기본 7. 설정 → 기타 설정에서 바꿉니다. */
+  undoRetentionDays: number;
+  setUndoRetentionDays: (days: number) => void;
   /**
    * Set when the stored ledger could not be opened. Distinct from "no data":
    * an empty screen and an unreachable one mean opposite things.
@@ -332,6 +354,8 @@ interface FinanceContextType {
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
 const STORAGE_KEY_DISMISSED_ALERTS = "smart_money_dismissed_alerts_v1";
+/* 되돌리기 보관 기간 — 가계부 자료가 아니라 설정이라 localStorage 에 둡니다(§5) */
+const STORAGE_KEY_UNDO_DAYS = "smartmoney_undo_days";
 
 /**
  * 대기함의 한 건 — 읽어 낸 값에 화면이 쓰는 것들을 더한 모양.
@@ -394,8 +418,110 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const [installBannerHidden, setInstallBannerHidden] = useState(false);
   const [saveFailure, setSaveFailure] = useState<SaveFailure | null>(null);
 
+  /*
+    되돌리기 임시 저장소(§4.9).
+
+    바꾸기 전의 **행 사본**을 담습니다. 역연산을 계산하지 않는 것이 요점입니다 —
+    계산이 틀리면 되돌리기가 새 손상이 됩니다.
+  */
+  const [undoEntries, setUndoEntries] = useState<UndoEntry[]>([]);
+  const [undoRetentionDays, setUndoRetentionDaysState] = useState<number>(() =>
+    normaliseRetention(localStorage.getItem(STORAGE_KEY_UNDO_DAYS) || DEFAULT_UNDO_DAYS)
+  );
+
+  const readUndo = useCallback((): UndoEntry[] => {
+    try {
+      return repo.listUndo().map((row) => ({
+        id: row.id,
+        kind: row.kind as UndoKind,
+        label: row.label,
+        payload: row.payload as UndoPayload,
+        createdAt: row.createdAt,
+      }));
+    } catch {
+      return [];
+    }
+  }, []);
+
+  /** 바꾸기 전 상태를 담습니다. 실패해도 본 작업을 막지 않습니다. */
+  const rememberUndo = (kind: UndoKind, payload: UndoPayload) => {
+    const entry: UndoEntry = {
+      id: `undo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      kind,
+      label: "",
+      payload,
+      createdAt: new Date().toISOString(),
+    };
+    entry.label = describeUndo(entry);
+    if (!canUndo(entry)) return;
+
+    try {
+      repo.pushUndo({ id: entry.id, kind, label: entry.label, payload });
+      setUndoEntries((prev) => [entry, ...prev]);
+    } catch (error) {
+      console.error("되돌리기 정보를 담지 못했습니다:", error);
+    }
+  };
+
   /* 저장 실패는 DB 계층이 알려 줍니다 — 화면은 구독만 합니다 */
   useEffect(() => watchSaveFailure(setSaveFailure), []);
+
+  /*
+    보관 기간이 지난 되돌리기를 치웁니다.
+
+    앱을 열 때 한 번 합니다. 임시 저장소가 백업 파일에 함께 실리므로(§4.6)
+    쌓이는 채로 두면 백업이 커집니다. 날짜가 깨진 줄은 지우지 않습니다 —
+    모르는 것을 버리지 않습니다(§17.3).
+  */
+  useEffect(() => {
+    if (!isDbReady || !currentUserId) return;
+    const stored = readUndo();
+    const stale = expiredUndoIds(stored, { days: undoRetentionDays });
+    if (stale.length > 0) {
+      try {
+        repo.deleteUndo(stale);
+      } catch (error) {
+        console.error("지난 되돌리기를 치우지 못했습니다:", error);
+      }
+    }
+    setUndoEntries(stored.filter((entry) => !stale.includes(entry.id)));
+  }, [isDbReady, currentUserId, undoRetentionDays, readUndo]);
+
+  const setUndoRetentionDays = (days: number) => {
+    const safe = normaliseRetention(days);
+    setUndoRetentionDaysState(safe);
+    try {
+      localStorage.setItem(STORAGE_KEY_UNDO_DAYS, String(safe));
+    } catch {
+      /* 사생활 보호 모드 — 기억하지 못해도 이번 실행에는 적용됩니다 */
+    }
+  };
+
+  /** 되돌립니다. 담아 둔 행을 그대로 다시 쓰고 그 기록을 지웁니다. */
+  const undo = async (id: string): Promise<boolean> => {
+    const entry = undoEntries.find((candidate) => candidate.id === id);
+    if (!entry || !canUndo(entry)) return false;
+
+    try {
+      repo.applyUndo({ id: entry.id, kind: entry.kind, payload: entry.payload });
+      setUndoEntries((prev) => prev.filter((candidate) => candidate.id !== id));
+      /* 무엇이 되살아났는지 알 수 없으므로 전부 다시 읽습니다 — 안전한 쪽입니다 */
+      await refreshDbData();
+      return true;
+    } catch (error) {
+      console.error("되돌리지 못했습니다:", error);
+      return false;
+    }
+  };
+
+  const clearUndoHistory = () => {
+    try {
+      repo.deleteUndo(undoEntries.map((entry) => entry.id));
+      setUndoEntries([]);
+    } catch (error) {
+      console.error("되돌리기 기록을 지우지 못했습니다:", error);
+    }
+  };
   const [dbError, setDbError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -860,6 +986,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     if (entries.length === 0) return 0;
 
+    rememberUndo("BUDGETS", {
+      budgets: {
+        month: budgetConfig.month || selectedMonth,
+        categoryBudgets: { ...budgetConfig.categoryBudgets },
+      },
+    });
+
     setBudgetConfig((prev) => {
       const next = {
         ...prev,
@@ -1092,6 +1225,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       upTo: selectedMonth,
     });
 
+    /* 채우기 전의 그 달 한도를 담아 둡니다 — 자동 배분은 열두 칸을 한꺼번에 바꿉니다 */
+    rememberUndo("BUDGETS", {
+      budgets: {
+        month: budgetConfig.month || selectedMonth,
+        categoryBudgets: { ...budgetConfig.categoryBudgets },
+      },
+    });
+
     const nextConfig: MonthlyBudgetConfig = {
       ...budgetConfig,
       month: budgetConfig.month || selectedMonth,
@@ -1259,6 +1400,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const updateTransactions = (txs: Transaction[]) => {
     if (txs.length === 0) return;
+
+    /*
+      바꾸기 **전**의 모습을 담아 둡니다(§4.9). 이 길로 `카테고리 일괄 적용`과
+      `같은 내역명 모두`가 지나가는데, 한 번에 수백 건을 바꿉니다.
+    */
+    const ids = new Set(txs.map((tx) => tx.id));
+    rememberUndo(
+      "RECLASSIFY",
+      { before: transactions.filter((tx) => ids.has(tx.id)).map((tx) => ({ ...tx })) }
+    );
+
     try {
       repo.applyImport([], txs);
       setTransactions((prev) =>
@@ -1271,7 +1423,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const deleteTransaction = (id: string) => {
-    const touched = transactions.find((t) => t.id === id)?.accountId;
+    const target = transactions.find((t) => t.id === id);
+    const touched = target?.accountId;
+
+    if (target) rememberUndo("DELETE_ENTRIES", { entries: [{ ...target }] });
+
     try {
       repo.deleteTransaction(id);
       setTransactions((prev) =>
@@ -1292,6 +1448,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     const touched: string[] = Array.from(
       new Set(transactions.filter((t) => removing.has(t.id)).map((t) => t.accountId))
     );
+
+    /* 지운 행을 그대로 담아 둡니다 — 되돌릴 때 같은 id 로 다시 넣습니다 */
+    rememberUndo("DELETE_ENTRIES", {
+      entries: transactions.filter((tx) => removing.has(tx.id)).map((tx) => ({ ...tx })),
+    });
+
     try {
       repo.deleteTransactions(ids);
       setTransactions((prev) =>
@@ -1388,6 +1550,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const deleteAccount = (id: string) => {
+    /*
+      계좌와 **그것에 매인 것 전부**를 담아 둡니다. 이 삭제는 내역까지 함께
+      지우므로(§4.4의 고아 문제를 고친 뒤로는) 되돌릴 수 있어야 합니다.
+    */
+    const account = accounts.find((candidate) => candidate.id === id);
+    if (account) {
+      rememberUndo("DELETE_ACCOUNT", {
+        account: { ...account },
+        entries: transactions.filter((tx) => tx.accountId === id).map((tx) => ({ ...tx })),
+        rules: categoryRules
+          .filter((rule) => rule.accountId === id)
+          .map((rule) => ({ ...rule })),
+      });
+    }
+
     try {
       repo.deleteAccount(id);
       setAccounts((prev) => prev.filter((a) => a.id !== id));
@@ -1737,6 +1914,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         installBannerHidden,
         hideInstallBanner: () => setInstallBannerHidden(true),
         saveFailure,
+        undoEntries,
+        undo,
+        clearUndoHistory,
+        undoRetentionDays,
+        setUndoRetentionDays,
         dbError,
         dbStats,
         refreshDbData,

@@ -285,8 +285,73 @@ export function updateAccountDetails(
   );
 }
 
+/**
+ * 계좌·카드와 **그것에 매인 모든 것**을 지웁니다.
+ *
+ * 예전에는 `accounts` 한 줄만 지웠습니다. 그 계좌의 내역은 그대로 남아 —
+ * 실제 기기에서 KB국민카드 501건, KB국민은행 469건 — **계속 합계에 잡히는데
+ * 화면에서는 열 수 없었습니다.** 확인 문구는 `연동을 해제하고 삭제`라고
+ * 말했지만 둘 다 아니었습니다: 자료는 남아 세어지고 손댈 수 없었습니다.
+ *
+ * 함께 지우는 것:
+ * - 그 계좌의 거래 내역
+ * - 그 계좌에 매인 카테고리 규칙(§6.4 — 계좌별로 걸립니다)
+ * - 다른 계좌의 카드대금이 이 카드를 가리키던 연결(`linked_account_id`)
+ * - 이 계좌를 결제 계좌로 지정한 카드의 지정(`payment_account_id`)
+ *
+ * 한 배치이므로 **전부 아니면 전무**입니다(§4.8). 지우기 전의 상태는 부르는
+ * 쪽이 `undo` 에 담습니다(§4.9).
+ */
 export function deleteAccount(id: string): void {
-  run("DELETE FROM accounts WHERE id = ? AND user_id = ?", [id, requireUser()]);
+  const userId = requireUser();
+  runBatch([
+    { sql: "DELETE FROM transactions WHERE account_id = ? AND user_id = ?", params: [id, userId] },
+    { sql: "DELETE FROM category_rules WHERE account_id = ? AND user_id = ?", params: [id, userId] },
+    {
+      /* 이 카드를 가리키던 카드대금 출금은 연결만 풉니다 — 출금 자체는 남습니다 */
+      sql: `UPDATE transactions SET linked_account_id = NULL, billing_month = NULL
+            WHERE linked_account_id = ? AND user_id = ?`,
+      params: [id, userId],
+    },
+    {
+      /* 이 계좌를 결제 계좌로 쓰던 카드의 지정을 비웁니다 */
+      sql: `UPDATE accounts SET payment_account_id = NULL, payment_account_label = NULL
+            WHERE payment_account_id = ? AND user_id = ?`,
+      params: [id, userId],
+    },
+    { sql: "DELETE FROM accounts WHERE id = ? AND user_id = ?", params: [id, userId] },
+  ]);
+}
+
+/** 그 계좌를 지우면 함께 사라지는 것 — 확인 화면이 건수로 말할 수 있게. */
+export function accountFootprint(id: string): {
+  entries: number;
+  rules: number;
+  linkedBills: number;
+  cardsPaidFrom: number;
+} {
+  const userId = requireUser();
+  const count = (sql: string, params: any[]) =>
+    Number(queryOne<{ n: number }>(sql, params)?.n || 0);
+
+  return {
+    entries: count(
+      "SELECT COUNT(*) n FROM transactions WHERE account_id = ? AND user_id = ?",
+      [id, userId]
+    ),
+    rules: count(
+      "SELECT COUNT(*) n FROM category_rules WHERE account_id = ? AND user_id = ?",
+      [id, userId]
+    ),
+    linkedBills: count(
+      "SELECT COUNT(*) n FROM transactions WHERE linked_account_id = ? AND user_id = ?",
+      [id, userId]
+    ),
+    cardsPaidFrom: count(
+      "SELECT COUNT(*) n FROM accounts WHERE payment_account_id = ? AND user_id = ?",
+      [id, userId]
+    ),
+  };
 }
 
 export function touchAccountSync(): string {
@@ -899,6 +964,189 @@ export function saveBudgetConfig(config: MonthlyBudgetConfig): void {
       params: [userId, config.month, category, Number(amount || 0)],
     })),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// 되돌리기 임시 저장소 (§4.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * 바꾸기 전의 상태를 담아 둡니다.
+ *
+ * 담는 것은 **행의 사본**이고 역연산이 아닙니다 — 계산이 없으므로 되돌리기가
+ * 새 손상이 될 여지가 없습니다(`services/undo.ts`).
+ */
+export function pushUndo(entry: {
+  id: string;
+  kind: string;
+  label: string;
+  payload: unknown;
+}): void {
+  run(
+    `INSERT OR REPLACE INTO undo_log (id, user_id, kind, label, payload_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      entry.id,
+      requireUser(),
+      entry.kind,
+      entry.label,
+      JSON.stringify(entry.payload ?? {}),
+      new Date().toISOString(),
+    ]
+  );
+}
+
+export function listUndo(): {
+  id: string;
+  kind: string;
+  label: string;
+  payload: any;
+  createdAt: string;
+}[] {
+  return queryAll<any>(
+    `SELECT id, kind, label, payload_json, created_at FROM undo_log
+      WHERE user_id = ? ORDER BY created_at DESC`,
+    [requireUser()]
+  ).map((row) => {
+    let payload: any = {};
+    try {
+      payload = JSON.parse(row.payload_json || "{}");
+    } catch {
+      /* 깨진 것은 빈 것으로 — 되돌릴 수 없다고 화면이 말합니다(`canUndo`) */
+    }
+    return {
+      id: row.id,
+      kind: row.kind,
+      label: row.label,
+      payload,
+      createdAt: row.created_at,
+    };
+  });
+}
+
+export function deleteUndo(ids: string[]): void {
+  if (ids.length === 0) return;
+  const userId = requireUser();
+  runBatch(
+    ids.map((id) => ({
+      sql: "DELETE FROM undo_log WHERE id = ? AND user_id = ?",
+      params: [id, userId],
+    }))
+  );
+}
+
+/**
+ * 되돌리기 — 담아 둔 행을 그대로 되돌려 놓고 그 기록을 지웁니다.
+ *
+ * **한 배치입니다.** 절반만 복원되면 되돌리기가 손상이 됩니다(§4.8).
+ */
+export function applyUndo(entry: {
+  id: string;
+  kind: string;
+  payload: {
+    entries?: Transaction[];
+    account?: ConnectedAccount;
+    rules?: CategoryRule[];
+    before?: Transaction[];
+    budgets?: { month: string; categoryBudgets: Record<string, number> };
+  };
+}): void {
+  const userId = requireUser();
+  const statements: { sql: string; params?: any[] }[] = [];
+
+  if (entry.payload.account) {
+    const account = entry.payload.account;
+    statements.push({
+      sql: `INSERT OR REPLACE INTO accounts
+              (id, user_id, name, type, institution, identifier, balance_or_billed,
+               balance_as_of, balance_source, payment_account_id, payment_account_label,
+               color, is_auto_sync_enabled, last_synced_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        account.id,
+        userId,
+        account.name,
+        account.type,
+        account.institution,
+        account.identifier,
+        Number(account.balanceOrBilled || 0),
+        account.balanceAsOf || null,
+        account.balanceSource || "USER",
+        account.paymentAccountId || null,
+        account.paymentAccountLabel || null,
+        account.color || "",
+        account.isAutoSyncEnabled ? 1 : 0,
+        account.lastSyncedAt || null,
+        new Date().toISOString(),
+      ],
+    });
+  }
+
+  /* 지운 거래를 그대로 되돌립니다 — 같은 id 로 넣으므로 중복이 생기지 않습니다 */
+  for (const tx of entry.payload.entries || []) {
+    statements.push(insertStatement(tx, userId));
+  }
+
+  for (const rule of entry.payload.rules || []) {
+    statements.push({
+      sql: `INSERT OR REPLACE INTO category_rules
+              (id, user_id, account_id, pattern, category, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        rule.id,
+        userId,
+        rule.accountId,
+        rule.pattern,
+        rule.category,
+        rule.source,
+        /* 규칙 타입에는 생성 시각이 없습니다 — 되살릴 때 수정 시각을 함께 씁니다 */
+        rule.updatedAt,
+        rule.updatedAt,
+      ],
+    });
+  }
+
+  /* 분류를 바꾸기 전 모습으로 — 행 전체를 다시 쓰지 않고 바뀐 칸만 되돌립니다 */
+  for (const tx of entry.payload.before || []) {
+    statements.push({
+      sql: `UPDATE transactions
+              SET category = ?, expense_type = ?, is_fixed_recurring = ?, recurring_day = ?
+            WHERE id = ? AND user_id = ?`,
+      params: [
+        tx.category,
+        tx.expenseType,
+        tx.isFixedRecurring ? 1 : 0,
+        tx.recurringDay ?? null,
+        tx.id,
+        userId,
+      ],
+    });
+  }
+
+  if (entry.payload.budgets) {
+    const { month, categoryBudgets } = entry.payload.budgets;
+    /*
+      그 달의 한도를 **비우고** 담아 둔 것으로 채웁니다. 덮어쓰기만 하면
+      자동 배분이 새로 만든 칸이 남습니다.
+    */
+    statements.push({
+      sql: "DELETE FROM budgets WHERE user_id = ? AND month = ?",
+      params: [userId, month],
+    });
+    for (const [category, amount] of Object.entries(categoryBudgets || {})) {
+      statements.push({
+        sql: "INSERT OR REPLACE INTO budgets (user_id, month, category, amount) VALUES (?, ?, ?, ?)",
+        params: [userId, month, category, Number(amount || 0)],
+      });
+    }
+  }
+
+  statements.push({
+    sql: "DELETE FROM undo_log WHERE id = ? AND user_id = ?",
+    params: [entry.id, userId],
+  });
+
+  runBatch(statements);
 }
 
 // ---------------------------------------------------------------------------

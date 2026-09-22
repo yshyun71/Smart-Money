@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { ConfirmModal } from "../modals/ConfirmModal";
 import {
   clearProviderConfig,
   getAiSettings,
@@ -34,6 +35,16 @@ export const AIKeyModal: React.FC<{
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
   const [tab, setTab] = useState<ProviderId>("google");
+  /* 되돌리기 어려운 일은 공용 확인 창으로 묻습니다 (§12.8) */
+  const [ask, setAsk] = useState<{
+    title: string;
+    message?: string;
+    details?: string[];
+    danger?: boolean;
+    confirmLabel?: string;
+    undoable?: boolean;
+    run: () => void;
+  } | null>(null);
   const [active, setActive] = useState<ProviderId>("google");
   const [stored, setStored] = useState<Record<ProviderId, { apiKey: string; model: string }>>(
     () => getAiSettings().providers
@@ -116,10 +127,16 @@ export const AIKeyModal: React.FC<{
   };
 
   const handleRemove = () => {
-    if (!confirm(`${info.label} 키를 이 기기에서 삭제할까요?`)) return;
-    clearProviderConfig(tab);
-    loadTab(tab);
-    setResult({ ok: true, message: `${info.label} 키가 삭제되었습니다.` });
+    setAsk({
+      title: `${info.label} 키를 이 기기에서 삭제할까요?`,
+      message: "AI 기능만 멈추고 가계부 자료는 그대로 남습니다.",
+      danger: true,
+      run: () => {
+        clearProviderConfig(tab);
+        loadTab(tab);
+        setResult({ ok: true, message: `${info.label} 키가 삭제되었습니다.` });
+      },
+    });
   };
 
   const handleUseThis = () => {
@@ -368,5 +385,20 @@ export const AIKeyModal: React.FC<{
   );
 
   if (typeof document === "undefined") return null;
-  return createPortal(modalContent, document.body);
+  return (
+    <>
+      {createPortal(modalContent, document.body)}
+      <ConfirmModal
+        isOpen={ask !== null}
+        title={ask?.title ?? ""}
+        message={ask?.message}
+        details={ask?.details}
+        danger={ask?.danger}
+        confirmLabel={ask?.confirmLabel}
+        undoable={ask?.undoable}
+        onConfirm={() => ask?.run()}
+        onClose={() => setAsk(null)}
+      />
+    </>
+  );
 };

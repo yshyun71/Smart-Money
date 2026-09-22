@@ -6,6 +6,7 @@ import { AIKeyModal } from "../settings/AIKeyModal";
 import { UserManageModal } from "../settings/UserManageModal";
 import { INSTALL_FEATURE_NAME, PWAInstallGuideModal } from "../pwa/PWAInstallButton";
 import { MonthPickerModal } from "../transactions/MonthPickerModal";
+import { MiscSettingsModal } from "../settings/MiscSettingsModal";
 import {
   activeProviderLabel,
   hasApiKey,
@@ -24,6 +25,7 @@ import {
   CreditCard,
   ShieldCheck,
   Settings,
+  Settings2,
   Sparkles,
   UserPlus,
   LogOut,
@@ -64,6 +66,8 @@ export const MobileHeader: React.FC<{
     selectedMonth,
     setSelectedMonth,
     allTransactions,
+    undoEntries,
+    undoRetentionDays,
     syncAccounts,
     isSyncing,
     viewMode,
@@ -74,6 +78,7 @@ export const MobileHeader: React.FC<{
   const { currentUser, users, logout } = useAuth();
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showMiscSettings, setShowMiscSettings] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showAIKeyModal, setShowAIKeyModal] = useState(false);
@@ -183,6 +188,14 @@ export const MobileHeader: React.FC<{
       badge: undefined,
       danger: false,
       onSelect: () => setShowPwaGuide(true),
+    },
+    {
+      icon: Settings2,
+      label: "기타 설정",
+      description: `되돌리기 보관 ${undoRetentionDays}일 · 되돌릴 작업 ${undoEntries.length}건`,
+      badge: undefined,
+      danger: false,
+      onSelect: () => setShowMiscSettings(true),
     },
     {
       icon: LogOut,
@@ -422,6 +435,12 @@ export const MobileHeader: React.FC<{
         </button>
       </div>
       )}
+
+      {/* 기타 설정 — 되돌리기 보관 기간과 최근 작업 (4.9) */}
+      <MiscSettingsModal
+        isOpen={showMiscSettings}
+        onClose={() => setShowMiscSettings(false)}
+      />
 
       {/* 연월 직접 선택 — 연월을 고르는 자리는 모두 이 창을 씁니다 (12.6) */}
       <MonthPickerModal

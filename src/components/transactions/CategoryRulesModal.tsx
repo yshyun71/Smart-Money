@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { CategorySelect } from "./CategorySelect";
+import { ConfirmModal } from "../modals/ConfirmModal";
 import type { CategoryRule, CategoryType, Transaction } from "../../types/finance";
 import { pickRule } from "../../services/categoryRules";
 import {
@@ -63,6 +64,16 @@ export const CategoryRulesModal: React.FC<{
   } = useFinance();
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  /* 되돌리기 어려운 일은 공용 확인 창으로 묻습니다 (§12.8) */
+  const [ask, setAsk] = useState<{
+    title: string;
+    message?: string;
+    details?: string[];
+    danger?: boolean;
+    confirmLabel?: string;
+    undoable?: boolean;
+    run: () => void;
+  } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [draftPattern, setDraftPattern] = useState("");
   const [draftCategory, setDraftCategory] = useState<CategoryType>("식비");
@@ -92,7 +103,7 @@ export const CategoryRulesModal: React.FC<{
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !result) onClose();
+      if (e.key === "Escape" && !result && !ask) onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -175,14 +186,6 @@ export const CategoryRulesModal: React.FC<{
         ok: true,
         text: `선택한 ${chosenRules.length}개 규칙으로 바뀌는 내역이 없습니다. 이 계좌 ${accountEntries.length}건은 이미 규칙에 맞게 분류되어 있습니다.`,
       });
-      return;
-    }
-
-    if (
-      !confirm(
-        `선택한 ${chosenRules.length}개 규칙을 이 계좌 ${accountEntries.length}건 전체에 적용해 ${pending.length}건의 카테고리를 변경합니다. 계속할까요?`
-      )
-    ) {
       return;
     }
 
@@ -282,17 +285,28 @@ export const CategoryRulesModal: React.FC<{
   };
 
   const handleDelete = (rule: CategoryRule) => {
-    if (!confirm(`'${rule.pattern}' 규칙을 삭제할까요?`)) return;
-    deleteCategoryRule(rule.id);
-    if (editingId === rule.id) cancelDraft();
+    setAsk({
+      title: `'${rule.pattern}' 규칙을 삭제할까요?`,
+      message: "이미 분류된 내역은 그대로 남습니다. 앞으로 들어올 내역에만 영향이 있습니다.",
+      danger: true,
+      run: () => {
+        deleteCategoryRule(rule.id);
+        if (editingId === rule.id) cancelDraft();
+      },
+    });
   };
 
   const handleDeleteCategory = (name: CategoryType) => {
     const used = usageOf(name);
-    const warning = used > 0 ? `
-이미 ${used}건에 사용 중이며, 그 내역의 분류는 그대로 남습니다.` : "";
-    if (!confirm(`'${name}' 카테고리를 목록에서 삭제할까요?${warning}`)) return;
-    deleteCategory(name);
+    setAsk({
+      title: `'${name}' 카테고리를 목록에서 삭제할까요?`,
+      details:
+        used > 0
+          ? [`이미 ${used}건에 쓰이고 있으며, 그 내역의 분류는 그대로 남습니다`]
+          : undefined,
+      danger: true,
+      run: () => deleteCategory(name),
+    });
   };
 
   const draftForm = (
@@ -602,6 +616,17 @@ export const CategoryRulesModal: React.FC<{
   return (
     <>
       {createPortal(modalContent, document.body)}
+      <ConfirmModal
+        isOpen={ask !== null}
+        title={ask?.title ?? ""}
+        message={ask?.message}
+        details={ask?.details}
+        danger={ask?.danger}
+        confirmLabel={ask?.confirmLabel}
+        undoable={ask?.undoable}
+        onConfirm={() => ask?.run()}
+        onClose={() => setAsk(null)}
+      />
       <CategoryApplyResultModal result={result} onClose={() => setResult(null)} />
     </>
   );

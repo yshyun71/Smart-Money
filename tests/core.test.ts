@@ -28,6 +28,13 @@ import {
   signedAmount,
   planBalanceAdjustment,
 } from "../src/services/balance";
+import {
+  expiredUndoIds,
+  normaliseRetention,
+  canUndo,
+  describeUndo,
+  DEFAULT_UNDO_DAYS,
+} from "../src/services/undo";
 
 let passed = 0;
 const failures: string[] = [];
@@ -351,6 +358,74 @@ section("잔액 산식 — 기준일시 이전은 움직이지 않습니다 (§8
     balanceAsOf: "",
   } as any);
   check("깨진 기준일시에도 답을 냄", Number.isFinite(broken.next), broken);
+}
+
+// ---------------------------------------------------------------------------
+section("되돌리기 — 보관 기간과 되돌릴 수 있는가 (§4.9)");
+// ---------------------------------------------------------------------------
+{
+  const ago = (days: number) => new Date(Date.now() - days * 86400000).toISOString();
+  const rows = [
+    { id: "a", createdAt: ago(0.5) },
+    { id: "b", createdAt: ago(6.9) },
+    { id: "c", createdAt: ago(7.1) },
+    { id: "d", createdAt: ago(40) },
+    { id: "broken", createdAt: "어제" },
+  ];
+
+  /* 경계를 **지난 것만** 골라냅니다 — 하루를 더 얹는 실수가 반복되는 자리입니다 */
+  check("7일이면 7일 넘은 것만", expiredUndoIds(rows, { days: 7 }).join() === "c,d");
+  check("1일이면 더 많이", expiredUndoIds(rows, { days: 1 }).join() === "b,c,d");
+  check("기간 안은 남김", !expiredUndoIds(rows, { days: 7 }).includes("b"));
+  /*
+    날짜가 깨진 줄은 지우지 않습니다. 모르는 것을 버리지 않는다는 규칙입니다
+    (§17.3) — 되돌릴 수 있었을지도 모르는 것을 판단 불가라는 이유로 없애지
+    않습니다.
+  */
+  check("깨진 날짜는 건드리지 않음", !expiredUndoIds(rows, { days: 1 }).includes("broken"));
+
+  /* 말이 되는 범위로 자릅니다 — 0 이면 되돌리기가 없는 것과 같습니다 */
+  check("0 은 1 로", normaliseRetention(0) === 1);
+  check("음수도 1 로", normaliseRetention(-5) === 1);
+  check("999 는 90 으로", normaliseRetention(999) === 90);
+  check("숫자가 아니면 기본값", normaliseRetention("이틀") === DEFAULT_UNDO_DAYS);
+  check("기본값은 7일", DEFAULT_UNDO_DAYS === 7);
+
+  /*
+    담아 둔 것이 비어 있으면 되돌려도 아무 일이 없습니다 — 버튼을 눌렀는데
+    아무 일도 없는 것이 가장 나쁩니다.
+  */
+  const empty: any = { id: "1", kind: "DELETE_ENTRIES", label: "", payload: {}, createdAt: "" };
+  check("빈 기록은 되돌릴 수 없음", !canUndo(empty));
+  check(
+    "담아 둔 것이 있으면 가능",
+    canUndo({ ...empty, payload: { entries: [{ id: "t1" }] } } as any)
+  );
+  check(
+    "모르는 종류는 불가",
+    !canUndo({ ...empty, kind: "SOMETHING", payload: { entries: [1] } } as any)
+  );
+
+  check(
+    "계좌 삭제를 설명",
+    describeUndo({
+      id: "1",
+      kind: "DELETE_ACCOUNT",
+      label: "",
+      createdAt: "",
+      payload: { account: { name: "KB국민카드" } as any, entries: [1, 2, 3] as any },
+    }) === "KB국민카드 삭제 (내역 3건)"
+  );
+  check(
+    "예산 변경을 설명",
+    describeUndo({
+      id: "1",
+      kind: "BUDGETS",
+      label: "",
+      createdAt: "",
+      payload: { budgets: { month: "2026-08", categoryBudgets: { 식비: 1, 교통: 2 } } },
+    }) === "8월 예산 2개 변경"
+  );
 }
 
 // ---------------------------------------------------------------------------

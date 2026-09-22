@@ -5,6 +5,8 @@ import { BackupPassphraseModal } from "../modals/BackupPassphraseModal";
 import { isEncryptedBackup } from "../../services/backupCrypto";
 import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
+import { ConfirmModal } from "../modals/ConfirmModal";
+import * as repo from "../../db/repository";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { CsvImportModal } from "../modals/CsvImportModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
@@ -115,6 +117,23 @@ export const ConnectedAssetsView: React.FC<{
     백업 파일의 암호를 묻는 창. 내보낼 때(LOCK)와 복원할 때(UNLOCK) 같은 창을
     쓰고, 복원은 고른 파일을 들고 있어야 하므로 함께 담아 둡니다.
   */
+  /*
+    확인이 필요한 일을 한 자리에 모읍니다.
+
+    예전에는 `window.confirm` 이었습니다 — 앱의 모달과 전혀 다른 OS 대화창이
+    뜨고, 설치된 PWA 에서는 주소까지 노출되며, 무엇이 함께 사라지는지 항목으로
+    보여 줄 수 없었습니다(§12.8).
+  */
+  const [ask, setAsk] = useState<{
+    title: string;
+    message?: string;
+    details?: string[];
+    danger?: boolean;
+    confirmLabel?: string;
+    undoable?: boolean;
+    run: () => void;
+  } | null>(null);
+
   const [backupAsk, setBackupAsk] = useState<
     | { mode: "LOCK" }
     | { mode: "UNLOCK"; file: File }
@@ -193,24 +212,32 @@ export const ConnectedAssetsView: React.FC<{
    * 복원이 무엇을 지우는지 이름으로 말합니다.
    *
    * 백업은 사용자별이 아니라 데이터베이스 파일 전체이므로, 복원은 이 기기의
-   * 모든 사용자를 파일에 든 사용자들로 바꿉니다.
+   * 모든 사용자를 파일에 든 사용자들로 바꿉니다(§4.6).
    */
-  const confirmRestore = (): boolean => {
+  const restoreDetails = (): string[] => {
     const names = users.map((u: { name: string }) => u.name);
-    return confirm(
-      [
-        "백업 파일에 들어 있는 내용으로 이 기기의 가계부를 통째로 바꿉니다.",
-        "",
-        names.length > 1
-          ? `이 기기의 사용자 ${names.length}명(${names.join(
-              ", "
-            )})의 가계부가 모두 사라지고, 백업에 들어 있던 사용자만 남습니다.`
-          : "지금 기기에 있는 가계부는 사라지고, 백업에 들어 있던 사용자만 남습니다.",
-        "",
-        "복원 후에는 로그인이 풀리고 사용자 선택 화면으로 돌아갑니다.",
-        "계속할까요?",
-      ].join("\n")
-    );
+    return [
+      names.length > 1
+        ? `이 기기의 사용자 ${names.length}명(${names.join(", ")})의 가계부가 모두 사라집니다`
+        : "지금 기기에 있는 가계부가 사라집니다",
+      "백업에 들어 있던 사용자만 남습니다",
+      "복원 후 로그인이 풀리고 사용자 선택 화면으로 돌아갑니다",
+    ];
+  };
+
+  /** 확인을 받은 뒤의 복원 — 암호가 걸린 파일이면 암호 창으로 넘깁니다. */
+  const startRestore = async (file: File) => {
+    /*
+      암호가 걸린 파일인지는 내용이 말해 줍니다 — 확장자가 아니라 머리의
+      표식으로 봅니다(§4.5). 이름은 얼마든지 바뀔 수 있습니다.
+    */
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (isEncryptedBackup(head)) {
+      setBackupError(null);
+      setBackupAsk({ mode: "UNLOCK", file });
+      return;
+    }
+    await runRestore(file);
   };
 
   /** 복원을 실제로 수행합니다. 암호가 필요한 파일이면 passphrase 를 받습니다. */
@@ -306,10 +333,39 @@ export const ConnectedAssetsView: React.FC<{
     setTimeout(() => setFeedbackMsg(null), 3500);
   };
 
+  /*
+    계좌·카드 삭제.
+
+    **내역까지 함께 지웁니다.** 예전에는 계좌 한 줄만 지워 그 계좌의 내역이
+    고아로 남았습니다 — 합계에는 계속 잡히는데 화면에서는 열 수 없었습니다
+    (실제 기기에서 카드 하나에 501건). 무엇이 함께 사라지는지 **건수로** 말하고,
+    되돌릴 수 있다는 사실도 함께 알립니다(§4.9).
+  */
   const handleDelete = (id: string, accName: string) => {
-    if (confirm(`'${accName}' 연동을 해제하고 삭제하시겠습니까?`)) {
-      deleteAccount(id);
+    let footprint = { entries: 0, rules: 0, linkedBills: 0, cardsPaidFrom: 0 };
+    try {
+      footprint = repo.accountFootprint(id);
+    } catch {
+      /* 셈하지 못하면 건수 없이 묻습니다 — 묻지 않고 지우는 것보다 낫습니다 */
     }
+
+    setAsk({
+      title: `'${accName}'을(를) 삭제할까요?`,
+      message: "계좌·카드와 함께 아래가 사라집니다.",
+      details: [
+        `거래 내역 ${footprint.entries.toLocaleString()}건`,
+        ...(footprint.rules > 0 ? [`이 계좌의 카테고리 규칙 ${footprint.rules}개`] : []),
+        ...(footprint.linkedBills > 0
+          ? [`카드대금 ${footprint.linkedBills}건의 연결 (출금 자체는 남습니다)`]
+          : []),
+        ...(footprint.cardsPaidFrom > 0
+          ? [`이 계좌를 결제 계좌로 쓰던 카드 ${footprint.cardsPaidFrom}장의 지정`]
+          : []),
+      ],
+      danger: true,
+      undoable: true,
+      run: () => deleteAccount(id),
+    });
   };
 
   return (
@@ -739,39 +795,36 @@ export const ConnectedAssetsView: React.FC<{
               type="file"
               accept=".db,.sqlite,.smbk,application/x-sqlite3,application/octet-stream"
               className="hidden"
-              onChange={async (e) => {
+              onChange={(e) => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (!file) return;
 
-                if (!confirmRestore()) return;
-
-                /*
-                  암호가 걸린 파일인지는 내용이 말해 줍니다 — 확장자가 아니라
-                  머리의 표식으로 봅니다. 이름은 얼마든지 바뀔 수 있습니다.
-                */
-                const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
-                if (isEncryptedBackup(head)) {
-                  setBackupError(null);
-                  setBackupAsk({ mode: "UNLOCK", file });
-                  return;
-                }
-
-                await runRestore(file);
+                setAsk({
+                  title: "백업 파일로 이 기기의 가계부를 바꿀까요?",
+                  message: "파일에 들어 있는 내용으로 통째로 바뀝니다.",
+                  details: restoreDetails(),
+                  danger: true,
+                  confirmLabel: "복원",
+                  run: () => void startRestore(file),
+                });
               }}
             />
           </label>
 
           <button
-            onClick={() => {
-              if (
-                confirm(
-                  "이 기기의 가계부를 비우시겠습니까?\n기본 카테고리만 남고 카드/계좌 및 거래내역이 삭제됩니다."
-                )
-              ) {
-                resetToClean();
-              }
-            }}
+            onClick={() =>
+              setAsk({
+                title: "이 기기의 가계부를 비울까요?",
+                details: [
+                  "카드·계좌와 모든 거래 내역이 사라집니다",
+                  "기본 카테고리만 남습니다",
+                ],
+                danger: true,
+                confirmLabel: "비우기",
+                run: resetToClean,
+              })
+            }
             className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center justify-center gap-1 transition"
           >
             <HardDrive className="w-3.5 h-3.5" />
@@ -779,11 +832,15 @@ export const ConnectedAssetsView: React.FC<{
           </button>
 
           <button
-            onClick={() => {
-              if (confirm("초기 샘플 데이터로 복원하시겠습니까?")) {
-                resetToSample();
-              }
-            }}
+            onClick={() =>
+              setAsk({
+                title: "초기 샘플 데이터로 되돌릴까요?",
+                details: ["지금의 카드·계좌와 거래 내역이 샘플로 바뀝니다"],
+                danger: true,
+                confirmLabel: "샘플 복원",
+                run: resetToSample,
+              })
+            }
             className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium flex items-center justify-center gap-1 transition"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -1108,6 +1165,19 @@ export const ConnectedAssetsView: React.FC<{
           })
         }
         onImport={() => setCsvAccountId(ledgerAccountId)}
+      />
+
+      {/* 되돌리기 어려운 일은 모두 이 창으로 묻습니다 (§12.8) */}
+      <ConfirmModal
+        isOpen={ask !== null}
+        title={ask?.title ?? ""}
+        message={ask?.message}
+        details={ask?.details}
+        danger={ask?.danger}
+        confirmLabel={ask?.confirmLabel}
+        undoable={ask?.undoable}
+        onConfirm={() => ask?.run()}
+        onClose={() => setAsk(null)}
       />
 
       {/* Add or edit a single entry */}

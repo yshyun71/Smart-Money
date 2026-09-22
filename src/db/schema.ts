@@ -21,7 +21,7 @@ import {
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 export interface Migration {
   version: number;
@@ -87,6 +87,17 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
  * and covers a device whose version was saved without the table landing.
  */
 const EXPECTED_TABLES: { table: string; ddl: string }[] = [
+  {
+    table: "undo_log",
+    ddl: `CREATE TABLE IF NOT EXISTS undo_log (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+  },
   {
     table: "custom_categories",
     ddl: `CREATE TABLE IF NOT EXISTS custom_categories (
@@ -632,6 +643,32 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, "budget_configs", "income_excluded", "TEXT");
       addColumn(db, "budget_configs", "fixed_excluded", "TEXT");
       addColumn(db, "budget_configs", "savings_excluded", "TEXT");
+    },
+  },
+  {
+    version: 17,
+    /*
+      되돌리기 임시 저장소.
+
+      삭제·일괄 적용·자동 배분은 **한 번에 수백 건**을 바꾸는데 되돌릴 방법이
+      없었습니다. 바꾸기 전의 상태를 여기 담아 두고, 사용자가 되돌릴 수 있게
+      합니다(§4.9).
+
+      DB 에 두는 이유: 앱을 닫았다 열어도 남아야 하고, 백업·복원에 함께 실려야
+      합니다. localStorage 는 사용자 구분이 없고 용량도 작습니다.
+    */
+    description: "되돌리기 임시 저장소",
+    up: (db) => {
+      db.run(`CREATE TABLE IF NOT EXISTS undo_log (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_undo_log_scope
+        ON undo_log(user_id, created_at);`);
     },
   },
 ];

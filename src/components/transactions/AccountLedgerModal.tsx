@@ -22,6 +22,7 @@ import { CategoryRulesModal } from "./CategoryRulesModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
 import { AccountEditModal } from "../modals/AccountEditModal";
 import { MonthPickerModal } from "./MonthPickerModal";
+import { ConfirmModal } from "../modals/ConfirmModal";
 import { CardUsageModal } from "./CardUsageModal";
 import {
   billingTotalsFor,
@@ -198,6 +199,16 @@ export const AccountLedgerModal: React.FC<{
   */
   const [monthPicker, setMonthPicker] = useState<null | "MONTH" | "FROM" | "TO">(null);
   const [showDetails, setShowDetails] = useState(false);
+  /* 되돌리기 어려운 일은 공용 확인 창으로 묻습니다 (§12.8) */
+  const [ask, setAsk] = useState<{
+    title: string;
+    message?: string;
+    details?: string[];
+    danger?: boolean;
+    confirmLabel?: string;
+    undoable?: boolean;
+    run: () => void;
+  } | null>(null);
   /** The card bill whose month of usage is being read, if any. */
   const [usage, setUsage] = useState<{
     accountId: string;
@@ -433,21 +444,21 @@ export const AccountLedgerModal: React.FC<{
     const targets = entries.filter((tx) => selected.has(tx.id));
     if (targets.length === 0) return;
 
-    if (
-      !confirm(
-        `선택한 ${targets.length}건을 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`
-      )
-    ) {
-      return;
-    }
-
-    try {
-      deleteTransactions(targets.map((tx) => tx.id));
-      setSelected(new Set());
-      setNotice({ ok: true, text: `${targets.length}건을 삭제했습니다.` });
-    } catch {
-      setNotice({ ok: false, text: "삭제하지 못했습니다. 잠시 후 다시 시도해주세요." });
-    }
+    setAsk({
+      title: `선택한 ${targets.length}건을 삭제할까요?`,
+      details: [`${account?.name || "이 계좌"}의 내역 ${targets.length}건`],
+      danger: true,
+      undoable: true,
+      run: () => {
+        try {
+          deleteTransactions(targets.map((tx) => tx.id));
+          setSelected(new Set());
+          setNotice({ ok: true, text: `${targets.length}건을 삭제했습니다.` });
+        } catch {
+          setNotice({ ok: false, text: "삭제하지 못했습니다. 잠시 후 다시 시도해주세요." });
+        }
+      },
+    });
   };
 
   const toggleOne = (id: string) => {
@@ -1418,6 +1429,17 @@ export const AccountLedgerModal: React.FC<{
         하나의 창이 세 칸을 맡습니다. 기간의 양끝은 서로를 넘지 못하게 범위를
         주어, 시작이 끝보다 뒤여서 조회가 조용히 0건이 되는 일을 막습니다.
       */}
+      <ConfirmModal
+        isOpen={ask !== null}
+        title={ask?.title ?? ""}
+        message={ask?.message}
+        details={ask?.details}
+        danger={ask?.danger}
+        confirmLabel={ask?.confirmLabel}
+        undoable={ask?.undoable}
+        onConfirm={() => ask?.run()}
+        onClose={() => setAsk(null)}
+      />
       <MonthPickerModal
         isOpen={monthPicker !== null}
         value={

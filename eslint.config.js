@@ -64,6 +64,17 @@ export default tseslint.config(
         규칙이 호출 시점을 알 수 없어 생기는 경고이므로 낮춥니다.
       */
       "react-hooks/purity": "warn",
+
+      /*
+        **`preserve-manual-memoization` 은 끕니다.**
+
+        React Compiler 가 기존 `useMemo`·`useCallback` 을 그대로 보존할 수
+        있는지 알려 주는 진단입니다. 이 프로젝트는 컴파일러를 쓰지 않으므로
+        (`@vitejs/plugin-react` 기본 설정) 고칠 대상이 없고, 컨텍스트의 메모
+        하나를 건드릴 때마다 열 줄씩 쏟아집니다. 컴파일러를 켜는 날 다시
+        켜세요 — 그때는 실제로 뜻이 있는 경고입니다.
+      */
+      "react-hooks/preserve-manual-memoization": "off",
     },
   },
   {
