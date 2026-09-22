@@ -35,6 +35,7 @@ import {
   AreaChart,
   Area,
 } from "recharts";
+import type { Transaction } from "../../types/finance";
 
 const CATEGORY_COLORS: Record<string, string> = {
   "식비": "#F59E0B", // amber
@@ -88,7 +89,7 @@ export const AnalyticsDashboardView: React.FC<{
   const [showRanking, setShowRanking] = useState(false);
   /** 카테고리 금액을 눌러 연 상세 — 어느 카테고리인지만 기억하면 됩니다. */
   const [drillCategory, setDrillCategory] = useState<string | null>(null);
-  const [editingTx, setEditingTx] = useState<any>(null);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   /** 연월 직접 고르기 — 계좌 내역과 같은 창을 씁니다(월별 건수까지 보여 줍니다). */
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [activeChartType, setActiveChartType] = useState<"PIE" | "BAR" | "AREA">("PIE");
@@ -524,6 +525,11 @@ export const AnalyticsDashboardView: React.FC<{
                     paddingAngle={3}
                     dataKey="value"
                     /* 조각을 눌러도 같은 상세가 열립니다 */
+                    /*
+                    `recharts` 는 클릭 payload 를 타입으로 내주지 않습니다 —
+                    모양이 버전마다 달라(`name` 이 바로 오기도, `payload` 안에
+                    들어오기도) 양쪽을 다 봅니다. 여기의 `any` 는 그 까닭입니다.
+                    */
                     onClick={(entry: any) => {
                       const name = entry?.name || entry?.payload?.name;
                       if (name) setDrillCategory(name);

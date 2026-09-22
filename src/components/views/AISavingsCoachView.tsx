@@ -80,7 +80,7 @@ export const AISavingsCoachView: React.FC = () => {
           },
         ]);
       }
-    } catch (err: any) {
+    } catch (err) {
       setChatAnswers((prev) => [
         ...prev,
         {

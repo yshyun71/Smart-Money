@@ -13,6 +13,7 @@ import { accountTone } from "../../utils/accountTone";
 import { SearchModal } from "../modals/SearchModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import type { LedgerQuery } from "../../services/query";
+import type { Transaction } from "../../types/finance";
 
 export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
   onOpenAddModal,
@@ -25,7 +26,7 @@ export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
     기간을 넘어가야 하므로, 전체에서 찾는 일은 `내역 찾기` 창이 맡습니다(§12.9).
   */
   const [search, setSearch] = useState<LedgerQuery | null>(null);
-  const [editingTx, setEditingTx] = useState<any>(null);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<

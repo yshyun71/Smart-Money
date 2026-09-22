@@ -29,6 +29,7 @@ import { CategorySpendingModal } from "../modals/CategorySpendingModal";
 import { MonthPickerModal } from "../transactions/MonthPickerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { TrendingUp, TrendingDown, Minus, ChevronRight, CalendarRange } from "lucide-react";
+import type { Transaction } from "../../types/finance";
 
 /**
  * 고른 기간의 변동 추이.
@@ -65,7 +66,7 @@ export const PeriodTrendPanel: React.FC = () => {
   const [category, setCategory] = useState<string>("ALL");
   /** 막대를 눌러 연 상세 — 그 달 그 카테고리의 내역. */
   const [drill, setDrill] = useState<{ month: string; category: string } | null>(null);
-  const [editingTx, setEditingTx] = useState<any>(null);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   /** 기간의 양끝은 계좌 내역·상단 바와 **같은 창**으로 고릅니다(§12.6). */
   const [picking, setPicking] = useState<null | "FROM" | "TO">(null);
 
@@ -363,6 +364,11 @@ export const PeriodTrendPanel: React.FC = () => {
                       dataKey={direction === "INCOME" ? "income" : "expense"}
                       radius={[4, 4, 0, 0]}
                       /* 누르면 그 달의 내역으로 들어갑니다 */
+                      /*
+                      `recharts` 는 클릭 payload 를 타입으로 내주지 않습니다 —
+                      모양이 버전마다 달라(`name` 이 바로 오기도, `payload` 안에
+                      들어오기도) 양쪽을 다 봅니다. 여기의 `any` 는 그 까닭입니다.
+                      */
                       onClick={(entry: any) => {
                         if (direction !== "EXPENSE") return;
                         const month = entry?.payload?.month;

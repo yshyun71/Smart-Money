@@ -268,7 +268,7 @@ export const CsvImportModal: React.FC<{
   useEffect(() => {
     if (!isOpen) return;
 
-    const known = (id?: string) => (accounts.some((a: any) => a.id === id) ? id : "");
+    const known = (id?: string) => (accounts.some((a) => a.id === id) ? id : "");
     setAccountId(known(defaultAccountId) || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, defaultAccountId]);
@@ -1810,7 +1810,7 @@ export const CsvImportModal: React.FC<{
             {/* 파일마다 무엇이 되었는지 — 숫자만으로는 어느 파일이 빠졌는지 모릅니다 */}
             <div className="space-y-1.5">
               {queue.map((item, index) => {
-                const where = accounts.find((acc: any) => acc.id === item.accountId);
+                const where = accounts.find((acc) => acc.id === item.accountId);
                 const ok = item.state === "DONE";
                 return (
                   <div

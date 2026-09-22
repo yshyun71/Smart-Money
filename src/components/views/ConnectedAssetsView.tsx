@@ -6,7 +6,6 @@ import { isEncryptedBackup } from "../../services/backupCrypto";
 import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { ConfirmModal } from "../modals/ConfirmModal";
-import * as repo from "../../db/repository";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { CsvImportModal } from "../modals/CsvImportModal";
 import { BalanceEditModal } from "../modals/BalanceEditModal";
@@ -108,6 +107,7 @@ export const ConnectedAssetsView: React.FC<{
     dbStats,
     addAccount,
     deleteAccount,
+    accountFootprint,
   } = useFinance();
 
   // 복원은 이 기기의 사용자 전체를 갈아치우므로, 무엇이 사라지는지 말하려면 명단이 필요합니다
@@ -141,6 +141,10 @@ export const ConnectedAssetsView: React.FC<{
   >(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
+  /** 계좌 등록을 막은 까닭 — OS 대화창을 쓰지 않습니다(§12.8). */
+  const [addError, setAddError] = useState<string | null>(null);
+  /** 복원을 마쳤습니다 — 창을 닫으면 로그아웃합니다(§4.6). */
+  const [restored, setRestored] = useState(false);
 
   // Add Account / Card Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -251,8 +255,13 @@ export const ConnectedAssetsView: React.FC<{
         조회가 "없는 사용자"로 나가 0건이 되고, 화면은 데이터가 사라진 것처럼
         보입니다(4.6과 같은 함정).
       */
-      logout();
-      alert("백업을 복원했습니다. 복원된 사용자로 다시 로그인해주세요.");
+      /*
+        `alert` 를 쓰지 않습니다(§12.8) — 설치한 PWA 에서는 주소까지 보이고 앱의
+        모달과 전혀 다르게 뜹니다. 대신 앱의 창으로 말하고, **그 창을 닫을 때
+        로그아웃합니다** — 복원된 파일에 지금 세션의 id 가 없을 수 있어 그대로
+        두면 모든 조회가 0건이 되기 때문입니다(§4.6). 창이 그동안 화면을 덮습니다.
+      */
+      setRestored(true);
       return true;
     } catch (error) {
       console.error(error);
@@ -304,9 +313,10 @@ export const ConnectedAssetsView: React.FC<{
     const inst =
       selectedPreset === "직접 입력" ? customInstName.trim() : selectedPreset;
     if (!inst) {
-      alert("금융기관 또는 카드사 이름을 입력해주세요.");
+      setAddError("금융기관 또는 카드사 이름을 입력해주세요.");
       return;
     }
+    setAddError(null);
 
     const currentPresets = accType === "BANK" ? PRESET_BANKS : PRESET_CARDS;
     const presetObj = currentPresets.find((p) => p.name === inst);
@@ -342,12 +352,8 @@ export const ConnectedAssetsView: React.FC<{
     되돌릴 수 있다는 사실도 함께 알립니다(§4.9).
   */
   const handleDelete = (id: string, accName: string) => {
-    let footprint = { entries: 0, rules: 0, linkedBills: 0, cardsPaidFrom: 0 };
-    try {
-      footprint = repo.accountFootprint(id);
-    } catch {
-      /* 셈하지 못하면 건수 없이 묻습니다 — 묻지 않고 지우는 것보다 낫습니다 */
-    }
+    /* 셈하지 못하면 컨텍스트가 0 을 돌려줍니다 — 건수 없이라도 묻습니다 */
+    const footprint = accountFootprint(id);
 
     setAsk({
       title: `'${accName}'을(를) 삭제할까요?`,
@@ -1129,6 +1135,13 @@ export const ConnectedAssetsView: React.FC<{
               </div>
 
               {/* Submit Buttons */}
+              {/* 막은 까닭은 버튼 바로 위에 — 누른 자리에서 보여야 합니다(§12.8) */}
+              {addError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] font-bold text-rose-700">
+                  {addError}
+                </div>
+              )}
+
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
@@ -1191,6 +1204,22 @@ export const ConnectedAssetsView: React.FC<{
         editing={txModal.editing}
         defaultAccountId={txModal.accountId}
         onClose={() => setTxModal({ open: false, editing: null })}
+      />
+
+      {/* 복원을 마쳤습니다 — 닫으면 로그아웃합니다 (§4.6) */}
+      <ConfirmModal
+        isOpen={restored}
+        title="백업을 복원했습니다"
+        message="이 기기의 가계부가 백업 파일의 내용으로 바뀌었습니다. 복원된 사용자로 다시 로그인해주세요."
+        confirmLabel="로그인 화면으로"
+        onConfirm={() => {
+          setRestored(false);
+          logout();
+        }}
+        onClose={() => {
+          setRestored(false);
+          logout();
+        }}
       />
 
       {/* 백업 파일 암호 — 내려받을 때 잠그고, 복원할 때 엽니다 */}

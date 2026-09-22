@@ -37,6 +37,7 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
+import type { Transaction } from "../../types/finance";
 
 export const BudgetManagementView: React.FC<{
   onNavigateToSavings?: () => void;
@@ -96,7 +97,7 @@ export const BudgetManagementView: React.FC<{
   */
   const [spending, setSpending] = useState<string | null>(null);
   /** 그 목록에서 고른 건 — 거래 수정 화면으로 넘깁니다. */
-  const [editingTx, setEditingTx] = useState<any>(null);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
 
   /** 기준에 값이 들어 있는 카테고리 수. 0이면 적용할 것이 없습니다. */
   const policyCount = Object.keys(budgetPolicy.rules || {}).length;

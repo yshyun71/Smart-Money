@@ -193,7 +193,7 @@ export const MiscSettingsModal: React.FC<{
               삭제·분류 일괄 변경·예산 자동 배분을 하면 여기에 남습니다.
             </p>
           ) : (
-            undoEntries.map((entry: any) => (
+            undoEntries.map((entry) => (
               <div
                 key={entry.id}
                 className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between gap-2"

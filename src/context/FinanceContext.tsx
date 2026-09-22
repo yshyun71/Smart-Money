@@ -227,6 +227,13 @@ interface FinanceContextType {
   ) => ImportOutcome;
   addAccount: (acc: Omit<ConnectedAccount, "id" | "lastSyncedAt">) => void;
   deleteAccount: (id: string) => void;
+  /** 그 계좌를 지우면 함께 사라지는 것들의 건수 (§4.4). */
+  accountFootprint: (id: string) => {
+    entries: number;
+    rules: number;
+    linkedBills: number;
+    cardsPaidFrom: number;
+  };
   /** Corrects the name, institution, number or kind of an account. */
   updateAccountDetails: (
     id: string,
@@ -1623,6 +1630,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  /*
+    화면이 `repository` 를 직접 부르지 않도록 여기를 지납니다(§3 계층 규칙).
+    셈하지 못하면 0 으로 둡니다 — 묻지 않고 지우는 것보다 건수 없이 묻는 편이
+    낫습니다.
+  */
+  const accountFootprint = (id: string) => {
+    try {
+      return repo.accountFootprint(id);
+    } catch (error) {
+      console.error("삭제 범위를 세지 못했습니다:", error);
+      return { entries: 0, rules: 0, linkedBills: 0, cardsPaidFrom: 0 };
+    }
+  };
+
   const deleteAccount = (id: string) => {
     /*
       계좌와 **그것에 매인 것 전부**를 담아 둡니다. 이 삭제는 내역까지 함께
@@ -2011,6 +2032,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         importTransactions,
         addAccount,
         deleteAccount,
+        accountFootprint,
         setAccountBalance,
         updateAccountDetails,
         categories,

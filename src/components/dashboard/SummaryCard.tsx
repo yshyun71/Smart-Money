@@ -5,6 +5,7 @@ import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import type { ActualKind } from "../../services/actuals";
 import { TrendingUp, TrendingDown, PiggyBank, Sparkles, ChevronRight } from "lucide-react";
+import type { Transaction } from "../../types/finance";
 
 export const SummaryCard: React.FC<{ onNavigateToSavings?: () => void }> = ({
   onNavigateToSavings,
@@ -23,7 +24,7 @@ export const SummaryCard: React.FC<{ onNavigateToSavings?: () => void }> = ({
 
   /** 어느 금액의 속을 보는 중인가. 넷 다 같은 창을 씁니다(§11.7과 같은 길). */
   const [looking, setLooking] = useState<ActualKind | null>(null);
-  const [editingTx, setEditingTx] = useState<any>(null);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
 
   const expenseRatio =
     totalIncome > 0 ? Math.min(Math.round((totalExpense / totalIncome) * 100), 100) : 0;

@@ -29,6 +29,7 @@ import { DataCheckModal } from "./components/settings/DataCheckModal";
 import { SmsInboxModal } from "./components/modals/SmsInboxModal";
 import { OfflineIndicator } from "./components/pwa/PWAInstallButton";
 import { Wifi, Signal } from "lucide-react";
+import type { Transaction } from "./types/finance";
 
 const MainContent: React.FC = () => {
   const { viewMode, aiAnalysis } = useFinance();
@@ -43,7 +44,7 @@ const MainContent: React.FC = () => {
     있는데 아무 일도 없는 버튼을 만들지 않으려면 함께 이어 두어야 합니다.
   */
   const [ledgerAccountId, setLedgerAccountId] = useState<string | null>(null);
-  const [editingTx, setEditingTx] = useState<any>(null);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [showDataCheck, setShowDataCheck] = useState(false);
   const [addForAccount, setAddForAccount] = useState<string | undefined>(undefined);
   const [csvAccountId, setCsvAccountId] = useState<string | null>(null);
@@ -269,7 +270,7 @@ const MainContent: React.FC = () => {
           isOpen={ledgerAccountId !== null}
           accountId={ledgerAccountId || ""}
           onClose={() => setLedgerAccountId(null)}
-          onEdit={(tx: any) => setEditingTx(tx)}
+          onEdit={setEditingTx}
           onAdd={() => {
             setAddForAccount(ledgerAccountId || undefined);
             setIsAddModalOpen(true);
@@ -281,7 +282,7 @@ const MainContent: React.FC = () => {
         <DataCheckModal
           isOpen={showDataCheck}
           onClose={() => setShowDataCheck(false)}
-          onEdit={(tx) => setEditingTx(tx)}
+          onEdit={setEditingTx}
         />
 
         <CsvImportModal
