@@ -21,6 +21,8 @@ import {
   monthlyHistory,
   yearlyHistory,
 } from "../src/services/history";
+import { runQuery, queryTotals, toCsv, csvFileName } from "../src/services/query";
+import { recurringItems, looksStopped } from "../src/services/recurrence";
 
 let passed = 0;
 const failures: string[] = [];
@@ -242,6 +244,124 @@ section("이력 집계 — 달·해·카테고리 비중");
   check("오래된 해부터", years[0].year === "2025", years.map((y) => y.year));
   check("해 합계", years[1].expense === 500_000, years[1]);
   check("해마다 카테고리 비중", years[1].categories[0].category === "주거", years[1].categories);
+}
+
+// ---------------------------------------------------------------------------
+section("내역 찾기 — 기간·범위·카테고리·유사 항목 (§12.9)");
+// ---------------------------------------------------------------------------
+{
+  const row = (id: string, date: string, o: any = {}): any => ({
+    id,
+    accountId: o.acc || "bank",
+    date,
+    time: "12:00",
+    type: o.type || "EXPENSE",
+    expenseType: o.et || (o.type === "INCOME" ? "INCOME" : "VARIABLE"),
+    category: o.cat || "식비",
+    merchant: o.m || "가맹점",
+    amount: o.a || 1000,
+    paymentMethod: "카드",
+    memo: o.memo,
+    note: o.note,
+  });
+
+  const rows = [
+    row("1", "2025-12-05", { m: "스타벅스 강남지점", a: 5_000, cat: "카페/간식" }),
+    row("2", "2026-03-10", { m: "스타벅스강남", a: 6_000, cat: "카페/간식" }),
+    row("3", "2026-08-01", { m: "서울대병원", a: 120_000, cat: "의료", acc: "card1" }),
+    row("4", "2026-08-02", { m: "월세", a: 500_000, cat: "주거", et: "FIXED" }),
+    row("5", "2026-08-03", { m: "급여", a: 3_000_000, type: "INCOME", cat: "급여" }),
+  ];
+  const ids = (q: any) => runQuery(rows, q).map((tx: any) => tx.id).join();
+
+  check("조건이 없으면 전부", ids({}) === "1,2,3,4,5");
+  check("기간", ids({ from: "2026-08", to: "2026-08" }) === "3,4,5");
+  /* 한쪽만 주면 그 달만 — 사용자가 한 칸만 채우는 일이 흔합니다 */
+  check("한쪽만 주면 그 달", ids({ from: "2026-03" }) === "2");
+  check("범위(계좌)", ids({ accountIds: ["card1"] }) === "3");
+  check("카테고리", ids({ categories: ["카페/간식"] }) === "1,2");
+  check("수입만", ids({ direction: "INCOME" }) === "5");
+  check("고정비만", ids({ kind: "FIXED" }) === "4");
+  /* 고정·변동은 지출의 구분이라 수입 건은 걸리지 않습니다(§9.6) */
+  check("고정비 조건에 수입은 안 걸림", !ids({ kind: "FIXED" }).includes("5"));
+  check("검색어는 공백을 무시", ids({ text: "스타 벅스" }) === "1,2");
+  /*
+    **유사 항목은 글자 그대로 비교하지 않습니다.** 명세서가 같은 곳을 지점·
+    법인 표기를 붙여 여러 모양으로 적습니다(§10).
+  */
+  check("이름 모양이 달라도 같은 가맹점", ids({ similarTo: "스타벅스 강남지점" }) === "1,2");
+  check("조건을 겹쳐 쓸 수 있음", ids({ from: "2026-01", to: "2026-12", categories: ["의료"] }) === "3");
+
+  const totals = queryTotals(rows);
+  check("합계", totals.expense === 631_000 && totals.income === 3_000_000, totals);
+  check("순액", totals.net === 2_369_000, totals);
+
+  const csv = toCsv(rows.slice(0, 2), [{ id: "bank", name: "KB, 국민은행" } as any]);
+  const lines = csv.split("\r\n");
+  check("머리글", lines[0].startsWith("날짜,시각,구분"), lines[0]);
+  /*
+    **금액에 콤마를 넣지 않습니다.** CSV 는 다시 계산에 쓰이는 파일이고, 콤마가
+    든 숫자는 엑셀에서 문자가 됩니다 — `parseInt("1,234")` 가 1이던 것과 같은
+    함정입니다(§12.2).
+  */
+  check("금액은 숫자만", lines[1].includes("5000") && !lines[1].includes("5,000"), lines[1]);
+  check("콤마 든 값은 감쌈", lines[1].includes('"KB, 국민은행"'), lines[1]);
+  check("따옴표는 두 번으로", toCsv([row("x", "2026-01-01", { m: '가"게' })]).includes('"가""게"'));
+  check("파일 이름이 무엇을 담았는지 말함", csvFileName({ categories: ["의료"] }, 3).includes("의료"));
+  check("기간이 없으면 전체기간", csvFileName({}, 1).includes("전체기간"));
+}
+
+// ---------------------------------------------------------------------------
+section("정기 결제 모아 보기 (§12.10)");
+// ---------------------------------------------------------------------------
+{
+  const sub = (month: string, day: string, amount: number, name = "넷플릭스"): any => ({
+    id: `${name}${month}`,
+    accountId: "card1",
+    date: `${month}-${day}`,
+    time: "12:00",
+    type: "EXPENSE",
+    expenseType: "FIXED",
+    category: "구독/미디어",
+    merchant: name,
+    amount,
+    paymentMethod: "카드",
+  });
+
+  const rows = [
+    sub("2026-06", "05", 13_500),
+    sub("2026-07", "05", 13_500),
+    sub("2026-08", "06", 17_000),
+    /* 두 달치뿐인 것은 정기 결제가 아닙니다 — §10 의 3개월 규칙 */
+    sub("2026-07", "11", 9_900, "왓챠"),
+    sub("2026-08", "11", 9_900, "왓챠"),
+  ];
+
+  const items = recurringItems(rows);
+  check("3개월 이상만", items.length === 1, items.map((i) => i.merchant));
+  check("보여 줄 이름은 최근 것", items[0].merchant === "넷플릭스", items[0]);
+  check("결제일", items[0].paymentDay === 5, items[0]);
+  /*
+    **최근 금액과 평균을 함께** 줍니다. 구독료가 오르면 둘이 벌어지고, 그
+    차이가 곧 알아차려야 할 사실입니다.
+  */
+  check("금액은 가장 최근", items[0].amount === 17_000, items[0]);
+  check("평균은 따로", items[0].average === 14_667, items[0].average);
+  check("마지막으로 찍힌 날", items[0].lastSeen === "2026-08-06", items[0]);
+
+  /* 두 달 넘게 안 보이면 표시만 합니다 — 목록에서 빼지 않습니다(§17.1) */
+  check("오래되면 끊긴 것으로 표시", looksStopped(items[0], new Date("2026-12-01")));
+  check("최근이면 아님", !looksStopped(items[0], new Date("2026-09-01")));
+  check("날짜가 깨져 있으면 판단하지 않음", !looksStopped({ ...items[0], lastSeen: "어제" }));
+
+  /* 수입은 정기 결제가 아닙니다 — 급여가 목록에 오르면 뜻이 달라집니다 */
+  const withSalary = recurringItems([
+    ...rows,
+    { ...sub("2026-06", "25", 3_000_000, "급여"), type: "INCOME", expenseType: "INCOME" },
+    { ...sub("2026-07", "25", 3_000_000, "급여"), type: "INCOME", expenseType: "INCOME" },
+    { ...sub("2026-08", "25", 3_000_000, "급여"), type: "INCOME", expenseType: "INCOME" },
+  ]);
+  check("수입은 빠짐", !withSalary.some((i) => i.merchant === "급여"), withSalary.map((i) => i.merchant));
 }
 
 // ---------------------------------------------------------------------------

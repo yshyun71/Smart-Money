@@ -4,7 +4,6 @@ import { spareOf } from "../../services/budgetPolicy";
 import { describeBill, pendingBill } from "../../services/cardLink";
 import { asOfLabel } from "../../utils/format";
 import { SummaryCard } from "../dashboard/SummaryCard";
-import { FixedVsVariableRatio } from "../dashboard/FixedVsVariableRatio";
 import { NavTab } from "../layout/BottomNavigation";
 import { PWAHomeBanner } from "../pwa/PWAInstallButton";
 
@@ -336,9 +335,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </span>
         </div>
       </div>
-
-      {/* Fixed vs Variable Ratio */}
-      <FixedVsVariableRatio onTabSelect={onNavigateTab} />
 
       {/* AI 절약 하이라이트 배너 */}
       {aiAnalysis && (

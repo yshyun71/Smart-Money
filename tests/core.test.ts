@@ -28,6 +28,14 @@ import {
   signedAmount,
   planBalanceAdjustment,
 } from "../src/services/balance";
+import { isValidPinFormat, hashPin, checkPin } from "../src/services/pinCrypto";
+import {
+  formatSignature,
+  recallMapping,
+  rememberMapping,
+  forgetMapping,
+} from "../src/services/statementFormats";
+import { pendingNotifications } from "../src/services/notify";
 import {
   expiredUndoIds,
   normaliseRetention,
@@ -426,6 +434,111 @@ section("되돌리기 — 보관 기간과 되돌릴 수 있는가 (§4.9)");
       payload: { budgets: { month: "2026-08", categoryBudgets: { 식비: 1, 교통: 2 } } },
     }) === "8월 예산 2개 변경"
   );
+}
+
+// ---------------------------------------------------------------------------
+section("PIN — 평문을 남기지 않습니다 (§5)");
+// ---------------------------------------------------------------------------
+{
+  check("6자리만 허용", isValidPinFormat("123456"));
+  check("5자리 거부", !isValidPinFormat("12345"));
+  check("7자리 거부", !isValidPinFormat("1234567"));
+  check("숫자가 아니면 거부", !isValidPinFormat("12a456"));
+  check("빈 값 거부", !isValidPinFormat(""));
+
+  const stored = await hashPin("123456");
+  /*
+    **저장되는 것에 PIN 이 없습니다.** 해시·솔트·반복횟수뿐이고, 되읽을 것이
+    없습니다. 이 셋 중 하나라도 평문을 담으면 §5의 전제가 무너집니다.
+  */
+  check("해시가 남음", stored.hash.length > 20, stored.hash.length);
+  check("솔트가 남음", stored.salt.length > 10, stored.salt.length);
+  check("반복횟수가 함께 남음", stored.iterations === 310_000, stored.iterations);
+  check(
+    "평문이 어디에도 없음",
+    !JSON.stringify(stored).includes("123456"),
+    JSON.stringify(stored)
+  );
+
+  check("맞는 PIN 통과", await checkPin("123456", stored));
+  check("틀린 PIN 거부", !(await checkPin("123457", stored)));
+
+  /*
+    **솔트는 기기·사용자마다 다릅니다.** 같은 PIN 이 같은 해시로 저장되면 한
+    사람의 해시를 다른 사람에게 그대로 써 볼 수 있습니다.
+  */
+  const second = await hashPin("123456");
+  check("같은 PIN 이라도 솔트가 다름", stored.salt !== second.salt);
+  check("따라서 해시도 다름", stored.hash !== second.hash);
+  check("그래도 각자 통과", await checkPin("123456", second));
+
+  /*
+    반복횟수가 해시와 함께 저장되는 이유: 나중에 올려도 **이미 등록된 PIN 이
+    열립니다**. 옛 횟수로 저장된 것을 그 횟수로 검사합니다.
+  */
+  const legacy = { ...stored, iterations: 1_000 };
+  const rehashed = await hashPin("123456");
+  check(
+    "다른 반복횟수는 다른 결과",
+    !(await checkPin("123456", { ...legacy, hash: rehashed.hash, salt: rehashed.salt }))
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("기억된 명세서 형식 — 머리글 서명 (§7.4)");
+// ---------------------------------------------------------------------------
+{
+  /* 서명은 공백·대소문자를 지웁니다 — 같은 파일이 달마다 미세하게 다를 수 있습니다 */
+  check(
+    "공백·대소문자 무시",
+    formatSignature(["이용 일자", "가맹점"]) === formatSignature(["이용일자", "가맹점"])
+  );
+  check(
+    "대문자도 같게",
+    formatSignature(["Date", "Amount"]) === formatSignature(["date", "amount"])
+  );
+  check("열 순서가 다르면 다른 형식", formatSignature(["a", "b"]) !== formatSignature(["b", "a"]));
+  check("빈 머리글은 빈 서명", formatSignature([]) === "");
+
+  /*
+    localStorage 가 없는 곳(노드·사생활 보호 모드)에서도 **던지지 않아야**
+    합니다. 기억을 못 하는 것은 견딜 수 있지만 가져오기가 죽는 것은 아닙니다.
+  */
+  const headers = ["이용일자", "가맹점", "이용금액"];
+  const mapping: any = { date: 0, merchant: 1, expense: 2 };
+  let threw = false;
+  try {
+    rememberMapping(headers, mapping);
+    recallMapping(headers);
+    forgetMapping(headers);
+  } catch {
+    threw = true;
+  }
+  check("저장소가 없어도 죽지 않음", !threw);
+}
+
+// ---------------------------------------------------------------------------
+section("알림 — 같은 것을 두 번 띄우지 않습니다 (§11.8)");
+// ---------------------------------------------------------------------------
+{
+  const items = [
+    { id: "2026-08-식비-EXCEEDED", title: "a", body: "a" },
+    { id: "2026-08-쇼핑-WARNING", title: "b", body: "b" },
+  ];
+
+  check("처음이면 둘 다", pendingNotifications(items, []).length === 2);
+  /*
+    예산 상태는 렌더마다 다시 계산됩니다. 걸러내지 않으면 화면을 만질 때마다
+    같은 알림이 쏟아집니다.
+  */
+  check(
+    "이미 띄운 것은 제외",
+    pendingNotifications(items, ["2026-08-식비-EXCEEDED"]).length === 1
+  );
+  check("전부 띄웠으면 없음", pendingNotifications(items, items.map((i) => i.id)).length === 0);
+  /* 한 번에 같은 id 가 둘 들어와도 하나만 */
+  check("한 묶음 안의 중복도 하나로", pendingNotifications([items[0], items[0]], []).length === 1);
+  check("id 가 없으면 띄우지 않음", pendingNotifications([{ id: "", title: "x", body: "y" }], []).length === 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -10,11 +10,22 @@ import {
   ReceiptText,
 } from "lucide-react";
 import { accountTone } from "../../utils/accountTone";
+import { SearchModal } from "../modals/SearchModal";
+import { AddTransactionModal } from "../transactions/AddTransactionModal";
+import type { LedgerQuery } from "../../services/query";
 
 export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
   onOpenAddModal,
 }) => {
   const { transactions, accounts } = useFinance();
+
+  /*
+    이 화면의 검색은 **그 달 안에서만** 됩니다(컨텍스트가 내주는 목록이 이미
+    그 달로 걸러진 것입니다 — §12). "작년에 그 병원 얼마 냈지"에 답하려면
+    기간을 넘어가야 하므로, 전체에서 찾는 일은 `내역 찾기` 창이 맡습니다(§12.9).
+  */
+  const [search, setSearch] = useState<LedgerQuery | null>(null);
+  const [editingTx, setEditingTx] = useState<any>(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<
@@ -93,6 +104,16 @@ export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
             </button>
           )}
         </div>
+
+        {/* 전체 기간·범위·카테고리로 찾는 창 — 이 화면의 검색은 그 달 안입니다 */}
+        <button
+          onClick={() => setSearch({ text: searchTerm || undefined })}
+          title="전체 기간에서 찾기"
+          className="flex items-center gap-1 bg-white border border-slate-200/90 hover:border-emerald-500 text-slate-700 px-3 py-2.5 rounded-2xl font-bold text-xs shadow-2xs active:scale-95 transition shrink-0 cursor-pointer"
+        >
+          <Search className="w-3.5 h-3.5 text-emerald-600" />
+          <span className="hidden sm:inline">전체 찾기</span>
+        </button>
 
         <button
           onClick={onOpenAddModal}
@@ -253,6 +274,20 @@ export const LedgerView: React.FC<{ onOpenAddModal: () => void }> = ({
           })}
         </div>
       )}
+
+      {/* 내역 찾기 — 기간·범위·카테고리·유사 항목, 그리고 CSV (§12.9) */}
+      <SearchModal
+        isOpen={search !== null}
+        initial={search ?? undefined}
+        onClose={() => setSearch(null)}
+        onPick={(transaction) => setEditingTx(transaction)}
+      />
+
+      <AddTransactionModal
+        isOpen={editingTx !== null}
+        editing={editingTx}
+        onClose={() => setEditingTx(null)}
+      />
     </div>
   );
 };

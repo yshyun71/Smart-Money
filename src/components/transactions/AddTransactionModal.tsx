@@ -15,6 +15,7 @@ import {
 } from "../../services/spread";
 import { CategorySelect } from "./CategorySelect";
 import { ConfirmModal } from "../modals/ConfirmModal";
+import { SearchModal } from "../modals/SearchModal";
 import {
   X,
   Plus,
@@ -66,6 +67,9 @@ export const AddTransactionModal: React.FC<{
   */
   const [note, setNote] = useState("");
   const [noteScope, setNoteScope] = useState<NoteScope>("ONE");
+  /** 같은 가맹점을 모아 볼 때의 이름. 비어 있으면 창이 닫힌 상태입니다. */
+  const [similarOf, setSimilarOf] = useState<string | null>(null);
+
   /* 되돌리기 어려운 일은 공용 확인 창으로 묻습니다 (§12.8) */
   const [ask, setAsk] = useState<{
     title: string;
@@ -564,6 +568,27 @@ export const AddTransactionModal: React.FC<{
             )}
 
             {/*
+              **비슷한 항목 모아 보기.**
+
+              이 계좌 안의 같은 내역명은 아래 `같은 내역명 모두`가 다룹니다.
+              그런데 "이 가게에 그동안 얼마 썼지"는 계좌도 달도 넘어가는
+              질문이라, 기간·범위를 정해 찾는 창으로 보냅니다(§12.9).
+            */}
+            {editing && (
+              <button
+                type="button"
+                onClick={() => setSimilarOf(editing.merchant)}
+                className="mt-2 w-full text-left px-2.5 py-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-400 transition text-[10px] text-slate-600 flex items-center justify-between gap-2 cursor-pointer"
+              >
+                <span className="min-w-0 truncate">
+                  <strong className="text-slate-800">{editing.merchant}</strong> 내역을 기간·범위를
+                  정해 모아 보기
+                </span>
+                <span className="shrink-0 font-bold text-emerald-700">찾기 ›</span>
+              </button>
+            )}
+
+            {/*
               규칙은 앞으로 들어올 내역만 정하고, 그나마 카테고리뿐입니다.
               이미 등록된 지난 달들과 고정비 여부는 여기서 직접 씁니다.
             */}
@@ -814,6 +839,15 @@ export const AddTransactionModal: React.FC<{
   return (
     <>
       {createPortal(modalContent, document.body)}
+
+      {/* 같은 가맹점 모아 보기 — 전체 기간에서 시작합니다 */}
+      <SearchModal
+        isOpen={similarOf !== null}
+        initial={similarOf ? { similarTo: similarOf } : undefined}
+        onClose={() => setSimilarOf(null)}
+        onPick={() => setSimilarOf(null)}
+      />
+
       <ConfirmModal
         isOpen={ask !== null}
         title={ask?.title ?? ""}

@@ -1,12 +1,16 @@
 import React, { useState, useMemo } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { TransactionItem } from "../transactions/TransactionItem";
+import { RecurringModal } from "../modals/RecurringModal";
+import { SearchModal } from "../modals/SearchModal";
 import {
   Pin,
   ShoppingBag,
   Calendar,
   AlertTriangle,
   Sparkles,
+  Repeat,
+  ArrowRight,
 } from "lucide-react";
 
 export const FixedVsVariableView: React.FC<{
@@ -28,6 +32,9 @@ export const FixedVsVariableView: React.FC<{
   } = useFinance();
 
   const [activeSubTab, setActiveSubTab] = useState<"FIXED" | "VARIABLE">("FIXED");
+  /* 정기 결제 모아 보기 — 판정은 이미 되어 있고 보여 줄 자리만 없었습니다(§12.10) */
+  const [showRecurring, setShowRecurring] = useState(false);
+  const [similarOf, setSimilarOf] = useState<string | null>(null);
 
   // Fixed transactions
   const fixedItems = useMemo(() => {
@@ -179,6 +186,26 @@ export const FixedVsVariableView: React.FC<{
           </div>
 
           {/* AI Fixed Cost Leak Tip Banner */}
+          {/* 정기 결제 전체를 모아 보는 길 */}
+          <button
+            type="button"
+            onClick={() => setShowRecurring(true)}
+            className="w-full mb-2 p-3 rounded-2xl bg-white border border-slate-200/90 hover:border-indigo-400 transition flex items-center justify-between gap-2 cursor-pointer active:scale-98"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                <Repeat className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-left min-w-0">
+                <div className="text-xs font-bold text-slate-900">정기 결제 모아 보기</div>
+                <span className="text-[10px] text-slate-400">
+                  매달 같은 날 빠져나가는 것 · 금액이 오른 항목 표시
+                </span>
+              </div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
+          </button>
+
           {recurringSummary && (
             <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -323,6 +350,20 @@ export const FixedVsVariableView: React.FC<{
           </div>
         </div>
       )}
+
+      {/* 정기 결제 목록과, 거기서 고른 가맹점의 내역 (§12.9·12.10) */}
+      <RecurringModal
+        isOpen={showRecurring}
+        onClose={() => setShowRecurring(false)}
+        onPick={(merchant) => setSimilarOf(merchant)}
+      />
+
+      <SearchModal
+        isOpen={similarOf !== null}
+        initial={similarOf ? { similarTo: similarOf } : undefined}
+        onClose={() => setSimilarOf(null)}
+        onPick={() => setSimilarOf(null)}
+      />
     </div>
   );
 };

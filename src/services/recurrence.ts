@@ -123,6 +123,84 @@ export function recurrenceFor(
   return index.get(normaliseMerchant(tx.merchant));
 }
 
+export interface RecurringItem {
+  /** 정규화된 이름을 열쇠로 묶고, 보여 줄 이름은 가장 최근 것입니다. */
+  key: string;
+  merchant: string;
+  /** 매달 나가는 금액으로 볼 값 — 가장 최근 금액. */
+  amount: number;
+  /** 최근 6개월 평균. 금액이 오르내리면 이쪽이 실제에 가깝습니다. */
+  average: number;
+  paymentDay: number;
+  monthCount: number;
+  /** 마지막으로 찍힌 날. 끊긴 구독을 가려냅니다. */
+  lastSeen: string;
+  category: string;
+  accountId: string;
+  amountStable: boolean;
+}
+
+/**
+ * 매달 빠져나가는 것들을 모아 봅니다 (§12.10).
+ *
+ * 고정비 판정(§10)이 이미 반복을 찾아내는데 **모아 볼 자리가 없었습니다** —
+ * 고정비 화면의 한 줄 요약뿐이었습니다. 구독이 늘어난 것을 알아차리는 일은
+ * 개인 가계부에서 가장 값이 큰 점검이고, 계산은 이미 다 되어 있습니다.
+ *
+ * **금액은 가장 최근 것과 평균을 함께** 줍니다. 구독료가 오르면 둘이 벌어지고,
+ * 그 차이가 곧 알아차려야 할 사실입니다.
+ */
+export function recurringItems(transactions: Transaction[]): RecurringItem[] {
+  const index = buildRecurrenceIndex(transactions.filter((tx) => tx.type === "EXPENSE"));
+  const items: RecurringItem[] = [];
+
+  for (const [key, info] of index) {
+    if (!info.isRecurring) continue;
+
+    /* 그 이름의 거래 중 가장 최근 것이 보여 줄 이름·금액·카테고리를 정합니다 */
+    const rows = transactions
+      .filter((tx) => tx.type === "EXPENSE" && normaliseMerchant(tx.merchant) === key)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (rows.length === 0) continue;
+
+    const latest = rows[0];
+    const recent = info.amounts.slice(-6);
+    const average = Math.round(
+      recent.reduce((sum, amount) => sum + amount, 0) / (recent.length || 1)
+    );
+
+    items.push({
+      key,
+      merchant: latest.merchant,
+      amount: latest.amount,
+      average,
+      paymentDay: info.paymentDay,
+      monthCount: info.monthCount,
+      lastSeen: latest.date,
+      category: latest.category,
+      accountId: latest.accountId,
+      amountStable: info.amountStable,
+    });
+  }
+
+  /* 금액 큰 순 — 줄일 것을 찾으러 열었을 가능성이 가장 높습니다 */
+  return items.sort((a, b) => b.amount - a.amount);
+}
+
+/**
+ * 마지막으로 찍힌 지 오래된 것.
+ *
+ * 매달 나가던 것이 두 달 넘게 안 보이면 **끊겼거나, 이름이 바뀌었거나, 명세서를
+ * 아직 안 넣은 것**입니다. 셋 다 사용자가 알아야 할 사실이라 표시만 하고
+ * 목록에서 빼지는 않습니다(§17.1 — 판단은 사람이).
+ */
+export function looksStopped(item: RecurringItem, today: Date = new Date()): boolean {
+  const last = new Date(item.lastSeen);
+  if (Number.isNaN(last.getTime())) return false;
+  const days = (today.getTime() - last.getTime()) / 86400000;
+  return days > 65;
+}
+
 /** A short line describing the evidence, for the model and for the user. */
 export function describeRecurrence(info: RecurrenceInfo | undefined): string {
   if (!info) return "이력 없음";
