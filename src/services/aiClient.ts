@@ -68,7 +68,7 @@ export interface SpendingAnalysisInput {
   recentTransactions: Transaction[];
 }
 
-const ANALYSIS_SCHEMA = object({
+export const ANALYSIS_SCHEMA = object({
   summary: str("이번 달 소비에 대한 종합 진단 요약"),
   healthScore: int("재무 건강 점수 (0-100)"),
   fixedRatioAnalysis: str("고정비 비율 적정성 평가 및 피드백"),
@@ -158,7 +158,7 @@ export type ParsedTransaction = Omit<Transaction, "id" | "accountId"> & {
   accountId?: string;
 };
 
-const SMS_SCHEMA = object({
+export const SMS_SCHEMA = object({
   transactions: {
     type: "array",
     items: object({
@@ -238,7 +238,7 @@ export interface ClassifyResult {
 }
 
 /** Built per run, since the user's own categories belong in the list too. */
-function classifySchema(categories: string[]) {
+export function classifySchema(categories: string[]) {
   return object({
     results: {
       type: "array",
@@ -448,7 +448,7 @@ ${question}
 // 5. Reading a statement's columns
 // ---------------------------------------------------------------------------
 
-const MAPPING_SCHEMA = object({
+export const MAPPING_SCHEMA = object({
   date: int("거래·이용 일자 열의 0부터 시작하는 번호. 없으면 -1"),
   merchant: int("가맹점명·적요 등 내용 열 번호. 없으면 -1"),
   amount: int("출금/입금이 한 열에 합쳐진 경우의 금액 열 번호. 아니면 -1"),

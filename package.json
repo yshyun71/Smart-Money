@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dev-dist",
     "lint": "tsc --noEmit && eslint src tests",
-    "test": "tsx tests/statements.test.ts && tsx tests/cardlink.test.ts && tsx tests/spread.test.ts && tsx tests/format.test.ts && tsx tests/backup.test.ts && tsx tests/budget.test.ts && tsx tests/sms.test.ts && tsx tests/analysis.test.ts && tsx tests/trend.test.ts && tsx tests/ledger.test.ts && tsx tests/importqueue.test.ts && tsx tests/cardlabels.test.ts && tsx tests/integrity.test.ts && tsx tests/db.test.ts && tsx tests/core.test.ts",
+    "test": "tsx tests/statements.test.ts && tsx tests/cardlink.test.ts && tsx tests/spread.test.ts && tsx tests/format.test.ts && tsx tests/backup.test.ts && tsx tests/budget.test.ts && tsx tests/sms.test.ts && tsx tests/analysis.test.ts && tsx tests/trend.test.ts && tsx tests/ledger.test.ts && tsx tests/importqueue.test.ts && tsx tests/cardlabels.test.ts && tsx tests/integrity.test.ts && tsx tests/db.test.ts && tsx tests/ai.test.ts && tsx tests/core.test.ts",
     "check": "npm run lint && npm test"
   },
   "dependencies": {
