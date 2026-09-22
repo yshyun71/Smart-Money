@@ -49,6 +49,7 @@ import {
 } from "../services/cardLink";
 import { actualRows, spendingRows, sumActuals } from "../services/actuals";
 import { pendingNotifications, showNotifications } from "../services/notify";
+import { forgetAccountLabels } from "../services/cardLabels";
 import { categoryBreakdown, monthlyHistory, yearlyHistory } from "../services/history";
 import { budgetAlertsFor, categoryStatuses } from "../services/budgetStatus";
 import {
@@ -1567,6 +1568,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
     try {
       repo.deleteAccount(id);
+      /* 이 계좌를 가리키던 카드 이름 기억도 함께 (§7.10) */
+      forgetAccountLabels(id);
       setAccounts((prev) => prev.filter((a) => a.id !== id));
       setCategoryRules(repo.listCategoryRules());
       syncStats();

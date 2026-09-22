@@ -19,6 +19,11 @@ import {
 } from "../../services/csvImport";
 import { asOfLabel } from "../../utils/format";
 import { recallMapping, rememberMapping } from "../../services/statementFormats";
+import {
+  cardLabelOf,
+  recallAccountForLabel,
+  rememberCardLabel,
+} from "../../services/cardLabels";
 import { detectStatementColumns } from "../../services/aiClient";
 import { hasApiKey } from "../../services/ai";
 import { planBalanceAdjustment } from "../../services/balance";
@@ -139,6 +144,10 @@ export const CsvImportModal: React.FC<{
   const [queueAt, setQueueAt] = useState(-1);
   /** 이미 고른 파일을 또 골랐을 때의 한 줄. */
   const [duplicateNote, setDuplicateNote] = useState<string | null>(null);
+  /** 파일을 열어 알아보는 중 — 몇 번째까지 읽었는지. */
+  const [identifying, setIdentifying] = useState(false);
+  const [identifyAt, setIdentifyAt] = useState(0);
+  const [identifyNote, setIdentifyNote] = useState<string | null>(null);
 
 
   const account = accounts.find((a) => a.id === accountId);
@@ -468,9 +477,64 @@ export const CsvImportModal: React.FC<{
     ]);
   };
 
+  /**
+   * 계좌를 못 정한 파일들을 **열어 보고** 알아냅니다 (§7.10).
+   *
+   * 파일 이름으로 가려지지 않은 파일만 읽습니다 — 이미 정해진 것을 뒤집지 않습니다.
+   * 근거는 그 명세서가 **자기 카드를 부르는 이름**이고(`JCB097`·`본인724`), 지난달에
+   * 사람이 넣어 둔 기억과 견줍니다. 파일 내용에서 카드사 이름을 찾는 방법은 쓰지
+   * 않습니다 — 재 보았더니 여섯 중 하나만 맞았습니다.
+   *
+   * **처음 보는 카드는 아무 일도 하지 않습니다.** 기억이 없으면 알 방법이 없고,
+   * 지어내지 않습니다(§17.1). 화면이 그렇게 말합니다.
+   */
+  const identifyByContent = async () => {
+    const targets = queue
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.state === "PENDING" && !item.accountId);
+
+    if (targets.length === 0 || identifying) return;
+
+    setIdentifying(true);
+    setIdentifyNote(null);
+    let found = 0;
+    let unread = 0;
+
+    for (let at = 0; at < targets.length; at++) {
+      const { index } = targets[at];
+      setIdentifyAt(at + 1);
+
+      try {
+        const loaded = await loadStatementFile(queueFiles[index]);
+        const parsed = parseDelimited(loaded.text);
+        const label = cardLabelOf(parsed);
+        const remembered = label ? recallAccountForLabel(label) : "";
+
+        /* 그 사이에 지워졌거나 다른 사용자의 계좌일 수 있습니다 */
+        const known = accounts.some((acc) => acc.id === remembered);
+        if (known) {
+          found++;
+          setQueue((prev) => markQueue(prev, index, { accountId: remembered }));
+        }
+      } catch {
+        unread++;
+      }
+    }
+
+    setIdentifying(false);
+    setIdentifyAt(0);
+    setIdentifyNote(
+      found > 0
+        ? `${targets.length}개 중 ${found}개를 찾았습니다` +
+            (unread > 0 ? ` · ${unread}개는 읽지 못했습니다` : "")
+        : "알아본 파일이 없습니다 — 한 번 직접 골라 넣으면 다음 달부터 알아봅니다"
+    );
+  };
+
   /** 대기줄에서 한 파일을 뺍니다 — 목록과 파일이 같은 자리를 써야 합니다. */
   const removeFile = (index: number) => {
     setDuplicateNote(null);
+    setIdentifyNote(null);
     setQueueFiles((prev) => prev.filter((_, at) => at !== index));
     setQueue((prev) => prev.filter((_, at) => at !== index));
   };
@@ -620,6 +684,15 @@ export const CsvImportModal: React.FC<{
     }
     setSaveFailure(null);
 
+    /*
+      **넣은 뒤에** 이 명세서가 자기 카드를 뭐라고 부르는지 적어 둡니다(§7.10).
+      다음 달 같은 카드의 파일은 `자동 식별` 이 알아봅니다. 고르다 만 값이 아니라
+      실제로 넣은 판단만 기억합니다 — §7.4 가 사람이 확인한 뒤 형식을 저장하는
+      것과 같은 이유입니다.
+    */
+    const label = cardLabelOf(table);
+    if (label) rememberCardLabel(label, accountId);
+
     try {
       // Worked out from the entries, so the figure is tagged as such
       const moved =
@@ -668,6 +741,11 @@ export const CsvImportModal: React.FC<{
       setFileError("내역은 저장했지만 잔액을 조정하지 못했습니다.");
     }
   };
+
+  /** 계좌를 못 정한 파일 수 — `자동 식별` 이 열어 볼 대상입니다. */
+  const unnamed = queue.filter(
+    (item) => item.state === "PENDING" && !item.accountId
+  ).length;
 
   /* 파일마다 같은 네 단계를 걷게 되므로 어디쯤인지가 제목에 있어야 합니다 */
   const where = queueAt >= 0 ? queueLabel(queue, queueAt, accounts) : "";
@@ -959,6 +1037,38 @@ export const CsvImportModal: React.FC<{
 
                 {duplicateNote && (
                   <p className="text-[10px] font-bold text-amber-700">{duplicateNote}</p>
+                )}
+
+                {/*
+                  파일 이름이 말해 주지 않은 것만 파일을 열어 알아봅니다. 이름으로
+                  이미 가려진 것은 건드리지 않고, 찾아낸 것도 아래에서 언제든
+                  바꿀 수 있습니다.
+                */}
+                {unnamed > 0 && (
+                  <button
+                    type="button"
+                    disabled={identifying}
+                    onClick={() => void identifyByContent()}
+                    className="w-full py-2 rounded-xl bg-indigo-50 border border-indigo-200 text-[11px] font-bold text-indigo-800 hover:bg-indigo-100 disabled:opacity-60 transition cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                  >
+                    {identifying ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        파일 여는 중 {identifyAt} / {unnamed}
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-3.5 h-3.5" />
+                        자동 식별 ({unnamed}개)
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {identifyNote && (
+                  <p className="text-[10px] font-bold text-indigo-700 leading-relaxed">
+                    {identifyNote}
+                  </p>
                 )}
 
                 <div className="space-y-1.5">
