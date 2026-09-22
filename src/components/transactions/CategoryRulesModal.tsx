@@ -107,7 +107,14 @@ export const CategoryRulesModal: React.FC<{
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, result]);
+    /*
+      `ask` 를 의존성에 넣습니다.
+
+      빠뜨렸을 때는 이 효과가 **처음의 `ask`(=null)를 붙잡고** 있어서, 확인 창이
+      열려 있는데도 Escape 가 아래 창을 닫았습니다 — §14.4 가 지키라고 적어 둔
+      바로 그 규칙이 조용히 깨진 것입니다. eslint 가 잡았습니다(§14.9).
+    */
+  }, [isOpen, onClose, result, ask]);
 
   const account = accounts.find((a: { id: string }) => a.id === accountId);
 
