@@ -24,7 +24,6 @@ import { hasApiKey } from "../../services/ai";
 import { planBalanceAdjustment } from "../../services/balance";
 import {
   activeIndex,
-  belongsElsewhere,
   markQueue,
   queueFrom,
   queueLabel,
@@ -37,6 +36,8 @@ import {
 } from "../../services/importQueue";
 import {
   X,
+  Plus,
+  Trash2,
   Upload,
   FileSpreadsheet,
   Loader2,
@@ -136,6 +137,8 @@ export const CsvImportModal: React.FC<{
   const [queueFiles, setQueueFiles] = useState<File[]>([]);
   /** 지금 걷고 있는 파일. 한 파일짜리일 때는 `-1`. */
   const [queueAt, setQueueAt] = useState(-1);
+  /** 이미 고른 파일을 또 골랐을 때의 한 줄. */
+  const [duplicateNote, setDuplicateNote] = useState<string | null>(null);
 
 
   const account = accounts.find((a) => a.id === accountId);
@@ -425,6 +428,54 @@ export const CsvImportModal: React.FC<{
   };
 
   /**
+   * 고른 파일을 대기줄에 **더합니다**.
+   *
+   * 넣을 파일이 한 폴더에 모여 있지 않은 일이 흔합니다 — 카드사마다 내려받는
+   * 자리가 다르고, 달마다 폴더를 나눠 두기도 합니다. 파일 선택 창은 한 번에 한
+   * 폴더만 보여 주므로, **고른 것 위에 더할 수 있어야** 여러 폴더에서 모을 수
+   * 있습니다.
+   *
+   * 같은 파일을 두 번 더하지 않습니다(이름·크기·수정시각이 같으면 같은 파일).
+   * 두 번 들어가면 두 번째는 통째로 중복으로 잡혀 REVIEW 가 쓸모없어집니다.
+   */
+  const addFiles = (picked: File[]) => {
+    if (picked.length === 0) return;
+
+    const seen = new Set(
+      queueFiles.map((file) => `${file.name}|${file.size}|${file.lastModified}`)
+    );
+    const fresh = picked.filter(
+      (file) => !seen.has(`${file.name}|${file.size}|${file.lastModified}`)
+    );
+
+    setFileError(null);
+    setQueueAt(-1);
+    setDuplicateNote(
+      fresh.length === picked.length
+        ? null
+        : `이미 고른 파일 ${picked.length - fresh.length}개는 빼고 더했습니다`
+    );
+    if (fresh.length === 0) return;
+
+    setQueueFiles((prev) => [...prev, ...fresh]);
+    setQueue((prev) => [
+      ...prev,
+      ...queueFrom(
+        fresh.map((file) => file.name),
+        accounts,
+        accountId || undefined
+      ),
+    ]);
+  };
+
+  /** 대기줄에서 한 파일을 뺍니다 — 목록과 파일이 같은 자리를 써야 합니다. */
+  const removeFile = (index: number) => {
+    setDuplicateNote(null);
+    setQueueFiles((prev) => prev.filter((_, at) => at !== index));
+    setQueue((prev) => prev.filter((_, at) => at !== index));
+  };
+
+  /**
    * 대기줄의 한 파일을 엽니다.
    *
    * 대기줄을 **인자로 받습니다.** 방금 갱신한 상태를 곧바로 읽으면 이전 값이
@@ -452,7 +503,10 @@ export const CsvImportModal: React.FC<{
       return;
     }
 
-    resetFile();
+    /*
+      마지막 파일의 결과는 지우지 않습니다 — 파일이 하나뿐인 대기줄에서는
+      DONE 화면이 그 결과(잔액 조정 포함)를 그대로 보여 줍니다.
+    */
     setQueueAt(-1);
     setStep("DONE");
   };
@@ -849,40 +903,7 @@ export const CsvImportModal: React.FC<{
                 onChange={(e) => {
                   const picked = Array.from(e.target.files || []);
                   e.target.value = "";
-                  if (picked.length === 0) return;
-
-                  setFileError(null);
-                  setQueueFiles(picked);
-                  setQueueAt(-1);
-
-                  /*
-                    계좌가 정해져 있고 파일이 하나이며 그 파일이 여기 것으로
-                    보이면 예전 그대로 곧장 갑니다 — 물어볼 것이 없습니다.
-                  */
-                  const alone =
-                    picked.length === 1 &&
-                    accountId &&
-                    !belongsElsewhere(picked[0].name, accountId, accounts);
-
-                  if (alone) {
-                    setQueue([]);
-                    setQueueFiles([]);
-                    void handleFile(picked[0]);
-                    return;
-                  }
-
-                  /*
-                    그 밖에는 대기줄을 만들어 **무엇이 어디로 가는지** 먼저
-                    보여 줍니다. 계좌가 정해져 있으면 전부 그 계좌로 가고, 다른
-                    카드의 것으로 보이는 파일만 건너뜁니다(§7.10).
-                  */
-                  setQueue(
-                    queueFrom(
-                      picked.map((file) => file.name),
-                      accounts,
-                      accountId || undefined
-                    )
-                  );
+                  addFiles(picked);
                 }}
               />
             </label>
@@ -901,17 +922,44 @@ export const CsvImportModal: React.FC<{
                       ? `파일 ${queue.length}개 · 모두 ${account?.name || ""}(으)로`
                       : `파일 ${queue.length}개 · 각각 어느 카드·계좌인가요?`}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQueue([]);
-                      setQueueFiles([]);
-                    }}
-                    className="text-[10px] font-bold text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
-                  >
-                    다시 고르기
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/*
+                      넣을 파일이 한 폴더에 모여 있지 않은 일이 흔합니다 —
+                      파일 선택 창은 한 번에 한 폴더만 보여 주므로 더할 수 있어야
+                      여러 폴더에서 모을 수 있습니다.
+                    */}
+                    <label className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer whitespace-nowrap flex items-center gap-1">
+                      <Plus className="w-3 h-3" />
+                      파일 추가
+                      <input
+                        type="file"
+                        multiple
+                        accept=".csv,.txt,.xls,.xlsx,.xlsm,.xlsb,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        className="hidden"
+                        onChange={(e) => {
+                          const more = Array.from(e.target.files || []);
+                          e.target.value = "";
+                          addFiles(more);
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQueue([]);
+                        setQueueFiles([]);
+                        setDuplicateNote(null);
+                      }}
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer whitespace-nowrap"
+                    >
+                      모두 지우기
+                    </button>
+                  </div>
                 </div>
+
+                {duplicateNote && (
+                  <p className="text-[10px] font-bold text-amber-700">{duplicateNote}</p>
+                )}
 
                 <div className="space-y-1.5">
                   {queue.map((item, index) => {
@@ -933,12 +981,21 @@ export const CsvImportModal: React.FC<{
                             }`}
                           />
                           <span
-                            className={`text-[11px] font-bold truncate ${
+                            className={`text-[11px] font-bold truncate flex-1 ${
                               dropped ? "text-amber-900 line-through" : "text-slate-800"
                             }`}
                           >
                             {item.name}
                           </span>
+                          {/* 잘못 고른 파일을 빼는 길 — 전부 다시 고르게 하지 않습니다 */}
+                          <button
+                            type="button"
+                            onClick={() => removeFile(index)}
+                            aria-label={`${item.name} 빼기`}
+                            className="w-6 h-6 -mr-1 flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition shrink-0 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
 
                         {accountId ? (
@@ -1593,7 +1650,8 @@ export const CsvImportModal: React.FC<{
         )}
 
         {/* ---------------- DONE · 여러 파일 ---------------- */}
-        {step === "DONE" && queue.length > 0 && (
+        {/* 파일이 하나뿐이면 아래의 한 파일짜리 화면이 맡습니다 — 잔액 조정까지 말해 줍니다 */}
+        {step === "DONE" && queue.length > 0 && (queue.length > 1 || !result) && (
           <>
             <div className="py-4 flex flex-col items-center gap-2 text-center">
               <CheckCircle2 className="w-10 h-10 text-emerald-500" />
@@ -1676,7 +1734,7 @@ export const CsvImportModal: React.FC<{
         )}
 
         {/* ---------------- DONE ---------------- */}
-        {step === "DONE" && result && queue.length === 0 && (
+        {step === "DONE" && result && queue.length <= 1 && (
           <>
             <div className="py-4 flex flex-col items-center gap-2 text-center">
               <CheckCircle2 className="w-10 h-10 text-emerald-500" />
