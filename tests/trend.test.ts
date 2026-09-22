@@ -15,6 +15,12 @@ import {
   valueOf,
   categoriesInRange,
 } from "../src/services/trend";
+import {
+  summariseEntries,
+  categoryBreakdown,
+  monthlyHistory,
+  yearlyHistory,
+} from "../src/services/history";
 
 let passed = 0;
 const failures: string[] = [];
@@ -191,6 +197,51 @@ section("모르는 것은 지어내지 않습니다");
   );
   check("0에서 시작하면 비율 없음", fromZero.changeRatio === null, fromZero);
   check("그래도 변화량은 말합니다", fromZero.change === 50_000, fromZero);
+}
+
+// ---------------------------------------------------------------------------
+section("이력 집계 — 달·해·카테고리 비중");
+// ---------------------------------------------------------------------------
+{
+  const rows: any[] = [
+    tx("2026-07-05", 300_000, { expenseType: "FIXED", category: "주거" }),
+    tx("2026-07-10", 120_000, { category: "식비" }),
+    tx("2026-07-11", 2_000_000, { type: "INCOME", category: "급여" }),
+    tx("2026-08-03", 80_000, { category: "식비" }),
+    tx("2025-12-25", 50_000, { category: "쇼핑" }),
+  ];
+
+  const july = summariseEntries(rows.filter((t) => t.date.startsWith("2026-07")));
+  check("수입", july.income === 2_000_000, july);
+  check("지출", july.expense === 420_000, july);
+  check("고정비", july.fixed === 300_000, july);
+  check("변동비", july.variable === 120_000, july);
+  check("순저축은 수입 − 지출", july.savings === 1_580_000, july);
+
+  const shares = categoryBreakdown(rows.filter((t) => t.date.startsWith("2026-07")), july.expense);
+  check("금액 큰 순", shares[0].category === "주거", shares);
+  check("비중", Math.round(shares[0].percentage) === 71, shares[0]);
+  /* 지출이 0이면 비중이란 것이 없습니다 — 0으로 나누지 않습니다 */
+  check("분모가 0이면 0%", categoryBreakdown(rows, 0)[0].percentage === 0);
+  check("수입은 비중에 없음", !shares.some((s) => s.category === "급여"), shares);
+
+  const months = monthlyHistory(rows, { until: "2026-08", months: 3 });
+  check("고른 달로 끝남", months[months.length - 1].month === "2026-08", months.map((m) => m.month));
+  check("석 달", months.length === 3, months.map((m) => m.month));
+  /*
+    내역이 없는 달도 한 점으로 남깁니다 — 빼면 "그 달에 쓰지 않았다"가
+    "그 달이 없었다"로 보입니다.
+  */
+  check("빈 달도 0으로", months[0].month === "2026-06" && months[0].expense === 0, months[0]);
+  check("축 이름", months[0].displayMonth === "6월", months[0]);
+  check("해를 넘겨도 셈", monthlyHistory(rows, { until: "2026-01", months: 2 })[0].month === "2025-12");
+  check("달이 깨져 있으면 빈 목록", monthlyHistory(rows, { until: "" }).length === 0);
+
+  const years = yearlyHistory(rows);
+  check("자료가 있는 해만", years.map((y) => y.year).join() === "2025,2026", years.map((y) => y.year));
+  check("오래된 해부터", years[0].year === "2025", years.map((y) => y.year));
+  check("해 합계", years[1].expense === 500_000, years[1]);
+  check("해마다 카테고리 비중", years[1].categories[0].category === "주거", years[1].categories);
 }
 
 // ---------------------------------------------------------------------------

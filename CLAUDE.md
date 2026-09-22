@@ -78,7 +78,10 @@ src/
 │   ├── csvImport.ts          파일 해독 · 표 파싱 · 열 매칭 · 초안 생성
 │   ├── statementFormats.ts   확인된 명세서 형식 기억 (localStorage)
 │   ├── categoryRules.ts      패턴 규칙 · 카드대금/금융 자동 판별
-│   ├── cardLink.ts           카드-출금 연결 · 결제월 대조 · 청구예정액
+│   ├── cardLink.ts           카드-출금 연결 · 결제월 대조 · 청구예정액 · 표기
+│   ├── history.ts            달·해 집계 · 카테고리 비중
+│   ├── budgetStatus.ts       카테고리 소진율 판정 · 예산 알림
+│   ├── notify.ts             기기 알림 (11.8)
 │   ├── balance.ts            잔액 조정 산식
 │   ├── recurrence.ts         고정비 반복 판정
 │   ├── pinCrypto.ts          PBKDF2 PIN 해시
@@ -1145,5 +1148,8 @@ sql.js를 노드에서 쓸 때는 `initSqlJs({ locateFile: () => "./node_modules
 2. **추측으로 연결하지 않습니다.** 카드·명세서·중복 판정 모두, 근거가 없으면 비워 두고 사용자가 정하게 합니다.
 3. **기존 데이터를 조용히 버리지 않습니다.** 화면에 없는 필드라도 저장 시 유지하세요(결제월을 날려먹은 적이 있습니다).
 4. **구조를 바꾸면 마이그레이션과 `EXPECTED_*` 목록을 함께 고칩니다.**
-5. **로직은 `services/`의 순수 함수로**, 화면은 그것을 부르기만 하도록. 타입 검사가 닿는 곳이 거기뿐입니다.
+5. **로직은 `services/`의 순수 함수로**, 화면과 컨텍스트는 그것을 부르기만 하도록.
+   → 이 규칙이 실제로 **버그를 드러냅니다.** 화면 안에 있던 계산을 서비스로 옮길 때마다 두 화면이 서로 다른 말을 하고 있던 것이 드러났습니다 — `describeBill`(홈과 카드·계좌가 다른 청구액), `spareOf`(홈이 옛 식을 복제), `categorySpendRows`(목록의 합이 화면 금액과 달랐음).
+   → **컨텍스트도 화면입니다.** `FinanceContext` 안의 파생 계산(`categoryStatuses`·`budgetAlertsFor`·`monthlyHistory`·`yearlyHistory`·`categoryBreakdown`)을 내려 회귀 세트가 닿게 했습니다. 남는 것은 상태·저장·조율뿐이어야 합니다.
+   → **`React.memo` 는 컨텍스트를 읽는 컴포넌트에 효과가 없습니다.** `TransactionItem` 이 `useFinance()` 를 부르므로 컨텍스트 값이 바뀌면 어차피 다시 그려집니다. 목록 성능이 문제가 되면 **먼저 핸들러를 prop 으로 내리고** 그다음에 memo 를 붙이세요 — 순서를 거꾸로 하면 아무 효과 없는 코드만 늘어납니다.
 6. 새 판정 규칙을 넣을 때는 **가져오기와 마이그레이션이 같은 표를 쓰게** 하세요. 과거 데이터와 새 데이터가 달리 분류되면 합계가 맞지 않습니다.

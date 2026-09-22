@@ -49,9 +49,10 @@ import {
 } from "../services/cardLink";
 import { actualRows, spendingRows, sumActuals } from "../services/actuals";
 import { pendingNotifications, showNotifications } from "../services/notify";
+import { categoryBreakdown, monthlyHistory, yearlyHistory } from "../services/history";
+import { budgetAlertsFor, categoryStatuses } from "../services/budgetStatus";
 import { basisOf, driftSince, type AnalysisDrift } from "../services/analysisFreshness";
 import {
-  BUDGET_EXCLUDED_CATEGORIES,
   BUILT_IN_CATEGORIES,
   CARD_PAYMENT_CATEGORY,
   FIXED_BUDGET_CATEGORIES,
@@ -665,22 +666,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const fixedRatio = totalExpense > 0 ? (fixedExpenseTotal / totalExpense) * 100 : 0;
   const variableRatio = totalExpense > 0 ? (variableExpenseTotal / totalExpense) * 100 : 0;
 
-  const categoryExpenses = useMemo(() => {
-    const map: Record<string, number> = {};
-    monthlySpending
-      .filter((tx) => tx.type === "EXPENSE")
-      .forEach((tx) => {
-        map[tx.category] = (map[tx.category] || 0) + tx.amount;
-      });
-
-    return Object.entries(map)
-      .map(([category, amount]) => ({
-        category,
-        amount,
-        percentage: totalExpense > 0 ? (amount / totalExpense) * 100 : 0,
-      }))
-      .sort((a, b) => b.amount - a.amount);
-  }, [monthlySpending, totalExpense]);
+  const categoryExpenses = useMemo(
+    () => categoryBreakdown(monthlySpending, totalExpense),
+    [monthlySpending, totalExpense]
+  );
 
   const implementedSavingsTotal = useMemo(() => {
     if (!aiAnalysis?.savingsRecommendations) return 0;
@@ -693,68 +682,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // History, derived from the transactions actually on this device
   // -------------------------------------------------------------------------
 
-  const summarise = (txs: Transaction[]) => {
-    const income = txs.filter((t) => t.type === "INCOME").reduce((a, c) => a + c.amount, 0);
-    const expense = txs.filter((t) => t.type === "EXPENSE").reduce((a, c) => a + c.amount, 0);
-    const fixed = txs
-      .filter((t) => t.type === "EXPENSE" && t.expenseType === "FIXED")
-      .reduce((a, c) => a + c.amount, 0);
-    const variable = txs
-      .filter((t) => t.type === "EXPENSE" && t.expenseType === "VARIABLE")
-      .reduce((a, c) => a + c.amount, 0);
-    return { income, expense, fixed, variable, savings: income - expense };
-  };
+  /* 집계는 `services/history.ts` 가 합니다 — 여기서는 어느 목록을 넘길지만 정합니다 */
+  const monthlyHistoricalData = useMemo<MonthlyHistoricalItem[]>(
+    () => monthlyHistory(countedTransactions, { until: selectedMonth, months: 6 }),
+    [countedTransactions, selectedMonth]
+  );
 
-  const monthlyHistoricalData = useMemo<MonthlyHistoricalItem[]>(() => {
-    const [year, month] = selectedMonth.split("-").map(Number);
-    const items: MonthlyHistoricalItem[] = [];
-
-    for (let offset = 5; offset >= 0; offset--) {
-      const date = new Date(year, month - 1 - offset, 1);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const totals = summarise(
-        countedTransactions.filter((tx) => tx.date.startsWith(key))
-      );
-      items.push({
-        month: key,
-        displayMonth: `${date.getMonth() + 1}월`,
-        ...totals,
-      });
-    }
-
-    return items;
-  }, [countedTransactions, selectedMonth]);
-
-  const yearlyHistoricalData = useMemo<YearlyHistoricalItem[]>(() => {
-    const byYear = new Map<string, Transaction[]>();
-    countedTransactions.forEach((tx) => {
-      const year = tx.date.slice(0, 4);
-      if (!byYear.has(year)) byYear.set(year, []);
-      byYear.get(year)!.push(tx);
-    });
-
-    return Array.from(byYear.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([year, txs]) => {
-        const totals = summarise(txs);
-        const categoryMap: Record<string, number> = {};
-        txs
-          .filter((tx) => tx.type === "EXPENSE")
-          .forEach((tx) => {
-            categoryMap[tx.category] = (categoryMap[tx.category] || 0) + tx.amount;
-          });
-
-        const categories = Object.entries(categoryMap)
-          .map(([category, amount]) => ({
-            category,
-            amount,
-            percentage: totals.expense > 0 ? (amount / totals.expense) * 100 : 0,
-          }))
-          .sort((a, b) => b.amount - a.amount);
-
-        return { year, ...totals, categories };
-      });
-  }, [countedTransactions]);
+  const yearlyHistoricalData = useMemo<YearlyHistoricalItem[]>(
+    () => yearlyHistory(countedTransactions),
+    [countedTransactions]
+  );
 
   // -------------------------------------------------------------------------
   // Budget
@@ -789,98 +726,27 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const totalVariableSpent = variableExpenseTotal;
 
-  const budgetStatusList = useMemo<CategoryBudgetStatus[]>(() => {
-    const categorySpentMap: Record<string, number> = {};
-    monthlySpending
-      .filter((t) => t.type === "EXPENSE")
-      .forEach((t) => {
-        categorySpentMap[t.category] = (categorySpentMap[t.category] || 0) + t.amount;
-      });
+  /* 판정은 `services/budgetStatus.ts` 가 합니다 */
+  const budgetStatusList = useMemo<CategoryBudgetStatus[]>(
+    () =>
+      categoryStatuses({
+        transactions: monthlySpending,
+        categoryBudgets: budgetConfig.categoryBudgets,
+        alertThresholdPercent: budgetConfig.alertThresholdPercent,
+      }),
+    [monthlySpending, budgetConfig]
+  );
 
-    /*
-      카드대금과 저축은 카테고리 예산에서 빼둡니다 — 카드대금은 그 카드의
-      명세서로, 저축은 `목표 저축액`으로 이미 셈해지는 돈입니다. 가용 변동비가
-      저축을 뺀 금액이라, 저축에 또 예산을 주면 없는 돈을 배분하게 됩니다.
-    */
-    const allCategories = Array.from(
-      new Set([
-        ...Object.keys(budgetConfig.categoryBudgets || {}),
-        ...Object.keys(categorySpentMap),
-      ])
-    ).filter((category) => !BUDGET_EXCLUDED_CATEGORIES.includes(category as never));
-
-    return allCategories
-      .map((category) => {
-        const budget = budgetConfig.categoryBudgets[category] || 0;
-        const spent = categorySpentMap[category] || 0;
-        const remaining = budget - spent;
-        const percentage = budget > 0 ? (spent / budget) * 100 : spent > 0 ? 100 : 0;
-
-        /*
-          예산을 정하지 않은 칸은 안전한 것도 초과한 것도 아닙니다. 예전에는
-          `SAFE`로 남아, 지출이 46만원인 칸이 초록 막대를 가득 채운 채
-          "안전 · 100% 소진"이라고 적혀 있었습니다.
-        */
-        let status: "SAFE" | "WARNING" | "EXCEEDED" | "UNSET" = "SAFE";
-        if (budget <= 0) {
-          status = "UNSET";
-        } else if (percentage >= 100) {
-          status = "EXCEEDED";
-        } else if (percentage >= (budgetConfig.alertThresholdPercent || 80)) {
-          status = "WARNING";
-        }
-
-        return { category, budget, spent, remaining, percentage, status };
-      })
-      .sort((a, b) => b.percentage - a.percentage);
-  }, [monthlySpending, budgetConfig]);
-
-  const budgetAlerts = useMemo<BudgetAlert[]>(() => {
-    if (!budgetConfig.enablePushAlerts) return [];
-
-    const alerts: BudgetAlert[] = [];
-    budgetStatusList.forEach((item) => {
-      if (item.budget <= 0) return;
-
-      const alertId = `${selectedMonth}-${item.category}-${item.status}`;
-      if (dismissedAlertIds.includes(alertId)) return;
-
-      const createdAt = new Date().toLocaleTimeString("ko-KR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-
-      if (item.status === "EXCEEDED") {
-        alerts.push({
-          id: alertId,
-          category: item.category,
-          type: "EXCEEDED",
-          spent: item.spent,
-          budget: item.budget,
-          percentage: item.percentage,
-          message: `[${item.category}] 예산 ${item.budget.toLocaleString()}원 대비 ${item.spent.toLocaleString()}원(${Math.round(
-            item.percentage
-          )}%)을 지출하여 예산을 초과했습니다!`,
-          createdAt,
-        });
-      } else if (item.status === "WARNING") {
-        alerts.push({
-          id: alertId,
-          category: item.category,
-          type: "WARNING",
-          spent: item.spent,
-          budget: item.budget,
-          percentage: item.percentage,
-          message: `[${item.category}] 예산의 ${Math.round(
-            item.percentage
-          )}%를 소진했습니다 (${(item.budget - item.spent).toLocaleString()}원 남음).`,
-          createdAt,
-        });
-      }
-    });
-
-    return alerts;
-  }, [budgetStatusList, budgetConfig.enablePushAlerts, dismissedAlertIds, selectedMonth]);
+  const budgetAlerts = useMemo<BudgetAlert[]>(
+    () =>
+      budgetAlertsFor({
+        statuses: budgetStatusList,
+        month: selectedMonth,
+        dismissedIds: dismissedAlertIds,
+        enabled: budgetConfig.enablePushAlerts,
+      }),
+    [budgetStatusList, budgetConfig.enablePushAlerts, dismissedAlertIds, selectedMonth]
+  );
 
   /*
     한도를 넘긴 순간 **기기 알림으로도** 한 번 띄웁니다.

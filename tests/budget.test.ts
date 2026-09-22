@@ -27,6 +27,7 @@ import {
   spendingRows,
 } from "../src/services/actuals";
 import { monthPeriod } from "../src/services/trend";
+import { categoryStatuses, budgetAlertsFor } from "../src/services/budgetStatus";
 
 let passed = 0;
 const failures: string[] = [];
@@ -649,6 +650,127 @@ section("변동비 실적 — 이미 쓴 돈은 배분할 수 없습니다");
   check(
     "음수 실적은 무시",
     remainingSpare({ ...inputs, variableSpent: -500_000 }) === 1_500_000
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("카테고리 상태 — 한도와 지출을 나란히 (§11.5)");
+// ---------------------------------------------------------------------------
+{
+  const rows: any[] = [
+    varTx("식비", "2026-08", 450_000),
+    varTx("쇼핑", "2026-08", 90_000),
+    varTx("카드대금", "2026-08", 2_000_000),
+    varTx("저축", "2026-08", 500_000),
+  ];
+
+  const statuses = categoryStatuses({
+    transactions: rows,
+    categoryBudgets: { 식비: 400_000, 쇼핑: 300_000, 교통: 100_000 },
+    alertThresholdPercent: 80,
+  });
+
+  const of = (category: string) => statuses.find((s) => s.category === category);
+
+  check("초과", of("식비")?.status === "EXCEEDED", of("식비"));
+  check("초과 금액", of("식비")?.remaining === -50_000, of("식비"));
+  /*
+    `카드대금`·`저축`은 다른 자리에서 이미 셈해지는 돈이라 예산에서 빼둡니다 —
+    저축에 또 예산을 주면 없는 돈을 배분하게 됩니다(§6.1).
+  */
+  check("카드대금 제외", of("카드대금") === undefined, statuses.map((s) => s.category));
+  check("저축 제외", of("저축") === undefined, statuses.map((s) => s.category));
+  /* 한도만 있고 쓰지 않은 칸도 보여야 합니다 */
+  check("안 쓴 칸도 나옴", of("교통")?.status === "SAFE", of("교통"));
+  check("소진율 높은 순", statuses[0].category === "식비", statuses.map((s) => s.category));
+
+  // 임계값에 닿으면 경고
+  const warning = categoryStatuses({
+    transactions: [varTx("식비", "2026-08", 320_000)],
+    categoryBudgets: { 식비: 400_000 },
+    alertThresholdPercent: 80,
+  });
+  check("80%면 경고", warning[0].status === "WARNING", warning[0]);
+  const safe = categoryStatuses({
+    transactions: [varTx("식비", "2026-08", 310_000)],
+    categoryBudgets: { 식비: 400_000 },
+    alertThresholdPercent: 80,
+  });
+  check("77%는 안전", safe[0].status === "SAFE", safe[0]);
+  /* 임계값을 주지 않으면 80 입니다 */
+  check(
+    "기본 임계값 80",
+    categoryStatuses({
+      transactions: [varTx("식비", "2026-08", 320_000)],
+      categoryBudgets: { 식비: 400_000 },
+    })[0].status === "WARNING"
+  );
+
+  /*
+    **한도를 정하지 않은 칸은 `SAFE` 가 아닙니다.** 예전에는 지출 46만원인 칸이
+    초록 막대를 가득 채운 채 "안전 · 100% 소진"이라고 적혀 있었습니다.
+  */
+  const unset = categoryStatuses({
+    transactions: [varTx("의료", "2026-08", 460_000)],
+    categoryBudgets: {},
+  });
+  check("한도 없으면 UNSET", unset[0].status === "UNSET", unset[0]);
+}
+
+// ---------------------------------------------------------------------------
+section("예산 알림 — 언제, 몇 번 (§11.8)");
+// ---------------------------------------------------------------------------
+{
+  const statuses = categoryStatuses({
+    transactions: [
+      varTx("식비", "2026-08", 450_000),
+      varTx("쇼핑", "2026-08", 260_000),
+      varTx("의료", "2026-08", 90_000),
+    ],
+    categoryBudgets: { 식비: 400_000, 쇼핑: 300_000 },
+  });
+
+  const now = new Date("2026-08-20T13:45:00");
+  const alerts = budgetAlertsFor({ statuses, month: "2026-08", now });
+
+  check("초과와 경고 둘", alerts.length === 2, alerts.map((a) => a.id));
+  /* 한도를 정하지 않은 칸은 넘길 한도가 없으므로 알리지 않습니다 */
+  check("UNSET 은 알리지 않음", !alerts.some((a) => a.category === "의료"), alerts);
+  check("초과 문구", alerts.find((a) => a.type === "EXCEEDED")?.message.includes("초과했습니다"));
+  check("경고 문구", alerts.find((a) => a.type === "WARNING")?.message.includes("소진했습니다"));
+  check("남은 금액을 말함", alerts.find((a) => a.type === "WARNING")?.message.includes("40,000원 남음"));
+
+  /*
+    **id 는 `달-카테고리-상태`** 입니다. 경고에서 초과로 넘어가면 다른 알림이
+    되어 닫아 둔 것이 되살아나고, 같은 상태에 머무는 동안에는 한 번만 보입니다.
+  */
+  check("id 규칙", alerts.some((a) => a.id === "2026-08-식비-EXCEEDED"), alerts.map((a) => a.id));
+  const afterDismiss = budgetAlertsFor({
+    statuses,
+    month: "2026-08",
+    dismissedIds: ["2026-08-식비-EXCEEDED"],
+    now,
+  });
+  check("닫은 것은 다시 오지 않음", afterDismiss.length === 1, afterDismiss.map((a) => a.id));
+  check(
+    "상태가 바뀌면 새 알림",
+    budgetAlertsFor({
+      statuses: categoryStatuses({
+        transactions: [varTx("식비", "2026-08", 330_000)],
+        categoryBudgets: { 식비: 400_000 },
+      }),
+      month: "2026-08",
+      dismissedIds: ["2026-08-식비-EXCEEDED"],
+      now,
+    }).length === 1
+  );
+
+  // 알림을 끄면 아무것도 만들지 않습니다
+  check("꺼져 있으면 없음", budgetAlertsFor({ statuses, month: "2026-08", enabled: false }).length === 0);
+  // 달이 다르면 다른 알림입니다
+  check(
+    "달이 id 에 들어감",
+    budgetAlertsFor({ statuses, month: "2026-09", now })[0].id.startsWith("2026-09")
   );
 }
 
