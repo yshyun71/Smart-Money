@@ -119,7 +119,8 @@ export function splitDrafts(options: {
 
 /* -------------------------------------------------------------------- 대기줄 */
 
-export type FileState = "PENDING" | "DONE" | "FAILED";
+/** `SKIPPED` 는 **시작 전에** 걸러진 것, `FAILED` 는 걷다가 멈춘 것입니다. */
+export type FileState = "PENDING" | "DONE" | "FAILED" | "SKIPPED";
 
 export interface QueuedFile {
   name: string;
@@ -159,13 +160,51 @@ export function guessAccountForFile(
   return matches.length === 1 ? matches[0].id : "";
 }
 
-/** 고른 파일들을 대기줄로. 이름 순이 아니라 **고른 순서**를 지킵니다. */
-export function queueFrom(names: string[], accounts: ConnectedAccount[]): QueuedFile[] {
-  return names.map((name) => ({
-    name,
-    accountId: guessAccountForFile(name, accounts),
-    state: "PENDING" as FileState,
-  }));
+/**
+ * 그 파일이 **다른 계좌**의 것으로 보이는가.
+ *
+ * 계좌가 정해진 자리에서 쓰는 판정입니다. 이름이 다른 카드사를 대놓고 말하고
+ * 그 카드사 카드가 등록돼 있으면, 그 파일은 여기 것이 아닙니다.
+ *
+ * **모르는 것은 여기 것으로 봅니다.** 이름에 카드사가 없는 명세서가 흔하고
+ * (`이용대금명세서_20260903.xlsx`), 그것까지 걸러 내면 **같은 카드의 여러 달을
+ * 한 번에 넣는 길**이 통째로 막힙니다. 근거가 있을 때만 움직입니다(§17.2).
+ */
+export function belongsElsewhere(
+  fileName: string,
+  accountId: string,
+  accounts: ConnectedAccount[]
+): boolean {
+  const guess = guessAccountForFile(fileName, accounts);
+  return Boolean(guess) && guess !== accountId;
+}
+
+/**
+ * 고른 파일들을 대기줄로. 이름 순이 아니라 **고른 순서**를 지킵니다.
+ *
+ * `fixedAccountId` 를 주면 **전부 그 계좌**로 갑니다 — 한 카드의 여러 달 명세서를
+ * 한 번에 넣는 경우입니다. 다른 카드의 것으로 보이는 파일은 **건너뜁니다**:
+ * 우리카드를 열어 놓고 누른 자리에서 삼성카드 명세서가 조용히 우리카드로
+ * 들어가는 것이 이 기능이 낼 수 있는 가장 나쁜 결과입니다.
+ */
+export function queueFrom(
+  names: string[],
+  accounts: ConnectedAccount[],
+  fixedAccountId?: string
+): QueuedFile[] {
+  return names.map((name) => {
+    if (!fixedAccountId) {
+      return { name, accountId: guessAccountForFile(name, accounts), state: "PENDING" };
+    }
+
+    const elsewhere = belongsElsewhere(name, fixedAccountId, accounts);
+    return {
+      name,
+      accountId: fixedAccountId,
+      state: elsewhere ? "SKIPPED" : "PENDING",
+      reason: elsewhere ? "다른 카드·계좌의 파일로 보입니다" : undefined,
+    };
+  });
 }
 
 /** 아직 처리하지 않은 첫 파일. 없으면 `-1`. */
@@ -200,17 +239,27 @@ export function markQueue(
   return queue.map((item, at) => (at === index ? { ...item, ...patch } : item));
 }
 
-/** 계좌를 정하지 않은 파일이 남아 있으면 시작하지 않습니다. */
+/**
+ * 시작할 수 있는가.
+ *
+ * **넣을 파일이 하나라도 있고**, 넣을 파일마다 계좌가 정해져 있어야 합니다.
+ * 건너뛰기로 표시해 둔 파일은 계좌를 묻지 않습니다 — 넣지 않을 것이니까요.
+ */
 export function queueReady(queue: QueuedFile[]): boolean {
-  return queue.length > 0 && queue.every((item) => Boolean(item.accountId));
+  const going = queue.filter((item) => item.state === "PENDING");
+  return going.length > 0 && going.every((item) => Boolean(item.accountId));
 }
 
 export interface QueueSummary {
   files: number;
   done: number;
+  /** 걷다가 멈춘 파일. */
   failed: number;
+  /** 시작 전에 걸러진 파일 — 다른 계좌의 것으로 보여서. */
+  skippedFiles: number;
   added: number;
   replaced: number;
+  /** **줄** 단위 건너뜀(중복). 파일 단위인 `skippedFiles` 와 다릅니다. */
   skipped: number;
 }
 
@@ -223,11 +272,14 @@ export interface QueueSummary {
 export function queueSummary(queue: QueuedFile[]): QueueSummary {
   const sum = (pick: (item: QueuedFile) => number | undefined) =>
     queue.reduce((total, item) => total + (pick(item) || 0), 0);
+  const count = (state: FileState) =>
+    queue.filter((item) => item.state === state).length;
 
   return {
     files: queue.length,
-    done: queue.filter((item) => item.state === "DONE").length,
-    failed: queue.filter((item) => item.state === "FAILED").length,
+    done: count("DONE"),
+    failed: count("FAILED"),
+    skippedFiles: count("SKIPPED"),
     added: sum((item) => item.added),
     replaced: sum((item) => item.replaced),
     skipped: sum((item) => item.skipped),

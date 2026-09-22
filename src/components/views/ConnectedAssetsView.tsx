@@ -409,7 +409,12 @@ export const ConnectedAssetsView: React.FC<{
 
         {/* Primary action: bring a statement in */}
         <button
-          onClick={() => setCsvAccountId(accounts[0]?.id ?? "")}
+          /*
+            계좌를 미리 고르지 않고 엽니다. 여기는 어느 계좌의 자리도 아니라
+            `첫 계좌` 는 아무 근거 없는 값이었습니다(§17.2) — 파일마다 이름을
+            보고 정합니다(§7.10).
+          */
+          onClick={() => setCsvAccountId("")}
           disabled={accounts.length === 0}
           className="w-full flex items-center justify-between gap-2 p-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-98 text-white transition disabled:opacity-40 shadow-xs"
         >

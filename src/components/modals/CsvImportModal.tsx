@@ -24,6 +24,7 @@ import { hasApiKey } from "../../services/ai";
 import { planBalanceAdjustment } from "../../services/balance";
 import {
   activeIndex,
+  belongsElsewhere,
   markQueue,
   queueFrom,
   queueLabel,
@@ -78,7 +79,10 @@ export const CsvImportModal: React.FC<{
   } = useFinance();
 
   const [step, setStep] = useState<Step>("PICK");
-  const [accountId, setAccountId] = useState(defaultAccountId || accounts[0]?.id || "");
+  /** 빈 값은 **여러 카드·계좌** — 파일마다 따로 정한다는 뜻입니다(§7.10). */
+  const [accountId, setAccountId] = useState(defaultAccountId || "");
+  /** 계좌를 정한 채로 열렸는가 — 그러면 이 화면에서 바꾸지 못합니다. */
+  const locked = Boolean(defaultAccountId);
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
@@ -179,6 +183,8 @@ export const CsvImportModal: React.FC<{
     setQueue([]);
     setQueueFiles([]);
     setQueueAt(-1);
+    /* 대기줄을 걷는 동안 파일마다 갈아 끼웠으므로 열렸을 때의 값으로 */
+    setAccountId(defaultAccountId || "");
   };
 
   const handleClose = () => {
@@ -231,26 +237,24 @@ export const CsvImportModal: React.FC<{
     The user corrects it on the mapping step.
   */
   /*
-    The ledger already knows which card is being added to, so the picker starts
-    there rather than on whichever account happens to be first.
+    **계좌를 정한 채로 열었으면 그 계좌로 고정입니다.**
 
-    accountId is initialised once, when the modal first mounts — long before
-    any ledger has been opened — and reset() deliberately leaves it alone so a
-    person importing several files in a row does not have to choose the account
-    each time. Neither of those gives the opening account a chance to be
-    applied, which is why an import begun from a card's own screen still
-    offered the first bank account.
+    `defaultAccountId` 는 카드·계좌 내역 창(그리고 홈의 자산 요약에서 연 같은 창)이
+    넘깁니다. `우리카드` 를 열어 놓고 `엑셀·CSV` 를 누른 사람은 **우리카드 명세서를
+    넣겠다는 뜻**이고, 그 자리에서 다른 카드를 고를 수 있게 두면 맥락과 어긋납니다.
+    그래서 고르는 상자를 아예 두지 않습니다.
 
-    It runs on opening only: while the modal is open the person's own choice is
-    theirs to keep.
+    카드·계좌 탭의 `카드내역 · 통장내역 가져오기` 는 반대로 **아무 계좌의 자리도
+    아니라서** 빈 값으로 엽니다 — 예전에는 `첫 계좌` 가 잡혔는데, 그것은 아무 근거
+    없는 값이라 삼성카드 명세서가 국민은행으로 들어갈 수 있었습니다(§17.2).
+
+    열리는 순간에만 정합니다 — 열려 있는 동안의 선택은 사용자의 것입니다(§14.7).
   */
   useEffect(() => {
     if (!isOpen) return;
 
     const known = (id?: string) => (accounts.some((a: any) => a.id === id) ? id : "");
-    const wanted = known(defaultAccountId) || known(accountId) || accounts[0]?.id || "";
-
-    if (wanted !== accountId) setAccountId(wanted);
+    setAccountId(known(defaultAccountId) || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, defaultAccountId]);
 
@@ -743,7 +747,7 @@ export const CsvImportModal: React.FC<{
         {/* ---------------- PICK ---------------- */}
         {step === "PICK" && (
           <>
-            <div className={queue.length > 0 ? "hidden" : ""}>
+            <div className={queueAt >= 0 ? "hidden" : ""}>
               <label className="text-[11px] font-bold text-slate-700 block mb-1.5">
                 어느 카드·계좌의 내역인가요?
               </label>
@@ -751,18 +755,63 @@ export const CsvImportModal: React.FC<{
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-900">
                   등록된 카드·계좌가 없습니다. 먼저 카드나 계좌를 등록해주세요.
                 </div>
+              ) : locked ? (
+                /*
+                  그 카드·카드 내역 화면에서 열었습니다. 거기서 다른 카드를
+                  고르게 두면 맥락과 어긋나므로 **바꿀 수 없다고 말합니다**.
+                  여러 달 명세서를 한 번에 넣는 길은 그대로 열려 있습니다.
+                */
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-2">
+                  <span className="text-sm shrink-0">
+                    {account?.type === "BANK" ? "🏦" : "💳"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-slate-900 truncate">
+                      {account?.name || "-"}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      이 화면에서는 이 카드·계좌로만 가져옵니다 · 여러 달 파일을 한 번에
+                      고를 수 있습니다
+                    </div>
+                  </div>
+                </div>
               ) : (
-                <select
-                  value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                  className="w-full px-3 py-2.5 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
-                >
-                  {accounts.map((acc) => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.type === "BANK" ? "🏦" : "💳"} {acc.name}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <select
+                    value={accountId}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setAccountId(next);
+                      /* 이미 고른 파일이 있으면 바뀐 기준으로 다시 가릅니다 */
+                      if (queueFiles.length > 0) {
+                        setQueue(
+                          queueFrom(
+                            queueFiles.map((file) => file.name),
+                            accounts,
+                            next || undefined
+                          )
+                        );
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 text-xs rounded-xl border border-slate-200 bg-white focus:border-emerald-400 focus:outline-none"
+                  >
+                    {/*
+                      **아무 계좌의 자리도 아닙니다.** 예전에는 첫 계좌가 잡혀
+                      있어 삼성카드 명세서가 국민은행으로 들어갈 수 있었습니다.
+                    */}
+                    <option value="">🗂️ 여러 카드·계좌 (파일마다 지정)</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.type === "BANK" ? "🏦" : "💳"} {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                    {accountId
+                      ? "고른 카드·계좌의 여러 달 파일을 한 번에 올릴 수 있습니다. 다른 카드의 파일로 보이면 건너뜁니다."
+                      : "여러 파일을 한 번에 올리고 파일마다 카드·계좌를 정합니다."}
+                  </p>
+                </>
               )}
             </div>
 
@@ -802,23 +851,38 @@ export const CsvImportModal: React.FC<{
                   e.target.value = "";
                   if (picked.length === 0) return;
 
+                  setFileError(null);
+                  setQueueFiles(picked);
+                  setQueueAt(-1);
+
                   /*
-                    파일이 하나면 예전 그대로입니다. 여럿이면 대기줄을 만들고
-                    계좌를 파일 이름에서 추측해 둡니다 — 모르는 것은 비워 두고
-                    사람이 고릅니다(§17.2).
+                    계좌가 정해져 있고 파일이 하나이며 그 파일이 여기 것으로
+                    보이면 예전 그대로 곧장 갑니다 — 물어볼 것이 없습니다.
                   */
-                  if (picked.length === 1) {
+                  const alone =
+                    picked.length === 1 &&
+                    accountId &&
+                    !belongsElsewhere(picked[0].name, accountId, accounts);
+
+                  if (alone) {
                     setQueue([]);
                     setQueueFiles([]);
-                    setQueueAt(-1);
                     void handleFile(picked[0]);
                     return;
                   }
 
-                  setQueueFiles(picked);
-                  setQueue(queueFrom(picked.map((file) => file.name), accounts));
-                  setQueueAt(-1);
-                  setFileError(null);
+                  /*
+                    그 밖에는 대기줄을 만들어 **무엇이 어디로 가는지** 먼저
+                    보여 줍니다. 계좌가 정해져 있으면 전부 그 계좌로 가고, 다른
+                    카드의 것으로 보이는 파일만 건너뜁니다(§7.10).
+                  */
+                  setQueue(
+                    queueFrom(
+                      picked.map((file) => file.name),
+                      accounts,
+                      accountId || undefined
+                    )
+                  );
                 }}
               />
             </label>
@@ -832,8 +896,10 @@ export const CsvImportModal: React.FC<{
             {queue.length > 0 && queueAt < 0 && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-[11px] font-bold text-slate-700">
-                    파일 {queue.length}개 · 각각 어느 카드·계좌인가요?
+                  <div className="text-[11px] font-bold text-slate-700 min-w-0">
+                    {accountId
+                      ? `파일 ${queue.length}개 · 모두 ${account?.name || ""}(으)로`
+                      : `파일 ${queue.length}개 · 각각 어느 카드·계좌인가요?`}
                   </div>
                   <button
                     type="button"
@@ -848,65 +914,120 @@ export const CsvImportModal: React.FC<{
                 </div>
 
                 <div className="space-y-1.5">
-                  {queue.map((item, index) => (
-                    <div
-                      key={`${item.name}-${index}`}
-                      className="p-2.5 rounded-xl border border-slate-200 bg-white space-y-1.5"
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span className="text-[11px] font-bold text-slate-800 truncate">
-                          {item.name}
-                        </span>
-                      </div>
-                      <select
-                        value={item.accountId}
-                        onChange={(e) =>
-                          setQueue((prev) =>
-                            markQueue(prev, index, { accountId: e.target.value })
-                          )
-                        }
-                        className={`w-full px-2.5 py-2 text-xs rounded-xl border bg-white focus:outline-none ${
-                          item.accountId
-                            ? "border-slate-200 focus:border-emerald-400"
-                            : "border-amber-300 bg-amber-50/60 focus:border-amber-400"
+                  {queue.map((item, index) => {
+                    const dropped = item.state === "SKIPPED";
+
+                    return (
+                      <div
+                        key={`${item.name}-${index}`}
+                        className={`p-2.5 rounded-xl border space-y-1.5 ${
+                          dropped
+                            ? "border-amber-200 bg-amber-50/60"
+                            : "border-slate-200 bg-white"
                         }`}
                       >
-                        {/*
-                          이름에서 카드사를 못 읽었거나 그 카드사 카드가 두 장이면
-                          비워 둡니다 — 골라 두면 이미 정해진 줄 알고 넘깁니다
-                        */}
-                        <option value="">고르지 않음</option>
-                        {accounts.map((acc) => (
-                          <option key={acc.id} value={acc.id}>
-                            {acc.type === "BANK" ? "🏦" : "💳"} {acc.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <FileSpreadsheet
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              dropped ? "text-amber-600" : "text-emerald-600"
+                            }`}
+                          />
+                          <span
+                            className={`text-[11px] font-bold truncate ${
+                              dropped ? "text-amber-900 line-through" : "text-slate-800"
+                            }`}
+                          >
+                            {item.name}
+                          </span>
+                        </div>
+
+                        {accountId ? (
+                          /*
+                            계좌가 정해진 대기줄입니다 — 바꿀 것이 없으므로 어디로
+                            가는지만 적습니다. 다른 카드의 것으로 보이는 파일은
+                            건너뛰되 **목록에서 지우지는 않습니다**: 왜 안 들어갔는지
+                            말하지 않으면 사용자가 알아낼 방법이 없습니다(§17.1).
+                          */
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className={`text-[10px] ${
+                                dropped ? "text-amber-800" : "text-slate-500"
+                              }`}
+                            >
+                              {dropped
+                                ? item.reason
+                                : `${account?.name || ""}(으)로 가져옵니다`}
+                            </span>
+                            {dropped && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setQueue((prev) =>
+                                    markQueue(prev, index, {
+                                      state: "PENDING",
+                                      reason: undefined,
+                                    })
+                                  )
+                                }
+                                className="px-2 py-1 rounded-lg bg-white border border-amber-300 text-[10px] font-bold text-amber-800 hover:bg-amber-100 transition shrink-0 cursor-pointer whitespace-nowrap"
+                              >
+                                그래도 넣기
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <select
+                            value={item.accountId}
+                            onChange={(e) =>
+                              setQueue((prev) =>
+                                markQueue(prev, index, { accountId: e.target.value })
+                              )
+                            }
+                            className={`w-full px-2.5 py-2 text-xs rounded-xl border bg-white focus:outline-none ${
+                              item.accountId
+                                ? "border-slate-200 focus:border-emerald-400"
+                                : "border-amber-300 bg-amber-50/60 focus:border-amber-400"
+                            }`}
+                          >
+                            {/*
+                              이름에서 카드사를 못 읽었거나 그 카드사 카드가 두 장이면
+                              비워 둡니다 — 골라 두면 이미 정해진 줄 알고 넘깁니다
+                            */}
+                            <option value="">고르지 않음</option>
+                            {accounts.map((acc) => (
+                              <option key={acc.id} value={acc.id}>
+                                {acc.type === "BANK" ? "🏦" : "💳"} {acc.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                  파일 이름에 카드사가 적혀 있으면 미리 골라 두었습니다. 나머지는
-                  직접 고르세요. 시작하면 <strong>한 파일씩</strong> 항목 확인과 중복
-                  확인을 거칩니다.
+                  {accountId
+                    ? "여러 달 명세서를 한 번에 넣을 수 있습니다. 시작하면 한 파일씩 항목 확인과 중복 확인을 거칩니다."
+                    : "파일 이름에 카드사가 적혀 있으면 미리 골라 두었습니다. 나머지는 직접 고르세요. 시작하면 한 파일씩 항목 확인과 중복 확인을 거칩니다."}
                 </p>
 
                 <button
                   type="button"
                   disabled={!queueReady(queue) || isReading}
-                  onClick={() => openQueued(queue, 0)}
+                  /* 첫 파일이 건너뛸 것일 수 있으므로 넣을 첫 파일에서 시작합니다 */
+                  onClick={() => openQueued(queue, activeIndex(queue))}
                   className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-xs transition cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
                 >
                   {queueReady(queue)
-                    ? `${queue.length}개 파일 가져오기 시작`
-                    : "계좌를 고르지 않은 파일이 있습니다"}
+                    ? `${queueSummary(queue).files - queueSummary(queue).skippedFiles}개 파일 가져오기 시작`
+                    : accountId
+                      ? "넣을 파일이 없습니다"
+                      : "계좌를 고르지 않은 파일이 있습니다"}
                   {queueReady(queue) && <ArrowRight className="w-3.5 h-3.5" />}
                 </button>
               </div>
             )}
-
 
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-[10px] text-slate-500 leading-relaxed space-y-1">
               <div>
@@ -1480,9 +1601,10 @@ export const CsvImportModal: React.FC<{
                 파일 {queueSummary(queue).files}개 중 {queueSummary(queue).done}개를
                 반영했습니다
               </div>
-              {queueSummary(queue).failed > 0 && (
+              {queueSummary(queue).failed + queueSummary(queue).skippedFiles > 0 && (
                 <div className="text-[11px] font-bold text-amber-700">
-                  {queueSummary(queue).failed}개는 건너뛰었습니다
+                  {queueSummary(queue).failed + queueSummary(queue).skippedFiles}개는
+                  건너뛰었습니다
                 </div>
               )}
             </div>

@@ -14,6 +14,7 @@ import {
   markQueue,
   queueReady,
   queueSummary,
+  belongsElsewhere,
   type QueuedFile,
 } from "../src/services/importQueue";
 
@@ -242,6 +243,52 @@ section("대기줄");
   );
   check("계좌를 모르면 자리만", queueLabel(queue, 1, accounts) === "2 / 3번째 파일");
   check("범위 밖은 빈 글자", queueLabel(ready, 9, accounts) === "");
+}
+
+// ---------------------------------------------------------------------------
+section("계좌가 정해진 대기줄 — 같은 카드의 여러 달 (§7.10)");
+// ---------------------------------------------------------------------------
+{
+  const accounts = [account("s", "삼성카드"), account("w", "우리카드")];
+
+  /* 우리카드 내역 화면에서 열었습니다 — 여러 달 명세서를 한 번에 */
+  const months = queueFrom(
+    ["이용대금명세서_2607.xls", "이용대금명세서_2608.xls", "이용대금명세서_2609.xls"],
+    accounts,
+    "w"
+  );
+  check("전부 그 계좌로", months.every((item) => item.accountId === "w"));
+  check("전부 넣습니다", months.every((item) => item.state === "PENDING"));
+  check("시작할 수 있습니다", queueReady(months) === true);
+
+  /*
+    이름이 다른 카드사를 대놓고 말하면 건너뜁니다. 우리카드를 열어 놓고
+    누른 자리에서 삼성카드 명세서가 조용히 들어가는 것이 가장 나쁜 결과입니다.
+  */
+  const mixed = queueFrom(
+    ["이용대금명세서_2608.xls", "삼성카드_2608.xls"], accounts, "w"
+  );
+  check("다른 카드의 것은 건너뜀", mixed[1].state === "SKIPPED");
+  check("까닭을 남깁니다", Boolean(mixed[1].reason));
+  check("나머지는 그대로", mixed[0].state === "PENDING");
+  check("건너뛴 것이 있어도 시작합니다", queueReady(mixed) === true);
+  check("넣을 첫 파일에서 시작", activeIndex(mixed) === 0);
+
+  /* 이름이 아무 말도 하지 않으면 여기 것으로 봅니다 — 그래야 여러 달이 됩니다 */
+  check("모르는 이름은 여기 것", belongsElsewhere("거래내역조회.xls", "w", accounts) === false);
+  check("같은 카드는 당연히", belongsElsewhere("우리카드_2608.xls", "w", accounts) === false);
+  check("다른 카드만 참", belongsElsewhere("삼성카드_2608.xls", "w", accounts) === true);
+  /* 등록되지 않은 카드사는 가려낼 수 없습니다 */
+  check(
+    "모르는 카드사는 막지 않습니다",
+    belongsElsewhere("현대카드_2608.xls", "w", accounts) === false
+  );
+
+  /* 전부 다른 카드의 것이면 넣을 것이 없습니다 */
+  const none = queueFrom(["삼성카드_2608.xls"], accounts, "w");
+  check("전부 건너뛰면 시작하지 않습니다", queueReady(none) === false);
+  check("현황에 파일 단위로 남습니다", queueSummary(none).skippedFiles === 1);
+  check("건너뛴 것은 성공이 아닙니다", queueSummary(none).done === 0);
 }
 
 // ---------------------------------------------------------------------------
