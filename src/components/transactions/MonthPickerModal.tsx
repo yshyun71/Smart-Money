@@ -2,12 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 
-const pad = (value: number) => String(value).padStart(2, "0");
-
-function thisMonthKey(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
-}
+import { thisMonthKey } from "../../services/trend";
 
 /**
  * Picking a month outright, for when stepping one at a time is the long way
@@ -121,7 +116,7 @@ export const MonthPickerModal: React.FC<{
         {/* Months */}
         <div className="grid grid-cols-3 gap-1.5">
           {Array.from({ length: 12 }, (_, index) => {
-            const key = `${year}-${pad(index + 1)}`;
+            const key = `${year}-${String(index + 1).padStart(2, "0")}`;
             const count = counts.get(key) || 0;
             const isSelected = key === value;
             const isCurrent = key === current;

@@ -4,6 +4,8 @@ import { useFinance } from "../../context/FinanceContext";
 import type { Transaction } from "../../types/finance";
 import { won } from "../../utils/format";
 import { accountTone } from "../../utils/accountTone";
+import { monthOf, type MonthBasis } from "../../services/ledger";
+import { monthLabel, shiftMonth } from "../../services/trend";
 import {
   X,
   CreditCard,
@@ -12,28 +14,6 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
 } from "lucide-react";
-
-const pad = (value: number) => String(value).padStart(2, "0");
-
-function monthLabel(key: string): string {
-  const [year, month] = (key || "").split("-");
-  if (!year || !month) return "-";
-  return `${year}년 ${month}월`;
-}
-
-type MonthBasis = "USED" | "BILLED";
-
-/** An instalment is used once and billed for months, so a month means two things. */
-function monthOf(tx: Transaction, basis: MonthBasis): string {
-  if (basis === "BILLED") return tx.billingMonth || tx.date.slice(0, 7);
-  return tx.date.slice(0, 7);
-}
-
-function shiftMonth(key: string, delta: number): string {
-  const [year, month] = key.split("-").map(Number);
-  const moved = new Date(year, month - 1 + delta, 1);
-  return `${moved.getFullYear()}-${pad(moved.getMonth() + 1)}`;
-}
 
 /**
  * What a card was used for in one month, opened from the bill that settles it.

@@ -18,6 +18,38 @@ export interface Period {
   label: string;
 }
 
+/*
+  연월 한 칸을 다루는 네 가지. 같은 것이 `AccountLedgerModal`·`CardUsageModal`·
+  `MonthPickerModal` 에 **세 벌**로 복사돼 있었습니다 — `formatPhone` 이 세 벌로
+  돌아다닌 것과 같은 일입니다(§12.2). 기간을 말하는 자리가 여기이므로 여기 둡니다.
+*/
+
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** 오늘이 속한 연월. */
+export function thisMonthKey(today = new Date()): string {
+  return `${today.getFullYear()}-${pad(today.getMonth() + 1)}`;
+}
+
+/**
+ * `"2026-09"` → `"2026년 09월"`.
+ *
+ * 읽을 수 없는 값에는 `-` 를 돌려줍니다. 지어내지 않습니다(§17.1).
+ */
+export function monthLabel(key: string): string {
+  const [year, month] = (key || "").split("-");
+  if (!year || !month) return "-";
+  return `${year}년 ${month}월`;
+}
+
+/** 연월을 달 단위로 옮깁니다. 해를 넘기는 것은 `Date` 가 맡습니다. */
+export function shiftMonth(key: string, delta: number): string {
+  const [year, month] = key.split("-").map(Number);
+  if (!year || !month) return key;
+  const moved = new Date(year, month - 1 + delta, 1);
+  return `${moved.getFullYear()}-${pad(moved.getMonth() + 1)}`;
+}
+
 /**
  * 달의 마지막 날을 `31`로 둡니다.
  *

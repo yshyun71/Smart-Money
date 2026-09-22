@@ -43,7 +43,21 @@ import {
 } from "../../services/recurrence";
 import { asOfLabel, won } from "../../utils/format";
 import { accountTone } from "../../utils/accountTone";
-import { isInstalment } from "../../services/csvImport";
+import {
+  categoriesUsed,
+  countByMonth,
+  filterEntries,
+  fullSpan,
+  groupByMonth,
+  landingMonth,
+  ledgerTotals,
+  monthKeys,
+  selectedTotals as selectedTotalsOf,
+  type LedgerFilter,
+  type MonthBasis,
+  type PayKind,
+} from "../../services/ledger";
+import { monthLabel, shiftMonth, thisMonthKey } from "../../services/trend";
 import {
   X,
   Search,
@@ -84,8 +98,8 @@ function kindOptions(isBank: boolean): { value: KindFilter; label: string }[] {
   return isBank ? [...options, { value: "INCOME", label: "수입" }] : options;
 }
 
-/** How a card charge is settled. */
-type PayFilter = "ALL" | "CARD_LOAN" | "ONCE" | "INSTALMENT";
+/** 카드 결제 방식 필터 — 판정은 `services/ledger.payKindOf` 가 합니다. */
+type PayFilter = "ALL" | PayKind;
 
 const PAY_LABELS: { value: PayFilter; label: string }[] = [
   { value: "ALL", label: "전체" },
@@ -94,56 +108,7 @@ const PAY_LABELS: { value: PayFilter; label: string }[] = [
   { value: "INSTALMENT", label: "할부" },
 ];
 
-/**
- * Which of the three a card line is.
- *
- * A cash advance or card loan is filed under 대출 by the classifier, and an
- * instalment says so in the 할부 column the statement carries into the memo.
- * Everything else was paid at once.
- */
-function payKindOf(tx: Transaction): Exclude<PayFilter, "ALL"> {
-  if (tx.category === "대출") return "CARD_LOAN";
-  if (isInstalment(tx.memo || "")) return "INSTALMENT";
-  return "ONCE";
-}
-
 const ALL_CATEGORIES = "__ALL__";
-
-/** Which month an entry is counted under. */
-type MonthBasis = "USED" | "BILLED";
-
-/**
- * The month a card entry falls in, by the chosen reading.
- *
- * An instalment is used once and billed for months afterwards, so the two
- * answers differ. An entry imported before billing months were recorded has
- * only the one it was used in, which is what it was always shown under.
- */
-function monthOf(tx: Transaction, basis: MonthBasis): string {
-  if (basis === "BILLED") return tx.billingMonth || tx.date.slice(0, 7);
-  return tx.date.slice(0, 7);
-}
-
-const pad = (value: number) => String(value).padStart(2, "0");
-
-/** "2026-09" → "2026년 09월" */
-function monthLabel(key: string): string {
-  const [year, month] = (key || "").split("-");
-  if (!year || !month) return "-";
-  return `${year}년 ${month}월`;
-}
-
-/** Steps a YYYY-MM key by whole months, rolling the year over. */
-function shiftMonth(key: string, delta: number): string {
-  const [year, month] = key.split("-").map(Number);
-  const moved = new Date(year, month - 1 + delta, 1);
-  return `${moved.getFullYear()}-${pad(moved.getMonth() + 1)}`;
-}
-
-function thisMonthKey(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
-}
 
 /**
  * One card or account's own ledger: everything imported or entered against it,
@@ -274,14 +239,13 @@ export const AccountLedgerModal: React.FC<{
   */
   useEffect(() => {
     if (!isOpen) return;
-    const months = accountEntries.map((tx) => monthOf(tx, basis)).sort();
-    const newest = months[months.length - 1] || thisMonthKey();
-    const oldest = months[0] || thisMonthKey();
+    const months = monthKeys(accountEntries, basis);
 
-    setMonth((prev) => (months.includes(prev) ? prev : newest));
+    setMonth((prev) => landingMonth({ months, leftover: prev }));
     if (!rangeTouched) {
-      setRangeFrom(oldest);
-      setRangeTo(newest);
+      const span = fullSpan(months);
+      setRangeFrom(span.from);
+      setRangeTo(span.to);
     }
   }, [isOpen, accountId, accountEntries, rangeTouched, basis]);
 
@@ -304,7 +268,7 @@ export const AccountLedgerModal: React.FC<{
   */
   useEffect(() => {
     if (!isOpen) return;
-    const months = accountEntries.map((tx) => monthOf(tx, basis)).sort();
+    const months = monthKeys(accountEntries, basis);
     if (months.includes(selectedMonth)) setMonth(selectedMonth);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, accountId]);
@@ -339,97 +303,45 @@ export const AccountLedgerModal: React.FC<{
     };
   }, [isOpen, onClose, summary, showRules, showBalance, monthPicker, showDetails, usage]);
 
-  /** True when an entry falls inside the chosen month or span. */
-  const inPeriod = useMemo(() => {
-    if (periodMode === "MONTH") {
-      return (tx: Transaction) => monthOf(tx, basis) === month;
-    }
-    // An open end stays open: a span with only one side filled in still reads
-    // naturally as "from here on" or "up to here".
-    const from = rangeFrom || "0000-00";
-    const to = rangeTo || "9999-99";
-    const [low, high] = from <= to ? [from, to] : [to, from];
-    return (tx: Transaction) => {
-      const key = monthOf(tx, basis);
-      return key >= low && key <= high;
-    };
-  }, [periodMode, month, rangeFrom, rangeTo, basis]);
-
-  const entries = useMemo(
-    () =>
-      accountEntries
-        .filter(inPeriod)
-        .filter((tx) => kindFilter === "ALL" || tx.expenseType === kindFilter)
-        .filter((tx) => payFilter === "ALL" || payKindOf(tx) === payFilter)
-        .filter(
-          (tx) => categoryFilter === ALL_CATEGORIES || tx.category === categoryFilter
-        ),
-    [accountEntries, inPeriod, kindFilter, payFilter, categoryFilter]
+  /** 화면의 조회 조건을 한 벌의 값으로 — 판정은 `services/ledger` 가 합니다. */
+  const filter: LedgerFilter = useMemo(
+    () => ({
+      basis,
+      periodMode,
+      month,
+      from: rangeFrom,
+      to: rangeTo,
+      kind: kindFilter,
+      pay: payFilter,
+      category: categoryFilter === ALL_CATEGORIES ? null : categoryFilter,
+    }),
+    [basis, periodMode, month, rangeFrom, rangeTo, kindFilter, payFilter, categoryFilter]
   );
 
-  /** Only the categories this account actually uses are worth offering. */
-  const categoryOptions = useMemo(() => {
-    const names = new Set<string>();
-    for (const tx of accountEntries) names.add(tx.category);
-    return Array.from(names).sort((a, b) => a.localeCompare(b, "ko"));
-  }, [accountEntries]);
+  const entries = useMemo(
+    () => filterEntries(accountEntries, filter),
+    [accountEntries, filter]
+  );
 
-  /** What the ticked entries come to, which is why they were ticked. */
-  const selectedTotals = useMemo(() => {
-    let expense = 0;
-    let income = 0;
-    for (const tx of entries) {
-      if (!selected.has(tx.id)) continue;
-      if (tx.type === "INCOME") income += tx.amount;
-      else expense += tx.amount;
-    }
+  /** 그 계좌가 실제로 쓰는 카테고리만 고를 만합니다. */
+  const categoryOptions = useMemo(() => categoriesUsed(accountEntries), [accountEntries]);
 
-    /*
-      카드는 한 덩어리를 청구하므로 차감·환불이 그 금액을 줄입니다. 계좌에서는
-      들어온 돈과 나간 돈이 각각이라 더한 값이 "고른 것들의 합"입니다(9.5).
-    */
-    return { expense, income, total: isBank ? expense + income : expense - income };
-  }, [entries, selected, isBank]);
+  /** 고른 것들의 합 — 카드는 차감을 빼고, 계좌는 더합니다(§9.5). */
+  const selectedTotals = useMemo(
+    () => selectedTotalsOf(entries, selected, isBank),
+    [entries, selected, isBank]
+  );
 
-  /** Newest month first, entries already sorted by the context. */
-  const grouped = useMemo(() => {
-    const map = new Map<string, Transaction[]>();
-    for (const tx of entries) {
-      const key = monthOf(tx, basis);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(tx);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => b.localeCompare(a));
-  }, [entries, basis]);
+  /** 최근 달부터. 달 안의 순서는 컨텍스트가 이미 정렬해 두었습니다. */
+  const grouped = useMemo(() => groupByMonth(entries, basis), [entries, basis]);
 
-  const totals = useMemo(() => {
-    const income = entries
-      .filter((tx) => tx.type === "INCOME")
-      .reduce((sum, tx) => sum + tx.amount, 0);
-    const expense = entries
-      .filter((tx) => tx.type === "EXPENSE")
-      .reduce((sum, tx) => sum + tx.amount, 0);
+  const totals = useMemo(() => ledgerTotals(entries), [entries]);
 
-    /*
-      A card bills one figure, and money coming off it is part of that figure:
-      우리카드's 차감-[청구할인] and any refund lower what is owed. Showing only
-      the charges put 이용 합계 34,000원 above the 소계 the statement prints,
-      and it is the same sum that has to equal a withdrawal for the bill to be
-      tied to it (9.2). A bank account keeps the two apart — there 수입 is
-      money arriving, not a smaller bill.
-    */
-    return { income, expense, billed: expense - income };
-  }, [entries]);
-
-  /** How many entries each month holds, shown under the month being viewed. */
-  const monthCounts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const tx of accountEntries) {
-      const key = monthOf(tx, basis);
-      map.set(key, (map.get(key) || 0) + 1);
-    }
-    return map;
-  }, [accountEntries, basis]);
+  /** 달마다 몇 건인지 — 보고 있는 달 아래와 연월 선택 창에 함께 나갑니다. */
+  const monthCounts = useMemo(
+    () => countByMonth(accountEntries, basis),
+    [accountEntries, basis]
+  );
 
   const allSelected = entries.length > 0 && entries.every((tx) => selected.has(tx.id));
   const selectedCount = entries.filter((tx) => selected.has(tx.id)).length;
