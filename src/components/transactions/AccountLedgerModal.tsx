@@ -349,6 +349,30 @@ export const AccountLedgerModal: React.FC<{
     [accountEntries, filter]
   );
 
+  /*
+    **조회 조건이 바뀌면 선택을 비웁니다.**
+
+    예전에는 id 집합이 그대로 남았습니다. 그런데 이 화면의 모든 행동은 **보이는
+    줄만** 대상으로 합니다 — `선택 N건`·`선택 합계`·삭제·AI 분류가 모두
+    `entries.filter(...)` 를 지납니다. 그래서 안 보이는 id 는 아무 일도 하지
+    못하면서, 필터를 넓힐 때만 체크된 채 되살아났습니다.
+
+    게다가 `전체 선택` 은 집합을 **갈아엎습니다.** 그래서 변동지출에서 고른 것이
+    고정지출에서 전체 선택을 누른 순간 사라졌고, 지출전체로 넓히면 고정만 체크된
+    채로 보였습니다 — 같은 화면이 세 가지 규칙을 섞어 쓰고 있었던 셈입니다.
+
+    비우는 쪽을 고른 까닭: **보이는 것이 고른 것의 범위**라는 한 문장으로 설명이
+    끝나고, `선택 0건` 이라고 적혀 있는데 앱이 12개를 들고 있는 상태가 없어집니다
+    (§17.1 — 화면에 없는 것을 들고 있지 않습니다).
+
+    의존성이 `filter` 하나인 까닭: 그 객체가 조회 조건 전부를 담고 있어(달·기간·
+    방향·정기성·결제 방식·카테고리) 조건이 하나라도 바뀌면 참조가 바뀝니다.
+    조건을 새로 더해도 여기를 고칠 일이 없습니다.
+  */
+  useEffect(() => {
+    setSelected(new Set());
+  }, [filter]);
+
   /** 그 계좌가 실제로 쓰는 카테고리만 고를 만합니다. */
   const categoryOptions = useMemo(() => categoriesUsed(accountEntries), [accountEntries]);
 
@@ -374,6 +398,10 @@ export const AccountLedgerModal: React.FC<{
 
   const toggleAll = () => {
     setNotice(null);
+    /*
+      조건이 바뀔 때마다 집합을 비우므로(위) 여기서 갈아엎어도 잃을 것이 없습니다 —
+      집합에 든 것은 언제나 지금 보이는 줄뿐입니다.
+    */
     setSelected(allSelected ? new Set() : new Set(entries.map((tx) => tx.id)));
   };
 
