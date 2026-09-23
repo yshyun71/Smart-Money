@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
-import type { CategoryType } from "../../types/finance";
+import type { CategoryType, TransactionType } from "../../types/finance";
 import { Check, Plus } from "lucide-react";
 
 const CUSTOM = "__CUSTOM__";
@@ -15,10 +15,19 @@ const CUSTOM = "__CUSTOM__";
 export const CategorySelect: React.FC<{
   value: CategoryType;
   onChange: (next: CategoryType) => void;
+  /**
+   * 수입인가 지출인가 — **그 방향의 목록만** 보여 줍니다 (§6.1).
+   *
+   * 한 목록을 함께 쓰면 수입 건에 `주거` 가, 지출 건에 `급여` 가 붙습니다.
+   * 실제 기기에서 그렇게 들어간 줄이 10건 있었고, 그 한 줄이 그 달 합계를
+   * 조용히 비틉니다.
+   */
+  direction: TransactionType;
   className?: string;
   id?: string;
-}> = ({ value, onChange, className, id }) => {
-  const { categories, addCategory } = useFinance();
+}> = ({ value, onChange, direction, className, id }) => {
+  const { categoriesFor, addCategory } = useFinance();
+  const categories = categoriesFor(direction);
 
   const [isCustom, setIsCustom] = useState(false);
   const [draft, setDraft] = useState("");
@@ -36,7 +45,8 @@ export const CategorySelect: React.FC<{
   const commitDraft = () => {
     const name = draft.trim();
     if (!name) return;
-    addCategory(name);
+    /* 만든 것도 그 방향의 것입니다 — 같은 이름을 양쪽에 따로 둘 수 있습니다 */
+    addCategory(name, direction);
     onChange(name);
     setIsCustom(false);
     setDraft("");

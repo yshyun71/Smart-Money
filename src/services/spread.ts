@@ -156,12 +156,20 @@ export function planClassification(
   next: Classification
 ): { updates: Transaction[]; applied: number } {
   const updates: Transaction[] = [];
-  const spendable = target.type !== "INCOME" && next.expenseType !== "INCOME";
 
   for (const tx of transactions) {
     if (tx.id === target.id) continue;
     if (tx.accountId !== target.accountId) continue;
     if (!sameMerchant(tx.merchant, target.merchant)) continue;
+    /*
+      **방향이 다르면 아무것도 퍼뜨리지 않습니다.**
+
+      카테고리가 방향마다 갈리므로(§6.1) 지출의 `쇼핑` 을 수입 줄에 복사하면
+      그 줄은 어느 수입 카테고리도 아니게 되고 저장 단계에서 거절됩니다(§17.7).
+      정기성도 마찬가지입니다 — 같은 이름이 양쪽에 찍히는 일은 흔하고(환불·
+      정산), 한쪽의 판단을 다른 쪽에 복사하면 아무도 뜻하지 않은 말이 됩니다.
+    */
+    if (tx.type !== target.type) continue;
 
     const changed: Transaction = { ...tx };
     let differs = false;
@@ -171,21 +179,19 @@ export function planClassification(
       differs = true;
     }
 
-    if (spendable && tx.type !== "INCOME") {
-      if (tx.expenseType !== next.expenseType) {
-        changed.expenseType = next.expenseType;
-        differs = true;
-      }
-      if (Boolean(tx.isFixedRecurring) !== next.isFixedRecurring) {
-        changed.isFixedRecurring = next.isFixedRecurring;
-        differs = true;
-      }
-      // The day a standing charge lands is the same every month, so it travels
-      const day = next.expenseType === "FIXED" ? next.recurringDay : undefined;
-      if (tx.recurringDay !== day) {
-        changed.recurringDay = day;
-        differs = true;
-      }
+    if (tx.expenseType !== next.expenseType) {
+      changed.expenseType = next.expenseType;
+      differs = true;
+    }
+    if (Boolean(tx.isFixedRecurring) !== next.isFixedRecurring) {
+      changed.isFixedRecurring = next.isFixedRecurring;
+      differs = true;
+    }
+    // The day a standing charge lands is the same every month, so it travels
+    const day = next.expenseType === "FIXED" ? next.recurringDay : undefined;
+    if (tx.recurringDay !== day) {
+      changed.recurringDay = day;
+      differs = true;
     }
 
     if (differs) updates.push(changed);

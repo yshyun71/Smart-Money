@@ -21,7 +21,7 @@ import {
  * The device's current version lives in SQLite's own `PRAGMA user_version`,
  * so it survives export/import of the .db file.
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 export interface Migration {
   version: number;
@@ -78,6 +78,7 @@ const EXPECTED_COLUMNS: { table: string; column: string; type: string }[] = [
   { table: "budget_configs", column: "income_excluded", type: "TEXT" },
   { table: "budget_configs", column: "fixed_excluded", type: "TEXT" },
   { table: "budget_configs", column: "savings_excluded", type: "TEXT" },
+  { table: "custom_categories", column: "direction", type: "TEXT" },
 ];
 
 /**
@@ -669,6 +670,131 @@ export const MIGRATIONS: Migration[] = [
       );`);
       db.run(`CREATE INDEX IF NOT EXISTS idx_undo_log_scope
         ON undo_log(user_id, created_at);`);
+    },
+  },
+  {
+    version: 18,
+    /*
+      수입에도 고정/변동을 두고, 카테고리를 방향마다 나눕니다 (§6.1 · §6.6).
+
+      두 가지가 함께 바뀝니다.
+
+      **하나.** `expense_type` 의 `'INCOME'` 값이 없어집니다. 그 값은 "수입은
+      정기성을 갖지 않는다"는 뜻이었는데, 실제로는 급여만큼 정기적인 돈이
+      없습니다. 방향은 `type` 이 이미 가르므로 이 칸은 고정/변동만 담습니다.
+
+      **둘.** 카테고리가 수입용과 지출용으로 갈립니다. 한 목록을 함께 쓰면
+      수입 건에 `주거` 가, 지출 건에 `급여` 가 붙는 일이 생깁니다 — 실제 기기에
+      수입인데 `주거` 8건, `카드대금` 2건이 있었습니다.
+
+      **옮기는 규칙은 "새로 가져왔다면 갔을 자리"입니다**(§6.3과 같은 태도).
+      가를 수 없는 것만 `기타수입`·`기타지출` 로 보냅니다.
+    */
+    description: "수입의 고정/변동, 방향별 카테고리",
+    up: (db) => {
+      /*
+        `기타 금융` 이 방향에 따라 둘로 갈립니다. 나가는 돈(펀드·연금·증권)은
+        `금융/자산`, 들어오는 돈(이자·배당)은 `금융/자산수입` 입니다 — 한 이름이
+        두 뜻을 갖고 있었고, 그래서 v14 가 지출만 옮길 수 있었습니다(§6.2).
+      */
+      db.run(
+        `UPDATE transactions SET category = '금융/자산'
+          WHERE type = 'EXPENSE' AND category = '기타 금융'`
+      );
+      db.run(
+        `UPDATE transactions SET category = '금융/자산수입'
+          WHERE type = 'INCOME' AND category = '기타 금융'`
+      );
+
+      /*
+        방향에 맞지 않는 카테고리를 제자리로.
+
+        **사용자가 만든 이름은 건드리지 않습니다** — `custom_categories` 에 있는
+        이름은 그 사람이 정한 것이고, 아래에서 방향을 붙여 줍니다.
+      */
+      const incomeOk = `'급여','이체','금융/자산수입','기타수입'`;
+      const expenseOk = `'식비','카페/간식','주거','통신','구독/미디어','교통','쇼핑',
+        '문화/여가','생활','의료','보험','대출','금융/자산','이체','카드대금','저축','기타지출'`;
+
+      db.run(
+        `UPDATE transactions SET category = '기타수입'
+          WHERE type = 'INCOME'
+            AND category NOT IN (${incomeOk})
+            AND category NOT IN (SELECT name FROM custom_categories)`
+      );
+      db.run(
+        `UPDATE transactions SET category = '기타지출'
+          WHERE type = 'EXPENSE'
+            AND category NOT IN (${expenseOk})
+            AND category NOT IN (SELECT name FROM custom_categories)`
+      );
+
+      /*
+        수입의 정기성.
+
+        **급여만 고정수입으로 둡니다.** 나머지는 변동으로 두고 §10의 반복 판정
+        (3개월·같은 날짜대)이 나중에 제자리를 찾게 합니다 — 여기서 이름만 보고
+        더 넓게 잡으면 어쩌다 한 번 들어온 돈이 고정수입이 되고, 그 숫자로 다음
+        달 예산을 세우게 됩니다(§17.1 — 지어내지 않습니다).
+      */
+      db.run(
+        `UPDATE transactions SET expense_type = 'FIXED'
+          WHERE type = 'INCOME' AND expense_type = 'INCOME' AND category = '급여'`
+      );
+      db.run(
+        `UPDATE transactions SET expense_type = 'VARIABLE'
+          WHERE expense_type = 'INCOME'`
+      );
+
+      /*
+        사용자 카테고리에 방향을 붙입니다.
+
+        **어느 방향인지는 그 이름이 실제로 쓰인 자리가 말해 줍니다.** 전부 수입에
+        쓰였으면 수입, 그 밖에는 지출입니다 — 쓰인 적이 없으면 지출로 둡니다
+        (사용자가 만드는 카테고리는 거의 지출이고, 화면에서 바꿀 수 있습니다).
+
+        `UNIQUE(user_id, name)` 도 함께 풀어야 합니다. 같은 이름을 양쪽에 등록할
+        수 있어야 하기 때문입니다 — SQLite 는 제약을 바꿀 수 없으므로 v3 처럼
+        테이블을 다시 세웁니다.
+      */
+      db.run(`CREATE TABLE IF NOT EXISTS custom_categories_v18 (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'VARIABLE',
+        direction TEXT NOT NULL DEFAULT 'EXPENSE',
+        created_at TEXT NOT NULL,
+        UNIQUE(user_id, name, direction)
+      );`);
+
+      db.run(
+        `INSERT OR IGNORE INTO custom_categories_v18
+           (id, user_id, name, type, direction, created_at)
+         SELECT c.id, c.user_id, c.name, c.type,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM transactions t
+              WHERE t.category = c.name AND t.type = 'EXPENSE'
+           ) OR NOT EXISTS (
+             SELECT 1 FROM transactions t WHERE t.category = c.name
+           ) THEN 'EXPENSE' ELSE 'INCOME' END,
+           c.created_at
+         FROM custom_categories c`
+      );
+
+      db.run(`DROP TABLE custom_categories`);
+      db.run(`ALTER TABLE custom_categories_v18 RENAME TO custom_categories`);
+
+      /*
+        카테고리 규칙은 방향 칸을 갖지 않습니다.
+
+        규칙이 담는 것은 `가맹점 패턴 → 카테고리` 이고, 그 카테고리가 이미
+        방향을 말합니다(`식비` 는 지출, `급여` 는 수입). 방향이 맞지 않는 규칙은
+        적용 단계에서 걸러집니다(`resolveCategory`) — 칸을 더하면 같은 사실을
+        두 곳에 적는 셈이고, 한쪽만 고쳐질 자리가 생깁니다.
+      */
+      db.run(
+        `UPDATE category_rules SET category = '금융/자산' WHERE category = '기타 금융'`
+      );
     },
   },
 ];

@@ -47,7 +47,7 @@ import {
   planCardLinks,
   settlesFromBank,
 } from "../services/cardLink";
-import { actualRows, spendingRows, sumActuals } from "../services/actuals";
+import { actualRows, spendingRows, sumActuals, type ActualKind } from "../services/actuals";
 import { pendingNotifications, showNotifications } from "../services/notify";
 import { forgetAccountLabels } from "../services/cardLabels";
 import {
@@ -70,6 +70,7 @@ import {
 import { basisOf, driftSince, type AnalysisDrift } from "../services/analysisFreshness";
 import {
   BUILT_IN_CATEGORIES,
+  builtInCategoriesFor,
   CARD_PAYMENT_CATEGORY,
   FIXED_BUDGET_CATEGORIES,
 } from "../constants/categories";
@@ -256,10 +257,13 @@ interface FinanceContextType {
   ) => void;
 
   /** Every category on offer: the built-in list plus the user's own. */
+  /** 방향을 가리지 않는 전체 목록 — 아이콘·색처럼 방향을 모르는 자리에서만 (§6.1). */
   categories: CategoryType[];
+  /** **고르는 화면은 이것을 씁니다.** 그 방향의 기본 + 사용자 카테고리. */
+  categoriesFor: (direction: TransactionType) => CategoryType[];
   /** Registers a category the user typed in. Existing names are ignored. */
-  addCategory: (name: string) => void;
-  deleteCategory: (name: string) => void;
+  addCategory: (name: string, direction?: TransactionType) => void;
+  deleteCategory: (name: string, direction?: TransactionType) => void;
 
   // Standing category rules
   categoryRules: CategoryRule[];
@@ -293,6 +297,8 @@ interface FinanceContextType {
 
   // Derived metrics
   totalIncome: number;
+  /** 그 달 수입의 고정·변동 (§6.6). */
+  incomeSplit: { fixed: number; variable: number };
   totalExpense: number;
   fixedExpenseTotal: number;
   /** 그 달 계좌에서 저축으로 나간 돈 — `목표 저축액`과 짝을 이룹니다. */
@@ -547,7 +553,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categoryRules, setCategoryRules] = useState<CategoryRule[]>([]);
-  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<repo.CustomCategory[]>([]);
   const [aiAnalysis, setAiAnalysis] = useState<AISpendingAnalysis | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
   const [budgetPolicy, setBudgetPolicyState] = useState<BudgetPolicy>(emptyPolicy);
@@ -757,6 +763,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         .total,
     [countedTransactions, selectedMonth]
   );
+
+  /**
+   * 그 달 수입을 정기성으로 가른 것 (§6.6).
+   *
+   * `고정수입` 은 **다음 달에도 들어올 것으로 볼 수 있는 돈**입니다 — 그 숫자가
+   * 있어야 "다음 달 예산을 얼마로 잡을 수 있나"에 답할 수 있습니다. 어쩌다 들어온
+   * 환급금까지 섞어 세면 그 달만 유난히 커 보이고, 그 값으로 세운 예산은 처음부터
+   * 틀립니다 — 고정비/변동비를 가른 것과 같은 까닭입니다.
+   */
+  const incomeSplit = useMemo(() => {
+    const of = (kind: ActualKind) =>
+      sumActuals(actualRows(countedTransactions, { month: selectedMonth, kind })).total;
+    return { fixed: of("INCOME_FIXED"), variable: of("INCOME_VARIABLE") };
+  }, [countedTransactions, selectedMonth]);
 
   const totalExpense = useMemo(
     () =>
@@ -1155,10 +1175,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         date: parsed.date,
         time: parsed.time || "12:00",
         type: parsed.type,
-        expenseType:
-          parsed.type === "INCOME"
-            ? "INCOME"
-            : guessExpenseType(`${parsed.merchant} ${parsed.method}`, parsed.type),
+        /* 정기성은 수입에도 붙습니다 — 방향과 함께 넘겨 추정합니다 (§6.6) */
+        expenseType: guessExpenseType(
+          `${parsed.merchant} ${parsed.method}`,
+          parsed.type
+        ),
         category:
           parsed.category || guessCategory(item.rawText, parsed.type === "INCOME"),
         merchant: parsed.merchant || "문자 내역",
@@ -1725,28 +1746,55 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   // Categories
   // -------------------------------------------------------------------------
 
-  /** The shipped list first, then whatever the user added, in the order added. */
+  /**
+   * 그 방향에서 고를 수 있는 카테고리 — **앱 전체가 목록을 읽는 자리**입니다.
+   *
+   * 수입과 지출은 이름 공간을 나눕니다(§6.1). 한 목록을 함께 쓰면 수입 건에
+   * `주거` 가, 지출 건에 `급여` 가 붙는 일이 실제로 생겼습니다(실데이터 10건).
+   */
+  const categoriesFor = useCallback(
+    (direction: TransactionType): CategoryType[] => {
+      const built = builtInCategoriesFor(direction);
+      const seen = new Set<string>(built);
+      const extra = customCategories
+        .filter((row) => row.direction === direction && row.name && !seen.has(row.name))
+        .map((row) => row.name);
+      return [...built, ...extra];
+    },
+    [customCategories]
+  );
+
+  /**
+   * 방향을 가리지 않는 전체 목록 — 아이콘·색처럼 방향을 모르는 자리에서만.
+   *
+   * 고르는 화면에서는 쓰지 마세요. `categoriesFor(방향)` 이 그 자리의 것입니다.
+   */
   const categories = useMemo<CategoryType[]>(() => {
-    const seen = new Set<string>(BUILT_IN_CATEGORIES);
-    const extra = customCategories.filter((name) => name && !seen.has(name));
-    return [...BUILT_IN_CATEGORIES, ...extra];
+    const seen = new Set<string>();
+    const all: CategoryType[] = [];
+    for (const name of [...BUILT_IN_CATEGORIES, ...customCategories.map((c) => c.name)]) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      all.push(name);
+    }
+    return all;
   }, [customCategories]);
 
-  const addCategory = (name: string) => {
+  const addCategory = (name: string, direction: TransactionType = "EXPENSE") => {
     const trimmed = (name || "").trim();
-    if (!trimmed || categories.includes(trimmed)) return;
+    if (!trimmed || categoriesFor(direction).includes(trimmed)) return;
     try {
-      repo.addCustomCategory(trimmed);
+      repo.addCustomCategory(trimmed, direction);
       setCustomCategories(repo.listCustomCategories());
     } catch (error) {
       console.error("카테고리를 추가하지 못했습니다:", error);
     }
   };
 
-  const deleteCategory = (name: string) => {
+  const deleteCategory = (name: string, direction?: TransactionType) => {
     try {
-      repo.deleteCustomCategory(name);
-      setCustomCategories((prev) => prev.filter((item) => item !== name));
+      repo.deleteCustomCategory(name, direction);
+      setCustomCategories(repo.listCustomCategories());
     } catch (error) {
       console.error("카테고리를 삭제하지 못했습니다:", error);
     }
@@ -2036,6 +2084,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         setAccountBalance,
         updateAccountDetails,
         categories,
+        categoriesFor,
         addCategory,
         deleteCategory,
         categoryRules,
@@ -2049,6 +2098,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         runAISpendingAnalysis,
         syncAccounts,
         totalIncome,
+        incomeSplit,
         totalExpense,
         fixedExpenseTotal,
         savingsActualTotal,

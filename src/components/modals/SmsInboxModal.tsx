@@ -507,7 +507,12 @@ export const SmsInboxModal: React.FC<{
                               />
                             </div>
                             <CategorySelect
-                              value={item.parsed.category || "기타지출"}
+                              /* 문자가 말한 방향의 목록만 보여 줍니다 (§6.1) */
+                              direction={item.parsed.type === "INCOME" ? "INCOME" : "EXPENSE"}
+                              value={
+                                item.parsed.category ||
+                                (item.parsed.type === "INCOME" ? "기타수입" : "기타지출")
+                              }
                               onChange={(next: string) =>
                                 reviseSmsItem(item.id, { ...item.parsed, category: next })
                               }

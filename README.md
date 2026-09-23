@@ -11,7 +11,7 @@
 | 묶음 | 기능 |
 | --- | --- |
 | **넣기** | 엑셀·CSV 명세서 가져오기 (카드 6개사·은행 통장, **여러 파일 동시**) · 결제 문자 붙여넣기 · 직접 입력 |
-| **가려내기** | 카테고리 자동 판정과 내 규칙 · 고정비/변동비 판정 · AI 일괄 분류 · 같은 내역명 전체 적용 |
+| **가려내기** | **방향별 카테고리**(수입 4 · 지출 17)와 내 규칙 · **고정/변동 판정(수입에도)** · AI 일괄 분류 · 같은 내역명 전체 적용 |
 | **잇기** | 카드 명세서 ↔ 은행 출금 자동 연결 · 청구 예정액 계산 · 잔액 조정 |
 | **보기** | 홈 결산 · 소비분석(월·연·임의 기간) · 카테고리 펼쳐 보기 · 내역 찾기와 CSV · 정기 결제 모아 보기 |
 | **관리** | 월별 예산과 기준 정책 · 카테고리 한도와 소진율 · 기기 알림 · AI 절약 분석과 코치 문답 |
@@ -48,7 +48,7 @@ npm run build    # dist/
 ```
 
 - **DB 파일은 배포되지 않습니다.** 최초 실행 때 기기에서 만들어지고, 그 뒤로는 앱만 교체됩니다. 새 버전을 올려도 가계부는 그대로입니다.
-- 테이블은 12개(`users` · `accounts` · `transactions` · `budgets` · `budget_configs` · `budget_policy` · `category_rules` · `custom_categories` · `categories` · `ai_analyses` · `sms_inbox` · `undo_log`), 스키마 버전 **v17**.
+- 테이블은 12개(`users` · `accounts` · `transactions` · `budgets` · `budget_configs` · `budget_policy` · `category_rules` · `custom_categories` · `categories` · `ai_analyses` · `sms_inbox` · `undo_log`), 스키마 버전 **v18**.
 - 구조를 바꿀 때는 `src/db/schema.ts`의 `MIGRATIONS` 끝에 항목을 **덧붙이고** `SCHEMA_VERSION`을 올립니다. **이미 배포된 마이그레이션은 고치지 않습니다** — 어느 버전에 머물러 있던 기기든 같은 결과에 닿아야 합니다.
 - 버전만 올라가고 컬럼이 없는 기기가 실제로 발생한 적이 있어, 매 실행마다 모양을 확인하고 없으면 되살립니다(`EXPECTED_COLUMNS` · `EXPECTED_TABLES`).
 
@@ -88,7 +88,7 @@ React 19 · TypeScript 5 · Vite 6 · Tailwind CSS 4 · Recharts · lucide-react
 | [docs/DOMAIN.md](docs/DOMAIN.md) | 카테고리 · 고정비 판정 · AI 계층 · 예산 · 분석 |
 | [docs/IMPORT.md](docs/IMPORT.md) | 명세서 가져오기 · 결제 문자 · 카드-계좌 연결 |
 | [docs/UI.md](docs/UI.md) | 화면 구성 · 표시 규칙 · PWA와 배포 |
-| [docs/TESTING.md](docs/TESTING.md) | 회귀 세트 16종 · 1,144개 확인 |
+| [docs/TESTING.md](docs/TESTING.md) | 회귀 세트 16종 · 1,181개 확인 |
 
 **절 번호(`§7.6` 같은)는 소스 주석 284곳이 가리키고 있습니다.** 번호를 바꾸면 그 참조가 전부 거짓이 되므로, 문서를 나눌 때도 번호는 그대로 두었습니다.
 

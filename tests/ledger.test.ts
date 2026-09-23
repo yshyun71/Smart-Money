@@ -146,29 +146,53 @@ section("조회 조건은 모두 함께 걸립니다");
   const rows = [
     tx({ date: "2026-08-01", expenseType: "FIXED", category: "통신", memo: "일시불" }),
     tx({ date: "2026-08-02", expenseType: "VARIABLE", category: "식비", memo: "3/6" }),
-    tx({ date: "2026-08-03", type: "INCOME", category: "기타수입", amount: 5_000 }),
+    tx({
+      date: "2026-08-03",
+      type: "INCOME",
+      expenseType: "VARIABLE",
+      category: "기타수입",
+      amount: 5_000,
+    }),
+    tx({
+      date: "2026-08-04",
+      type: "INCOME",
+      expenseType: "FIXED",
+      category: "급여",
+      amount: 3_000_000,
+    }),
     tx({ date: "2026-07-30", expenseType: "VARIABLE", category: "식비" }),
   ];
 
-  check("달로 걸러짐", filterEntries(rows, month()).length === 3);
+  check("달로 걸러짐", filterEntries(rows, month()).length === 4);
+  check("고정지출만", filterEntries(rows, month({ kind: "FIXED" })).length === 1);
   check(
-    "고정비만",
-    filterEntries(rows, month({ kind: "FIXED" }))
-      .map((r) => r.category)
-      .join() === "통신"
+    "변동지출만",
+    filterEntries(rows, month({ kind: "VARIABLE" })).map((r) => r.date).join() ===
+      "2026-08-02"
+  );
+  /* 정기성이 수입에도 붙습니다 (§6.6) — 급여와 환급금은 다른 것입니다 */
+  check(
+    "고정수입만",
+    filterEntries(rows, month({ kind: "INCOME_FIXED" })).map((r) => r.category).join() ===
+      "급여"
+  );
+  check(
+    "변동수입만",
+    filterEntries(rows, month({ kind: "INCOME_VARIABLE" })).map((r) => r.category).join() ===
+      "기타수입"
   );
   check("할부만", filterEntries(rows, month({ pay: "INSTALMENT" })).length === 1);
   check("카테고리로", filterEntries(rows, month({ category: "식비" })).length === 1);
   check(
     "ALL 과 빈 값은 같은 뜻",
-    filterEntries(rows, month({ kind: "ALL", pay: "ALL", category: null })).length === 3
+    filterEntries(rows, month({ kind: "ALL", pay: "ALL", category: null })).length === 4
   );
   /* 컨텍스트가 이미 정렬해 두었으므로 순서를 흔들지 않습니다 */
   check(
     "받은 순서를 지킵니다",
     filterEntries(rows, month())
       .map((r) => r.date)
-      .join() === "2026-08-01,2026-08-02,2026-08-03"
+      .join() === "2026-08-01,2026-08-02,2026-08-03,2026-08-04"
   );
 }
 

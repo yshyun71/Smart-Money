@@ -128,20 +128,51 @@ section("한 거래 — 어느 칸이 왜 안 되는지 말합니다");
   check("카테고리가 없으면", checkTransaction(tx({ category: "" })).some((p) => p.field === "category"));
   check("방향이 이상하면", checkTransaction(tx({ type: "TRANSFER" })).some((p) => p.field === "type"));
 
-  /* 고정비·변동비는 지출의 구분입니다(§9.6) */
+  /*
+    정기성은 **수입에도 붙습니다**(§6.6). 예전에는 수입 건의 `FIXED` 를 막았는데,
+    방향을 `type` 이 가르게 되면서 그 위험이 사라졌습니다.
+  */
   check(
-    "수입에 고정비를 붙이지 않습니다",
-    checkTransaction(tx({ type: "INCOME", expenseType: "FIXED" })).some(
+    "수입도 고정일 수 있습니다",
+    checkTransaction(tx({ type: "INCOME", expenseType: "FIXED", category: "급여" }))
+      .length === 0
+  );
+  check(
+    "수입도 변동일 수 있습니다",
+    checkTransaction(tx({ type: "INCOME", expenseType: "VARIABLE", category: "기타수입" }))
+      .length === 0
+  );
+  check(
+    "옛 값 INCOME 은 이제 막습니다",
+    checkTransaction(tx({ type: "INCOME", expenseType: "INCOME", category: "급여" })).some(
       (p) => p.field === "expenseType"
     )
   );
+
+  /*
+    **카테고리는 방향을 탑니다**(§6.1). 실데이터에 수입인데 `주거` 8건,
+    `카드대금` 2건이 있었습니다 — 그 한 줄이 그 달 합계를 조용히 비틉니다.
+  */
   check(
-    "수입에 INCOME 은 맞습니다",
-    checkTransaction(tx({ type: "INCOME", expenseType: "INCOME", category: "급여" })).length === 0
+    "수입에 지출 카테고리를 막습니다",
+    checkTransaction(tx({ type: "INCOME", category: "식비" })).some(
+      (p) => p.field === "category"
+    )
   );
   check(
-    "지출에 INCOME 은 아닙니다",
-    checkTransaction(tx({ expenseType: "INCOME" })).some((p) => p.field === "expenseType")
+    "지출에 수입 카테고리를 막습니다",
+    checkTransaction(tx({ category: "급여" })).some((p) => p.field === "category")
+  );
+  /* 이체는 양쪽에 있습니다 (§6.5) */
+  check(
+    "이체는 양쪽 모두 됩니다",
+    checkTransaction(tx({ category: "이체" })).length === 0 &&
+      checkTransaction(tx({ type: "INCOME", category: "이체" })).length === 0
+  );
+  /* 사용자가 만든 이름은 이 함수가 알지 못하므로 통과시킵니다 */
+  check(
+    "직접 만든 이름은 막지 않습니다",
+    checkTransaction(tx({ category: "반려동물" })).length === 0
   );
 
   /* 여러 문제를 함께 돌려주고, 화면에는 한 줄로 요약합니다 */

@@ -165,7 +165,7 @@ export const SMS_SCHEMA = object({
       merchant: str("상호명 또는 입금처"),
       amount: int("원 단위 금액 (양의 정수)"),
       type: { type: "string", enum: ["EXPENSE", "INCOME"] },
-      expenseType: { type: "string", enum: ["FIXED", "VARIABLE", "INCOME"] },
+      expenseType: { type: "string", enum: ["FIXED", "VARIABLE"] },
       category: { type: "string", enum: CATEGORY_NAMES },
       paymentMethod: str("문자 내 카드명 또는 계좌명"),
       date: str("YYYY-MM-DD"),
@@ -188,7 +188,7 @@ ${rawText}
 [분류 규칙]:
 1. 금액(amount): 원 단위 숫자 (양의 정수)
 2. 유형(type): "EXPENSE"(지출) 또는 "INCOME"(수입)
-3. 지출구분(expenseType): 고정비 성격(월세, 관리비, 넷플릭스, 쿠팡와우, 유튜브, 통신요금, 보험료, 대출이자, 학원비 등 정기결제)은 "FIXED", 그 외 일반 소비(식비, 카페, 마트, 쇼핑, 택시 등)는 "VARIABLE". 수입인 경우 "INCOME".
+3. 정기성(expenseType): 매달 되풀이되는 것은 "FIXED", 그 외는 "VARIABLE". **수입에도 붙습니다** — 급여·연금·임대료처럼 매달 들어오는 돈은 "FIXED", 어쩌다 들어온 환급금은 "VARIABLE" 입니다.
 4. 카테고리(category): 목록 중 하나로 매핑.
 5. 날짜(date): YYYY-MM-DD 형식 (연도가 없으면 ${currentYear}년으로 간주)
 6. 시간(time): HH:mm (없으면 "12:00")
@@ -232,7 +232,7 @@ export interface ClassifyItem {
 
 export interface ClassifyResult {
   index: number;
-  expenseType: "FIXED" | "VARIABLE" | "INCOME";
+  expenseType: "FIXED" | "VARIABLE";
   category: string;
   reason?: string;
 }
@@ -244,7 +244,7 @@ export function classifySchema(categories: string[]) {
       type: "array",
       items: object({
         index: int("입력의 index 값"),
-        expenseType: { type: "string", enum: ["FIXED", "VARIABLE", "INCOME"] },
+        expenseType: { type: "string", enum: ["FIXED", "VARIABLE"] },
         category: { type: "string", enum: categories },
         reason: str("한 줄 근거"),
       }),
@@ -260,13 +260,13 @@ async function classifyBatch(
   categories: string[]
 ): Promise<ClassifyResult[]> {
   const prompt = `
-다음은 사용자의 가계부 거래 내역입니다. 각 항목의 **지출구분(고정비/변동비)**과 **카테고리**를 분류하세요.
+다음은 사용자의 가계부 거래 내역입니다. 각 항목의 **정기성(고정/변동)**과 **카테고리**를 분류하세요.
 
-[카테고리 목록 — 반드시 이 중 하나]
+[카테고리 목록 — 반드시 이 중 하나. **수입 항목에는 수입 카테고리만, 지출 항목에는 지출 카테고리만** 쓰세요]
 ${categories.join(", ")}
 
 [지출구분 판단 규칙]
-1. 수입(isIncome=true)은 반드시 expenseType="INCOME".
+1. expenseType 은 "FIXED" 또는 "VARIABLE" 둘 중 하나입니다. **수입에도 붙습니다** — 급여·연금·임대료처럼 매달 들어오는 돈은 "FIXED", 어쩌다 들어온 환급금·판매대금은 "VARIABLE" 입니다. 수입인지 지출인지는 이미 정해져 있으니 판단하지 마세요.
 2. 성격이 명확한 항목은 이름으로 판단합니다.
    - 고정비: 월세, 관리비, 통신요금, 보험료, 대출이자, 정기구독(넷플릭스·유튜브·쿠팡와우 등), 학원비, 정기 적금/저축
    - 변동비: 외식, 배달, 카페, 마트·편의점, 택시, 쇼핑, 문화생활, 병원·약국

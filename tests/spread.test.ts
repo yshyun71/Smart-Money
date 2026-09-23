@@ -183,11 +183,22 @@ section("분류 — 카테고리와 고정비를 같은 내역명 전체에");
 }
 
 // ---------------------------------------------------------------------------
-section("분류 — 수입은 고정비 판정에서 빼놓는다");
+section("분류 — 방향이 다르면 퍼뜨리지 않는다 (§6.1 · §6.6)");
 // ---------------------------------------------------------------------------
 {
+  /*
+    **방향이 다르면 아무것도 퍼뜨리지 않습니다** (§6.1 · §6.6).
+
+    카테고리가 방향마다 갈리므로 지출의 `쇼핑` 을 수입 줄에 복사하면 그 줄은
+    어느 수입 카테고리도 아니게 되고, 저장 단계에서 거절됩니다(§17.7). 같은
+    이름이 양쪽에 찍히는 일은 흔합니다 — 당근마켓에서 사고 팔면 그렇습니다.
+  */
   const target = tx("당근마켓", { category: "기타지출", expenseType: "VARIABLE" });
-  const income = tx("당근마켓", { type: "INCOME", expenseType: "INCOME", category: "기타수입" });
+  const income = tx("당근마켓", {
+    type: "INCOME",
+    expenseType: "VARIABLE",
+    category: "기타수입",
+  });
   const rows = [target, income];
 
   const plan = planClassification(rows, target, {
@@ -197,19 +208,40 @@ section("분류 — 수입은 고정비 판정에서 빼놓는다");
     recurringDay: 3,
   });
 
-  const touched = plan.updates.find((t) => t.id === income.id);
-  check("수입 건도 카테고리는 따라감", touched?.category === "쇼핑", touched);
-  check("수입 건의 구분은 그대로", touched?.expenseType === "INCOME", touched);
-  check("수입 건에 결제일을 달지 않음", touched?.recurringDay === undefined, touched);
+  check("수입 건은 건드리지 않습니다", plan.updates.length === 0, plan.updates);
 
-  // 대상이 수입이면 고정비 자체를 퍼뜨리지 않는다
   const fromIncome = planClassification([income, target], income, {
-    category: "기타수입" as any,
-    expenseType: "INCOME" as any,
-    isFixedRecurring: false,
+    category: "급여" as any,
+    expenseType: "FIXED" as any,
+    isFixedRecurring: true,
+    recurringDay: 25,
   });
-  const expense = fromIncome.updates.find((t) => t.id === target.id);
-  check("지출 건의 구분은 그대로", expense?.expenseType === "VARIABLE", expense);
+  check("반대 방향도 마찬가지", fromIncome.updates.length === 0, fromIncome.updates);
+
+  /*
+    같은 방향이면 정기성이 그대로 따라갑니다 — **수입도 그렇습니다**(§6.6).
+    급여가 고정수입이 되면 같은 이름의 지난 급여도 함께 고정수입이 됩니다.
+  */
+  const pay1 = tx("(주)테크솔루션", {
+    type: "INCOME",
+    expenseType: "VARIABLE",
+    category: "기타수입",
+  });
+  const pay2 = tx("(주)테크솔루션", {
+    type: "INCOME",
+    expenseType: "VARIABLE",
+    category: "기타수입",
+  });
+  const paid = planClassification([pay1, pay2], pay1, {
+    category: "급여" as any,
+    expenseType: "FIXED" as any,
+    isFixedRecurring: true,
+    recurringDay: 25,
+  });
+  const other = paid.updates.find((t) => t.id === pay2.id);
+  check("수입도 카테고리가 따라감", other?.category === "급여", other);
+  check("수입도 고정이 따라감", other?.expenseType === "FIXED", other);
+  check("수입에도 결제일이 붙음", other?.recurringDay === 25, other);
 }
 
 // ---------------------------------------------------------------------------

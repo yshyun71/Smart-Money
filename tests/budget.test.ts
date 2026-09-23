@@ -27,6 +27,11 @@ import {
   spendingRows,
 } from "../src/services/actuals";
 import { monthPeriod } from "../src/services/trend";
+import {
+  builtInCategoriesFor,
+  fallbackCategory,
+  fitsDirection,
+} from "../src/constants/categories";
 import { categoryStatuses, budgetAlertsFor } from "../src/services/budgetStatus";
 
 let passed = 0;
@@ -772,6 +777,80 @@ section("예산 알림 — 언제, 몇 번 (§11.8)");
     "달이 id 에 들어감",
     budgetAlertsFor({ statuses, month: "2026-09", now })[0].id.startsWith("2026-09")
   );
+}
+
+
+// ---------------------------------------------------------------------------
+section("수입의 고정·변동, 방향별 카테고리 (§6.1 · §6.6)");
+// ---------------------------------------------------------------------------
+{
+  const income = (id: string, et: string, category: string, amount: number): any => ({
+    id,
+    accountId: "bank",
+    date: "2026-08-25",
+    time: "12:00",
+    type: "INCOME",
+    expenseType: et,
+    category,
+    merchant: id,
+    amount,
+    paymentMethod: "통장",
+  });
+
+  const rows = [
+    income("pay", "FIXED", "급여", 3_000_000),
+    income("rent", "FIXED", "기타수입", 500_000),
+    income("refund", "VARIABLE", "기타수입", 12_000),
+    fixedTx("통신", "2026-08", 55_000),
+  ];
+  const opts = { month: "2026-08" };
+
+  /*
+    **다음 달에도 들어올 돈이 얼마인가.** 합계 하나로는 그 달만 유난히 큰 이유를
+    알 수 없습니다 — 급여와 어쩌다 들어온 환급금이 한 덩어리이기 때문입니다.
+  */
+  check(
+    "고정수입만",
+    sumActuals(actualRows(rows, { ...opts, kind: "INCOME_FIXED" })).total === 3_500_000
+  );
+  check(
+    "변동수입만",
+    sumActuals(actualRows(rows, { ...opts, kind: "INCOME_VARIABLE" })).total === 12_000
+  );
+  check(
+    "둘을 더하면 전체 수입",
+    sumActuals(actualRows(rows, { ...opts, kind: "INCOME" })).total === 3_512_000
+  );
+  check(
+    "지출은 섞이지 않습니다",
+    actualRows(rows, { ...opts, kind: "INCOME_FIXED" }).every((tx) => tx.type === "INCOME")
+  );
+  /* 고정비 합계에 수입이 끼지 않아야 합니다 */
+  check(
+    "고정비는 지출만",
+    sumActuals(actualRows(rows, { ...opts, kind: "FIXED" })).total === 55_000
+  );
+
+  /* 카테고리는 방향마다 갈립니다 (§6.1) */
+  check("수입 목록", builtInCategoriesFor("INCOME").includes("급여"));
+  check("수입 목록에 식비 없음", !builtInCategoriesFor("INCOME").includes("식비"));
+  check("지출 목록", builtInCategoriesFor("EXPENSE").includes("식비"));
+  check("지출 목록에 급여 없음", !builtInCategoriesFor("EXPENSE").includes("급여"));
+  /* 이체는 양쪽에 있습니다 (§6.5) */
+  check(
+    "이체는 양쪽",
+    builtInCategoriesFor("INCOME").includes("이체") &&
+      builtInCategoriesFor("EXPENSE").includes("이체")
+  );
+
+  check("방향이 맞으면 참", fitsDirection("식비", "EXPENSE") && fitsDirection("급여", "INCOME"));
+  check("어긋나면 거짓", !fitsDirection("식비", "INCOME") && !fitsDirection("급여", "EXPENSE"));
+  /* 사용자가 만든 이름은 이 함수가 알지 못하므로 막지 않습니다 */
+  check(
+    "모르는 이름은 통과",
+    fitsDirection("반려동물", "EXPENSE") && fitsDirection("반려동물", "INCOME")
+  );
+  check("돌아갈 자리", fallbackCategory("INCOME") === "기타수입" && fallbackCategory("EXPENSE") === "기타지출");
 }
 
 // ---------------------------------------------------------------------------

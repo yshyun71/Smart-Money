@@ -4,6 +4,7 @@ import { monthPhase } from "../../services/actuals";
 import { ActualsPickerModal } from "../modals/ActualsPickerModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import type { ActualKind } from "../../services/actuals";
+import { shortWon } from "../../utils/format";
 import { TrendingUp, TrendingDown, PiggyBank, Sparkles, ChevronRight } from "lucide-react";
 import type { Transaction } from "../../types/finance";
 
@@ -12,6 +13,7 @@ export const SummaryCard: React.FC<{ onNavigateToSavings?: () => void }> = ({
 }) => {
   const {
     totalIncome,
+    incomeSplit,
     totalExpense,
     netSavings,
     fixedExpenseTotal,
@@ -127,6 +129,19 @@ export const SummaryCard: React.FC<{ onNavigateToSavings?: () => void }> = ({
             {totalIncome.toLocaleString()}
             <span className="text-xs font-normal text-slate-400 ml-0.5">원</span>
           </div>
+          {/*
+            **다음 달에도 들어올 돈이 얼마인가** (§6.6).
+
+            합계 하나로는 그 달만 유난히 큰 이유를 알 수 없습니다 — 급여와 어쩌다
+            들어온 환급금이 한 덩어리이기 때문입니다. 고정비/변동비를 가른 것과
+            같은 까닭으로 가릅니다.
+          */}
+          {incomeSplit.fixed > 0 && (
+            <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+              고정 {shortWon(incomeSplit.fixed)}
+              {incomeSplit.variable > 0 && ` · 변동 ${shortWon(incomeSplit.variable)}`}
+            </div>
+          )}
         </button>
 
         <button

@@ -7,6 +7,7 @@ import type {
   MonthlyBudgetConfig,
   RuleSource,
   Transaction,
+  TransactionType,
   ValueSource,
 } from "../types/finance";
 import type { StoredPin } from "../services/pinCrypto";
@@ -694,32 +695,58 @@ export function setCategoryRuleSource(id: string, source: RuleSource): void {
  * kept per user for the same reason ledgers are: one person's categories are
  * no business of another's.
  */
-export function listCustomCategories(): string[] {
-  return queryAll<{ name: string }>(
-    "SELECT name FROM custom_categories WHERE user_id = ? ORDER BY created_at",
-    [requireUser()]
-  ).map((row) => row.name);
+export interface CustomCategory {
+  name: string;
+  /** 수입용인가 지출용인가 — 같은 이름이 양쪽에 있을 수 있습니다 (§6.1). */
+  direction: TransactionType;
 }
 
-/** Adding a name that is already there is a no-op, not an error. */
-export function addCustomCategory(name: string, type: ExpenseType = "VARIABLE"): void {
+export function listCustomCategories(): CustomCategory[] {
+  return queryAll<{ name: string; direction: string }>(
+    "SELECT name, direction FROM custom_categories WHERE user_id = ? ORDER BY created_at",
+    [requireUser()]
+  ).map((row) => ({
+    name: row.name,
+    direction: row.direction === "INCOME" ? "INCOME" : "EXPENSE",
+  }));
+}
+
+/**
+ * 같은 이름이 이미 있으면 아무 일도 하지 않습니다 — 오류가 아닙니다.
+ *
+ * **방향이 다르면 다른 카테고리입니다**(§6.1). `이체` 가 양쪽에 있는 것과 같은
+ * 까닭이고, 유일성도 `(사용자, 이름, 방향)` 으로 걸려 있습니다.
+ */
+export function addCustomCategory(
+  name: string,
+  direction: TransactionType = "EXPENSE",
+  type: ExpenseType = "VARIABLE"
+): void {
   const trimmed = (name || "").trim();
   if (!trimmed) return;
 
   run(
-    `INSERT OR IGNORE INTO custom_categories (id, user_id, name, type, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO custom_categories (id, user_id, name, type, direction, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     [
       `cc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       requireUser(),
       trimmed,
       type,
+      direction,
       new Date().toISOString(),
     ]
   );
 }
 
-export function deleteCustomCategory(name: string): void {
+export function deleteCustomCategory(name: string, direction?: TransactionType): void {
+  if (direction) {
+    run(
+      "DELETE FROM custom_categories WHERE user_id = ? AND name = ? AND direction = ?",
+      [requireUser(), (name || "").trim(), direction]
+    );
+    return;
+  }
   run("DELETE FROM custom_categories WHERE user_id = ? AND name = ?", [
     requireUser(),
     (name || "").trim(),

@@ -187,7 +187,7 @@ section("금융 카테고리 — 좁은 것이 먼저 (§6.3)");
   */
   check("적금은 저축", financeCategoryFor("정기적금 자동이체") === "저축");
   check("청약은 저축", financeCategoryFor("주택청약저축") === "저축");
-  check("펀드는 기타 금융", financeCategoryFor("미래에셋펀드") === "기타 금융");
+  check("펀드는 금융/자산", financeCategoryFor("미래에셋펀드") === "금융/자산");
   check("아무것도 아니면 null", financeCategoryFor("스타벅스") === null);
 }
 

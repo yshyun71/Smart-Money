@@ -46,8 +46,9 @@
 | 15 | `sms_inbox` 테이블, `transactions.origin` (SMS/STATEMENT/MANUAL) |
 | 16 | `budget_configs.income_excluded`·`fixed_excluded`·`savings_excluded` (실적에서 뺀 거래 id) |
 | 17 | `undo_log` 테이블 (되돌리기 임시 저장소) |
+| 18 | **수입의 고정/변동**(`expense_type` 에서 `'INCOME'` 제거) · **방향별 카테고리**(`기타 금융` → `금융/자산`·`금융/자산수입`, 방향에 맞지 않는 것은 그 방향의 `기타`로) · `custom_categories.direction` 과 `UNIQUE(user_id, name, direction)` 재구축 |
 
-현재 `SCHEMA_VERSION = 17`.
+현재 `SCHEMA_VERSION = 18`.
 
 ### 4.4 테이블 (현재 형태)
 
@@ -57,7 +58,8 @@ users(id PK, name, email, phone, pin, pin_hash, pin_salt, pin_iterations,
       authenticated_at, created_at)
 
 categories(id PK, name UNIQUE, type, icon, color, is_default)   -- 앱은 읽지 않음. 참고용
-custom_categories(id PK, user_id, name, type, created_at, UNIQUE(user_id, name))
+custom_categories(id PK, user_id, name, type, direction, created_at,
+                  UNIQUE(user_id, name, direction))   -- 같은 이름을 양쪽에 (6.1)
 
 accounts(id PK, user_id, name, type, institution, identifier,
          balance_or_billed, balance_as_of, balance_source,
@@ -65,7 +67,7 @@ accounts(id PK, user_id, name, type, institution, identifier,
          color, is_auto_sync_enabled, last_synced_at, created_at)
 
 transactions(id PK, user_id, date, time, type, expense_type, category, merchant,
-             amount, payment_method, account_id, memo, note,
+             amount, payment_method, account_id, memo, note,   -- expense_type 은 FIXED|VARIABLE (6.6)
              is_fixed_recurring, recurring_day,
              linked_account_id, billing_month, created_at)
 

@@ -45,12 +45,20 @@ export function spendingRows(transactions: Transaction[]): Transaction[] {
   return transactions.filter((tx) => !isAssetMove(tx));
 }
 
-export type ActualKind = "INCOME" | "EXPENSE" | "FIXED" | "SAVINGS" | "VARIABLE";
+export type ActualKind =
+  | "INCOME"
+  | "INCOME_FIXED"
+  | "INCOME_VARIABLE"
+  | "EXPENSE"
+  | "FIXED"
+  | "SAVINGS"
+  | "VARIABLE";
 
 /**
  * 그 달의 실적을 만드는 거래들.
  *
- * - `INCOME` 그 달의 모든 수입.
+ * - `INCOME` 그 달의 모든 수입. `INCOME_FIXED`·`INCOME_VARIABLE` 은 그것을
+ *   정기성으로 가른 것입니다(§6.6) — 급여와 어쩌다 들어온 돈은 다릅니다.
  * - `FIXED` 고정비로 판정된 지출에서 **저축을 뺀 것**. 적금은 매달 같은 날 같은
  *   금액이라 §10 판정으로 고정비가 되는데, 가용 변동비가 `수입 − 고정비 − 저축`
  *   이므로 양쪽에 세면 같은 돈이 두 번 깎입니다.
@@ -78,6 +86,17 @@ export function actualRows(
     if (!tx.date.startsWith(month)) return false;
 
     if (kind === "INCOME") return tx.type === "INCOME";
+    /*
+      **수입도 고정과 변동으로 갈립니다** (§6.6). 급여처럼 매달 들어오는 돈과
+      어쩌다 들어온 환급금을 한 덩어리로 세면 "다음 달에 얼마가 확실히
+      들어오는가"에 답할 수 없습니다 — 고정비/변동비를 가른 것과 같은 까닭입니다.
+    */
+    if (kind === "INCOME_FIXED") {
+      return tx.type === "INCOME" && tx.expenseType === "FIXED";
+    }
+    if (kind === "INCOME_VARIABLE") {
+      return tx.type === "INCOME" && tx.expenseType !== "FIXED";
+    }
     if (tx.type !== "EXPENSE") return false;
     if (kind === "EXPENSE") return true;
 

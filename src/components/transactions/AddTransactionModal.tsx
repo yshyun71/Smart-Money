@@ -51,9 +51,12 @@ export const AddTransactionModal: React.FC<{
     categoryForMerchant,
   } = useFinance();
 
-  const [formType, setFormType] = useState<"VARIABLE" | "FIXED" | "INCOME">(
-    "VARIABLE"
-  );
+  /** 수입인가 지출인가. 정기성과 **따로** 둡니다 (§6.6). */
+  const [direction, setDirection] = useState<TransactionType>("EXPENSE");
+  /** 고정인가 변동인가 — 수입에도 붙습니다. */
+  const [recurring, setRecurring] = useState<ExpenseType>("VARIABLE");
+  const isIncome = direction === "INCOME";
+  const isFixed = recurring === "FIXED";
   const [amount, setAmount] = useState("");
   const [merchant, setMerchant] = useState("");
   const [category, setCategory] = useState<CategoryType>("식비");
@@ -110,13 +113,8 @@ export const AddTransactionModal: React.FC<{
     if (!isOpen) return;
 
     if (editing) {
-      setFormType(
-        editing.type === "INCOME"
-          ? "INCOME"
-          : editing.expenseType === "FIXED"
-          ? "FIXED"
-          : "VARIABLE"
-      );
+      setDirection(editing.type);
+      setRecurring(editing.expenseType === "FIXED" ? "FIXED" : "VARIABLE");
       setAmount(formatAmountInput(String(editing.amount)));
       setMerchant(editing.merchant);
       setCategory(editing.category);
@@ -128,7 +126,8 @@ export const AddTransactionModal: React.FC<{
       setLinkedAccountId(editing.linkedAccountId || "");
       setLinkTouched(false);
     } else {
-      setFormType("VARIABLE");
+      setDirection("EXPENSE");
+      setRecurring("VARIABLE");
       setAmount("");
       setMerchant("");
       setCategory("식비");
@@ -159,12 +158,12 @@ export const AddTransactionModal: React.FC<{
   useEffect(() => {
     if (!isOpen) return;
     const hit = merchant.trim()
-      ? categoryForMerchant(merchant, selectedAccountId, formType === "INCOME")
+      ? categoryForMerchant(merchant, selectedAccountId, isIncome)
       : null;
     setRuleHint(hit);
     if (hit && !editing && !categoryTouched) setCategory(hit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, merchant, selectedAccountId, editing, categoryTouched, formType]);
+  }, [isOpen, merchant, selectedAccountId, editing, categoryTouched, isIncome]);
 
   // Follow the description until the user writes a pattern of their own
   useEffect(() => {
@@ -217,15 +216,11 @@ export const AddTransactionModal: React.FC<{
   const wantedClass = useMemo(
     () => ({
       category,
-      expenseType: (formType === "INCOME"
-        ? "INCOME"
-        : formType === "FIXED"
-        ? "FIXED"
-        : "VARIABLE") as ExpenseType,
-      isFixedRecurring: formType === "FIXED",
-      recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
+      expenseType: recurring,
+      isFixedRecurring: recurring === "FIXED",
+      recurringDay: recurring === "FIXED" ? parseInt(recurringDay, 10) : undefined,
     }),
-    [category, formType, recurringDay]
+    [category, recurring, recurringDay]
   );
 
   const classifyReach = useMemo(
@@ -255,13 +250,8 @@ export const AddTransactionModal: React.FC<{
     const selectedAcc = accounts.find((a) => a.id === selectedAccountId);
     const paymentMethod = selectedAcc ? selectedAcc.name : "현금/기타";
 
-    const type: TransactionType = formType === "INCOME" ? "INCOME" : "EXPENSE";
-    const expenseType: ExpenseType =
-      formType === "INCOME"
-        ? "INCOME"
-        : formType === "FIXED"
-        ? "FIXED"
-        : "VARIABLE";
+    const type: TransactionType = direction;
+    const expenseType: ExpenseType = recurring;
 
     const payload = {
       date,
@@ -275,8 +265,8 @@ export const AddTransactionModal: React.FC<{
       accountId: selectedAccountId,
       memo: memo.trim() || undefined,
       note: note.trim() || undefined,
-      isFixedRecurring: formType === "FIXED",
-      recurringDay: formType === "FIXED" ? parseInt(recurringDay, 10) : undefined,
+      isFixedRecurring: isFixed,
+      recurringDay: isFixed ? parseInt(recurringDay, 10) : undefined,
       linkedAccountId:
         category === CARD_PAYMENT_CATEGORY && linkedAccountId ? linkedAccountId : undefined,
       // Not shown on this form, and not this form's to discard: it says which
@@ -395,61 +385,72 @@ export const AddTransactionModal: React.FC<{
           {/* Type Segmented Control */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              지출/수입 구분
+              지출/수입 · 고정/변동
             </label>
-            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-xl">
-              <button
-                type="button"
-                onClick={() => {
-                  setFormType("VARIABLE");
-                  if (category === "급여" || category === "주거")
-                    setCategory("식비");
-                }}
-                className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
-                  formType === "VARIABLE"
-                    ? "bg-amber-500 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>변동지출</span>
-              </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setFormType("FIXED");
-                  setCategory("주거");
-                }}
-                className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
-                  formType === "FIXED"
-                    ? "bg-indigo-600 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Pin className="w-3.5 h-3.5 rotate-45" />
-                <span>고정지출</span>
-              </button>
+            {/*
+              **두 가지를 따로 묻습니다** (§6.6).
 
-              <button
-                type="button"
-                onClick={() => {
-                  setFormType("INCOME");
-                  setCategory("급여");
-                }}
-                className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
-                  formType === "INCOME"
-                    ? "bg-emerald-600 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Coins className="w-3.5 h-3.5" />
-                <span>수입</span>
-              </button>
+              예전에는 `변동지출 · 고정지출 · 수입` 세 칸이었습니다. 수입에는
+              정기성이 없다는 전제였는데, 실제로는 **급여만큼 정기적인 돈이
+              없습니다.** 셋을 넷으로 늘리면 좁은 화면에서 글자가 갈리므로,
+              방향과 정기성을 두 줄로 나눕니다 — 모델과도 같은 모양입니다.
+            */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl mb-1.5">
+              {([
+                ["EXPENSE", "지출", ShoppingBag, "bg-amber-500"],
+                ["INCOME", "수입", Coins, "bg-emerald-600"],
+              ] as const).map(([value, label, Icon, tone]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    if (value === direction) return;
+                    setDirection(value);
+                    /* 방향이 바뀌면 카테고리도 그 방향의 것이어야 합니다 (§6.1) */
+                    setCategory(value === "INCOME" ? "급여" : "식비");
+                    setCategoryTouched(false);
+                  }}
+                  className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
+                    direction === value
+                      ? `${tone} text-white shadow-xs`
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{label}</span>
+                </button>
+              ))}
             </div>
-            {formType === "FIXED" && (
+
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl">
+              {([
+                ["VARIABLE", isIncome ? "변동수입" : "변동지출"],
+                ["FIXED", isIncome ? "고정수입" : "고정지출"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setRecurring(value)}
+                  className={`flex items-center justify-center gap-1 py-2 text-xs font-bold rounded-lg transition ${
+                    recurring === value
+                      ? value === "FIXED"
+                        ? "bg-indigo-600 text-white shadow-xs"
+                        : "bg-slate-500 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {value === "FIXED" && <Pin className="w-3.5 h-3.5 rotate-45" />}
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+
+            {isFixed && (
               <p className="text-[11px] text-indigo-600 mt-1">
-                📌 고정비: 월세, 관리비, 통신비, 정기구독(넷플릭스 등), 보험료 등 정기 결제 항목
+                📌 {isIncome
+                  ? "고정수입: 급여·연금·임대료처럼 매달 들어오는 돈"
+                  : "고정지출: 월세·관리비·통신비·정기구독·보험료처럼 매달 나가는 돈"}
               </p>
             )}
           </div>
@@ -497,6 +498,7 @@ export const AddTransactionModal: React.FC<{
               카테고리
             </label>
             <CategorySelect
+              direction={direction}
               value={category}
               onChange={(next) => {
                 setCategoryTouched(true);
@@ -518,12 +520,12 @@ export const AddTransactionModal: React.FC<{
             {category === TRANSFER_CATEGORY && (
               <p
                 className={`text-[10px] mt-1.5 px-2.5 py-2 rounded-xl border leading-relaxed ${
-                  formType === "FIXED"
+                  isFixed
                     ? "bg-indigo-50 border-indigo-200/70 text-indigo-800"
                     : "bg-slate-50 border-slate-200/70 text-slate-600"
                 }`}
               >
-                {formType === "FIXED" ? (
+                {isFixed ? (
                   <>
                     <strong>고정비로 표시했으므로 지출로 셉니다.</strong> 매달
                     빠져나가는 이체는 사실상 고정 지출이라, 합계·예산·분석에 그대로
@@ -533,7 +535,7 @@ export const AddTransactionModal: React.FC<{
                   <>
                     내 계좌 사이에서 <strong>옮긴 돈</strong>으로 보고 월 합계·소비분석·
                     AI 분석에서 <strong>뺍니다</strong>. 통장 잔액과 계좌 내역은 그대로입니다.
-                    {formType === "VARIABLE" &&
+                    {!isFixed &&
                       " 매달 같은 금액이 나가는 이체라면 위에서 [고정비]로 바꾸세요 — 그때는 지출로 셉니다."}
                   </>
                 )}
@@ -717,7 +719,7 @@ export const AddTransactionModal: React.FC<{
               />
             </div>
 
-            {formType === "FIXED" && (
+            {isFixed && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   매월 결제일 (1~31일)

@@ -51,8 +51,13 @@ export interface LedgerFilter {
   month?: string;
   from?: string;
   to?: string;
-  /** 고정비·변동비·수입. 비우거나 `ALL` 이면 전부. */
-  kind?: "ALL" | "FIXED" | "VARIABLE" | "INCOME";
+  /**
+   * 방향과 정기성을 곱한 넷. 비우거나 `ALL` 이면 전부 (§6.6).
+   *
+   * 정기성이 수입에도 붙게 되면서 `INCOME` 하나로는 모자라게 되었습니다 —
+   * 급여와 어쩌다 들어온 환급금은 다른 것입니다.
+   */
+  kind?: "ALL" | "FIXED" | "VARIABLE" | "INCOME_FIXED" | "INCOME_VARIABLE";
   /** 카드 전용. 비우거나 `ALL` 이면 전부. */
   pay?: "ALL" | PayKind;
   /** 비우면 전부. */
@@ -85,7 +90,12 @@ export function filterEntries(
 
   return entries.filter((tx) => {
     if (!inPeriod(tx, filter)) return false;
-    if (kind !== "ALL" && tx.expenseType !== kind) return false;
+    if (kind !== "ALL") {
+      const wantsIncome = kind.startsWith("INCOME");
+      if ((tx.type === "INCOME") !== wantsIncome) return false;
+      const wantedRecurrence = kind.endsWith("FIXED") ? "FIXED" : "VARIABLE";
+      if (tx.expenseType !== wantedRecurrence) return false;
+    }
     if (pay !== "ALL" && payKindOf(tx) !== pay) return false;
     if (filter.category && tx.category !== filter.category) return false;
     return true;

@@ -1,5 +1,7 @@
-import type { CategoryRule, CategoryType } from "../types/finance";
-import { CARD_PAYMENT_CATEGORY, FINANCE_KEYWORDS } from "../constants/categories";
+import type { CategoryRule, CategoryType, TransactionType } from "../types/finance";
+import { CARD_PAYMENT_CATEGORY, FINANCE_KEYWORDS,
+  fitsDirection,
+} from "../constants/categories";
 
 /**
  * Standing category rules, matched loosely against a transaction's description.
@@ -180,11 +182,24 @@ export function resolveCategory(
   accountId?: string,
   isIncome = false
 ): CategoryType | null {
-  const confirmed = pickRule(userRulesOnly(rules), merchant, accountId);
+  /*
+    **방향이 맞지 않는 규칙은 걸리지 않습니다** (§6.1).
+
+    규칙에는 방향 칸이 없습니다 — 고른 카테고리가 이미 방향을 말하기 때문입니다
+    (`식비` 는 지출, `급여` 는 수입). 칸을 더하면 같은 사실을 두 곳에 적는 셈이고,
+    한쪽만 고쳐질 자리가 생깁니다.
+
+    사용자가 만든 이름은 이 함수가 알지 못하므로 통과시킵니다(`fitsDirection`) —
+    걸러 내면 직접 만든 카테고리에는 규칙을 걸 수 없게 됩니다.
+  */
+  const direction: TransactionType = isIncome ? "INCOME" : "EXPENSE";
+  const usable = rules.filter((rule) => fitsDirection(rule.category, direction));
+
+  const confirmed = pickRule(userRulesOnly(usable), merchant, accountId);
   if (confirmed) return confirmed.category;
 
   const builtIn = builtInCategoryFor(merchant, isIncome);
   if (builtIn) return builtIn;
 
-  return pickRule(rules, merchant, accountId)?.category ?? null;
+  return pickRule(usable, merchant, accountId)?.category ?? null;
 }

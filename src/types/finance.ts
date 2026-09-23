@@ -1,14 +1,36 @@
 export type TransactionType = "EXPENSE" | "INCOME";
 
-export type ExpenseType = "FIXED" | "VARIABLE" | "INCOME";
+/**
+ * 정기성 — **수입과 지출 양쪽**에 붙습니다.
+ *
+ * 예전에는 `"FIXED" | "VARIABLE" | "INCOME"` 이었습니다. 수입은 정기성을 갖지
+ * 않는다는 뜻이었는데, 실제로는 **급여만큼 정기적인 돈이 없습니다.** 매달
+ * 같은 날 들어오는 돈과 어쩌다 들어온 환급금을 한 덩어리로 세면 "다음 달에
+ * 얼마가 들어오는가"에 답할 수 없습니다 — 고정비/변동비를 가른 것과 똑같은
+ * 까닭입니다.
+ *
+ * 방향은 `type` 이 가르므로 여기에 담지 않습니다. 컬럼 이름 `expense_type` 은
+ * 옛 이름이 남은 것입니다(§4.4) — 이름을 바꾸려면 마이그레이션이 필요하고,
+ * 얻는 것이 이름뿐이라 그대로 두었습니다.
+ */
+export type ExpenseType = "FIXED" | "VARIABLE";
 
-/** The categories the app ships with. */
-export type BuiltInCategory =
+/**
+ * 수입 카테고리.
+ *
+ * **지출과 이름 공간을 나눕니다.** 같은 이름이 양쪽에 필요하면 각각 등록합니다
+ * — `이체` 가 그런 경우입니다(§6.5). 나누지 않으면 "급여" 로 지출을 적거나
+ * "식비" 로 수입을 적는 일이 생기고, 그 한 줄이 그 달 합계를 조용히 비틉니다.
+ */
+export type IncomeCategory = "급여" | "이체" | "금융/자산수입" | "기타수입";
+
+/** 지출 카테고리. */
+export type ExpenseCategory =
+  | "식비"
+  | "카페/간식"
   | "주거"
   | "통신"
   | "구독/미디어"
-  | "식비"
-  | "카페/간식"
   | "교통"
   | "쇼핑"
   | "문화/여가"
@@ -16,13 +38,14 @@ export type BuiltInCategory =
   | "의료"
   | "보험"
   | "대출"
-  | "기타 금융"
-  | "저축"
+  | "금융/자산"
   | "이체"
   | "카드대금"
-  | "급여"
-  | "기타수입"
+  | "저축"
   | "기타지출";
+
+/** The categories the app ships with. */
+export type BuiltInCategory = IncomeCategory | ExpenseCategory;
 
 /**
  * A built-in category, or one the user typed in themselves.
@@ -96,7 +119,8 @@ export interface Transaction {
   date: string; // YYYY-MM-DD
   time: string; // HH:mm
   type: TransactionType;
-  expenseType: ExpenseType; // FIXED: 고정비, VARIABLE: 변동비, INCOME: 수입
+  /** 고정·변동. 수입에도 붙습니다 — 방향은 `type` 이 가릅니다 (§6.6). */
+  expenseType: ExpenseType;
   category: CategoryType;
   merchant: string;
   amount: number;

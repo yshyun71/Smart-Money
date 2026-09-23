@@ -1,4 +1,5 @@
 import type { Transaction } from "../types/finance";
+import { fitsDirection } from "../constants/categories";
 
 /**
  * 가계부에 들어가도 되는 값인가 — **쓰기 직전의 마지막 관문**.
@@ -114,17 +115,30 @@ export function checkTransaction(tx: Partial<Transaction>): Problem[] {
     problems.push({ field: "category", message: "카테고리를 정해야 합니다" });
   }
   /*
-    고정비·변동비는 **지출의 구분**입니다(§9.6). 수입 건에 그 값이 붙으면 고정비
-    합계가 수입을 세게 되므로, 방향과 어긋나는 조합을 막습니다.
+    정기성(고정/변동)은 **수입에도 붙습니다**(§6.6). 예전에는 수입 건에
+    `FIXED` 가 붙으면 고정비 합계가 수입을 세게 되어 막았는데, 이제는 방향을
+    `type` 이 가르므로 그 위험이 없습니다. 값이 둘 중 하나인지만 봅니다.
   */
-  if (tx.type === "INCOME" && tx.expenseType && tx.expenseType !== "INCOME") {
+  if (tx.expenseType !== "FIXED" && tx.expenseType !== "VARIABLE") {
     problems.push({
       field: "expenseType",
-      message: "수입 건에는 고정비·변동비를 붙이지 않습니다",
+      message: "고정·변동 중 하나여야 합니다",
     });
   }
-  if (tx.type === "EXPENSE" && tx.expenseType === "INCOME") {
-    problems.push({ field: "expenseType", message: "지출 건의 구분이 수입입니다" });
+
+  /*
+    **카테고리는 방향을 탑니다**(§6.1). 수입 건에 `식비` 가 붙거나 지출 건에
+    `급여` 가 붙으면 그 한 줄이 그 달 합계를 조용히 비틉니다 — 실데이터에
+    수입인데 `주거` 8건, `카드대금` 2건이 있었습니다.
+
+    사용자가 만든 이름은 이 함수가 알지 못하므로 통과시킵니다(`fitsDirection`).
+    그쪽 판정은 목록을 가진 컨텍스트가 합니다.
+  */
+  if (tx.category && tx.type && !fitsDirection(tx.category, tx.type)) {
+    problems.push({
+      field: "category",
+      message: `${tx.type === "INCOME" ? "수입" : "지출"}에 쓸 수 없는 카테고리입니다: ${tx.category}`,
+    });
   }
 
   return problems;

@@ -260,16 +260,107 @@ section("카테고리 분리가 과거 내역을 옮깁니다 (§6.3)");
     value(db, "SELECT category FROM transactions WHERE id='s1'") === "저축",
     value(db, "SELECT category FROM transactions WHERE id='s1'")
   );
+  /*
+    v14 는 지출만 옮겼습니다. v18 이 그 뒤를 이어 **방향마다 이름을 나눕니다**
+    (§6.1) — 나가는 돈은 `금융/자산`, 들어오는 돈은 `금융/자산수입` 입니다.
+    한 이름이 두 뜻을 갖고 있었던 것이 v14 가 반쪽짜리였던 까닭입니다.
+  */
   check(
-    "입금 건은 건드리지 않습니다",
-    value(db, "SELECT category FROM transactions WHERE id='s2'") === "기타 금융",
+    "입금 건은 금융/자산수입으로",
+    value(db, "SELECT category FROM transactions WHERE id='s2'") === "금융/자산수입",
     value(db, "SELECT category FROM transactions WHERE id='s2'")
   );
   check(
-    "굴리는 돈은 기타 금융에 남습니다",
-    value(db, "SELECT category FROM transactions WHERE id='s3'") === "기타 금융",
+    "굴리는 돈은 금융/자산으로",
+    value(db, "SELECT category FROM transactions WHERE id='s3'") === "금융/자산",
     value(db, "SELECT category FROM transactions WHERE id='s3'")
   );
+  db.close();
+}
+
+
+// ---------------------------------------------------------------------------
+section("v18 — 수입의 정기성과 방향별 카테고리 (§6.1 · §6.6)");
+// ---------------------------------------------------------------------------
+{
+  const db = at(17);
+  db.run(`INSERT INTO users (id, name, created_at) VALUES ('u1', '홍', '2026-01-01')`);
+  const add = (id: string, type: string, et: string, category: string) =>
+    db.run(
+      `INSERT INTO transactions (id, user_id, date, time, type, expense_type, category, merchant, amount, payment_method, account_id, created_at)
+       VALUES ('${id}', 'u1', '2026-08-03', '12:00', '${type}', '${et}', '${category}', '${id}', 1000, '통장', 'a1', '2026-08-03')`
+    );
+
+  add("pay", "INCOME", "INCOME", "급여");
+  add("odd", "INCOME", "INCOME", "기타수입");
+  /* 실제 기기에 있던 모습 — 수입인데 지출 카테고리가 붙어 있었습니다 */
+  add("wrong", "INCOME", "INCOME", "주거");
+  add("wrongCard", "INCOME", "INCOME", "카드대금");
+  /* 지출인데 수입 카테고리 */
+  add("wrongPay", "EXPENSE", "VARIABLE", "급여");
+  /* 양쪽에 있는 이름은 그대로 */
+  add("moveOut", "EXPENSE", "VARIABLE", "이체");
+  add("moveIn", "INCOME", "INCOME", "이체");
+  /* 사용자가 만든 이름은 건드리지 않습니다 */
+  db.run(
+    `INSERT INTO custom_categories (id, user_id, name, type, created_at)
+     VALUES ('c1', 'u1', '반려동물', 'VARIABLE', '2026-01-01')`
+  );
+  add("pet", "EXPENSE", "VARIABLE", "반려동물");
+
+  migrate(db);
+
+  const cat = (id: string) => value(db, `SELECT category FROM transactions WHERE id='${id}'`);
+  const kind = (id: string) => value(db, `SELECT expense_type FROM transactions WHERE id='${id}'`);
+
+  /* 정기성 — 급여만 고정, 나머지는 변동 */
+  check("급여는 고정수입", kind("pay") === "FIXED", kind("pay"));
+  check("나머지 수입은 변동", kind("odd") === "VARIABLE", kind("odd"));
+  check("INCOME 값이 남지 않음", count(db, `SELECT COUNT(*) FROM transactions WHERE expense_type='INCOME'`) === 0);
+  check("지출의 정기성은 그대로", kind("moveOut") === "VARIABLE");
+
+  /* 방향에 맞지 않는 카테고리 → 그 방향의 기타 */
+  check("수입의 주거 → 기타수입", cat("wrong") === "기타수입", cat("wrong"));
+  check("수입의 카드대금 → 기타수입", cat("wrongCard") === "기타수입", cat("wrongCard"));
+  check("지출의 급여 → 기타지출", cat("wrongPay") === "기타지출", cat("wrongPay"));
+
+  /* 양쪽에 있는 이름은 그대로 (§6.5) */
+  check("나간 이체 그대로", cat("moveOut") === "이체");
+  check("받은 이체 그대로", cat("moveIn") === "이체");
+
+  /* 사용자가 만든 이름은 옮기지 않습니다 — 그 사람이 정한 것입니다 */
+  check("직접 만든 카테고리 그대로", cat("pet") === "반려동물", cat("pet"));
+
+  /* 사용자 카테고리에 방향이 붙고, 같은 이름을 양쪽에 등록할 수 있게 됩니다 */
+  check("방향 칸이 생김", columns(db, "custom_categories").includes("direction"));
+  check(
+    "쓰인 자리로 방향을 정함",
+    value(db, `SELECT direction FROM custom_categories WHERE name='반려동물'`) === "EXPENSE",
+    value(db, `SELECT direction FROM custom_categories WHERE name='반려동물'`)
+  );
+
+  let threw = "";
+  try {
+    db.run(
+      `INSERT INTO custom_categories (id, user_id, name, type, direction, created_at)
+       VALUES ('c2', 'u1', '반려동물', 'VARIABLE', 'INCOME', '2026-01-01')`
+    );
+  } catch (error) {
+    threw = String(error);
+  }
+  check("같은 이름을 반대 방향에 등록할 수 있음", threw === "", threw);
+
+  let dupe = "";
+  try {
+    db.run(
+      `INSERT INTO custom_categories (id, user_id, name, type, direction, created_at)
+       VALUES ('c3', 'u1', '반려동물', 'VARIABLE', 'EXPENSE', '2026-01-01')`
+    );
+  } catch (error) {
+    dupe = String(error);
+  }
+  check("같은 방향에 같은 이름은 여전히 막힘", dupe !== "", dupe);
+
   db.close();
 }
 

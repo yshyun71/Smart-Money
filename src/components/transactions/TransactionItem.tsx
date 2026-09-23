@@ -50,7 +50,8 @@ const getCategoryIcon = (category: CategoryType) => {
       return <ShieldCheck className="w-4 h-4 text-teal-600" />;
     case "대출":
       return <Landmark className="w-4 h-4 text-violet-600" />;
-    case "기타 금융":
+    case "금융/자산":
+    case "금융/자산수입":
       return <PiggyBank className="w-4 h-4 text-sky-600" />;
     case "카드대금":
       return <CreditCard className="w-4 h-4 text-indigo-600" />;
@@ -90,7 +91,8 @@ const getCategoryBg = (category: CategoryType) => {
       return "bg-teal-50";
     case "대출":
       return "bg-violet-50";
-    case "기타 금융":
+    case "금융/자산":
+    case "금융/자산수입":
       return "bg-sky-50";
     case "카드대금":
       return "bg-indigo-50";

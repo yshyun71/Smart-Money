@@ -999,12 +999,19 @@ const FIXED_KEYWORDS = [
   "정기결제", "자동이체", "대출", "이자", "임대료", "적금", "학원",
 ];
 
+/** 매달 같은 곳에서 들어오는 돈 — 고정수입의 1차 추정입니다 (§6.6). */
+const FIXED_INCOME_KEYWORDS = ["급여", "월급", "salary", "상여", "연금", "임대료", "배당"];
+
+/**
+ * 고정인가 변동인가 — **수입과 지출 양쪽**을 봅니다 (§6.6).
+ *
+ * 이름만 보는 1차 추정이고, 최종 판정은 §10의 반복 규칙(3개월·같은 날짜대)이
+ * 합니다. 가져온 직후에는 아직 3개월이 쌓이지 않았을 수 있어 이름이라도 봅니다.
+ */
 export function guessExpenseType(merchant: string, type: TransactionType): ExpenseType {
-  if (type === "INCOME") return "INCOME";
   const text = merchant.toLowerCase();
-  return FIXED_KEYWORDS.some((word) => text.includes(word.toLowerCase()))
-    ? "FIXED"
-    : "VARIABLE";
+  const words = type === "INCOME" ? FIXED_INCOME_KEYWORDS : FIXED_KEYWORDS;
+  return words.some((word) => text.includes(word.toLowerCase())) ? "FIXED" : "VARIABLE";
 }
 
 // ---------------------------------------------------------------------------

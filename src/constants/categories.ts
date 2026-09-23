@@ -1,13 +1,34 @@
-import type { BuiltInCategory } from "../types/finance";
+import type {
+  BuiltInCategory,
+  ExpenseCategory,
+  IncomeCategory,
+  TransactionType,
+} from "../types/finance";
 
 /**
- * The categories the app ships with, in the order they are offered.
+ * 앱이 들고 나오는 카테고리 — **방향마다 따로**입니다 (§6.1).
  *
- * Anything the user adds themselves lives in the database and is appended to
- * this list at runtime — see `categories` on the finance context, which is the
- * one place the whole app reads the list from.
+ * 한 목록을 수입과 지출이 함께 쓰면, 수입 건에 `식비` 가 붙거나 지출 건에
+ * `급여` 가 붙는 일이 실제로 생깁니다(실데이터에 수입인데 `주거` 8건, `카드대금`
+ * 2건이 있었습니다). 그 한 줄이 그 달 합계를 조용히 비틀고, 화면 어디에도
+ * 오류가 뜨지 않습니다.
+ *
+ * **같은 이름이 양쪽에 필요하면 각각 등록합니다.** `이체` 가 그런 경우입니다 —
+ * 보낸 이체와 받은 이체는 같은 말이지만 서로 다른 방향의 일이고, 한 항목으로
+ * 두면 어느 쪽인지 알 수 없습니다(§6.5).
+ *
+ * 사용자가 직접 만든 것은 DB(`custom_categories`)에 **방향과 함께** 저장되고
+ * 실행 중에 뒤에 붙습니다 — 앱 전체가 목록을 읽는 자리는 파이낸스 컨텍스트의
+ * `categoriesFor(방향)` 하나뿐입니다.
  */
-export const BUILT_IN_CATEGORIES: BuiltInCategory[] = [
+export const INCOME_CATEGORIES: IncomeCategory[] = [
+  "급여",
+  "이체",
+  "금융/자산수입",
+  "기타수입",
+];
+
+export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   "식비",
   "카페/간식",
   "주거",
@@ -20,14 +41,41 @@ export const BUILT_IN_CATEGORIES: BuiltInCategory[] = [
   "의료",
   "보험",
   "대출",
-  "기타 금융",
-  "저축",
+  "금융/자산",
   "이체",
   "카드대금",
-  "급여",
-  "기타수입",
+  "저축",
   "기타지출",
 ];
+
+/** 두 목록을 이어 붙인 것 — 방향을 모르는 자리(아이콘·색)에서만 씁니다. */
+export const BUILT_IN_CATEGORIES: BuiltInCategory[] = Array.from(
+  new Set<BuiltInCategory>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES])
+);
+
+/** 그 방향에서 고를 수 있는 기본 카테고리. */
+export function builtInCategoriesFor(direction: TransactionType): BuiltInCategory[] {
+  return direction === "INCOME" ? [...INCOME_CATEGORIES] : [...EXPENSE_CATEGORIES];
+}
+
+/** 방향이 맞지 않는 카테고리가 왔을 때 돌아갈 자리. */
+export function fallbackCategory(direction: TransactionType): BuiltInCategory {
+  return direction === "INCOME" ? "기타수입" : "기타지출";
+}
+
+/**
+ * 그 카테고리를 그 방향에서 쓸 수 있는가.
+ *
+ * 사용자가 만든 이름은 이 함수가 알지 못하므로 **기본 목록에 없으면 참**입니다 —
+ * 판정은 부르는 쪽이 `custom_categories` 까지 합쳐 합니다. 여기서 거짓을
+ * 돌려주면 사용자가 만든 카테고리가 전부 막힙니다.
+ */
+export function fitsDirection(category: string, direction: TransactionType): boolean {
+  const income = (INCOME_CATEGORIES as string[]).includes(category);
+  const expense = (EXPENSE_CATEGORIES as string[]).includes(category);
+  if (!income && !expense) return true;
+  return direction === "INCOME" ? income : expense;
+}
 
 /** Card bills settled from a bank account. */
 export const CARD_PAYMENT_CATEGORY: BuiltInCategory = "카드대금";
@@ -75,7 +123,7 @@ export const BUDGET_EXCLUDED_CATEGORIES: BuiltInCategory[] = [
 ];
 
 /** What one 금융/보험 category was split into. */
-export const FINANCE_CATEGORIES: BuiltInCategory[] = ["보험", "대출", "기타 금융"];
+export const FINANCE_CATEGORIES: BuiltInCategory[] = ["보험", "대출", "금융/자산"];
 
 /**
  * Which of the three a statement line belongs to, by what it says.
@@ -117,17 +165,17 @@ export const FINANCE_KEYWORDS: { category: BuiltInCategory; words: string[] }[] 
   },
   {
     /*
-      모아 두는 돈. 굴리는 돈(펀드·증권·투자)은 기타 금융에 남겨 둡니다 —
+      모아 두는 돈. 굴리는 돈(펀드·증권·투자)은 금융/자산에 남겨 둡니다 —
       "저축"이라는 말로 가장 흔히 뜻하는 것은 적금·예금·청약이고, 예산 화면의
       `목표 저축액`과 짝을 이루는 것도 그쪽입니다.
 
-      기타 금융보다 **먼저** 검사되어야 합니다(6.3 — 더 좁은 것이 먼저).
+      금융/자산보다 **먼저** 검사되어야 합니다(6.3 — 더 좁은 것이 먼저).
     */
     category: "저축",
     words: ["적금", "예금", "저축", "청약", "ISA", "CMA", "IRP"],
   },
   {
-    category: "기타 금융",
+    category: "금융/자산",
     words: ["펀드", "연금", "증권", "신탁", "투자"],
   },
 ];
@@ -261,7 +309,7 @@ export const FIXED_BUDGET_CATEGORIES: BuiltInCategory[] = [
   "통신",
   "보험",
   "대출",
-  "기타 금융",
+  "금융/자산",
   // 저축은 쓰기로 정해 둔 돈이 아니라 떼어 두는 돈입니다
   "저축",
 ];

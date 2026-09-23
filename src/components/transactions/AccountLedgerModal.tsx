@@ -29,7 +29,7 @@ import {
   matchBillingMonth,
   matchCardForBill,
 } from "../../services/cardLink";
-import { CARD_PAYMENT_CATEGORY } from "../../constants/categories";
+import { CARD_PAYMENT_CATEGORY, fitsDirection } from "../../constants/categories";
 import {
   builtInCategoryFor,
   pickRule,
@@ -85,17 +85,29 @@ import {
 
 type PeriodMode = "MONTH" | "RANGE";
 
-/** 고정비 / 변동비 / 수입, or everything. */
-type KindFilter = "ALL" | "FIXED" | "VARIABLE" | "INCOME";
+/**
+ * 무엇을 보여 줄 것인가 — **방향과 정기성을 함께** (§6.6).
+ *
+ * 예전에는 `고정비 · 변동비 · 수입` 셋이었습니다. 수입에는 정기성이 없다는
+ * 전제였는데, 이제 급여와 어쩌다 들어온 환급금이 갈립니다. 둘을 곱해 네 가지가
+ * 되고, 카드에는 수입이 없으므로 둘만 나옵니다.
+ */
+type KindFilter = "ALL" | "FIXED" | "VARIABLE" | "INCOME_FIXED" | "INCOME_VARIABLE";
 
-/** A card is only ever spent on, so it is not offered a 수입 filter. */
+/** A card is only ever spent on, so it is not offered the 수입 filters. */
 function kindOptions(isBank: boolean): { value: KindFilter; label: string }[] {
   const options: { value: KindFilter; label: string }[] = [
     { value: "ALL", label: "전체" },
-    { value: "FIXED", label: "고정비" },
-    { value: "VARIABLE", label: "변동비" },
+    { value: "FIXED", label: "고정지출" },
+    { value: "VARIABLE", label: "변동지출" },
   ];
-  return isBank ? [...options, { value: "INCOME", label: "수입" }] : options;
+  return isBank
+    ? [
+        ...options,
+        { value: "INCOME_FIXED", label: "고정수입" },
+        { value: "INCOME_VARIABLE", label: "변동수입" },
+      ]
+    : options;
 }
 
 /** 카드 결제 방식 필터 — 판정은 `services/ledger.payKindOf` 가 합니다. */
@@ -493,13 +505,10 @@ export const AccountLedgerModal: React.FC<{
       // One rule per description pattern, even when a dozen rows share it
       const learned = new Map<string, { pattern: string; category: CategoryType }>();
 
+      /* 정기성이 수입에도 붙으므로 방향과 함께 읽습니다 (§6.6) */
       const describe = (tx: Transaction) =>
-        `${
-          tx.expenseType === "INCOME"
-            ? "수입"
-            : tx.expenseType === "FIXED"
-            ? "고정비"
-            : "변동비"
+        `${tx.expenseType === "FIXED" ? "고정" : "변동"}${
+          tx.type === "INCOME" ? "수입" : "지출"
         } · ${tx.category}${
           tx.expenseType === "FIXED" && tx.recurringDay ? ` · 매월 ${tx.recurringDay}일` : ""
         }`;
@@ -508,12 +517,12 @@ export const AccountLedgerModal: React.FC<{
         const tx = targets[result.index];
         if (!tx) return [];
 
+        /*
+          모델이 옛 값(`INCOME`)을 돌려줄 수 있습니다 — 그때는 변동으로 봅니다.
+          방향은 모델에게 묻지 않습니다: 이미 그 줄에 적혀 있습니다.
+        */
         const expenseType: ExpenseType =
-          tx.type === "INCOME"
-            ? "INCOME"
-            : result.expenseType === "INCOME"
-            ? "VARIABLE"
-            : result.expenseType;
+          result.expenseType === "FIXED" ? "FIXED" : "VARIABLE";
 
         const isFixed = expenseType === "FIXED";
 
@@ -532,7 +541,14 @@ export const AccountLedgerModal: React.FC<{
         */
         const confirmedRule = pickRule(confirmed, tx.merchant, accountId);
         const builtIn = builtInCategoryFor(tx.merchant, tx.type === "INCOME");
-        const modelCategory = (result.category as CategoryType) || tx.category;
+        /*
+          **방향이 맞지 않는 답은 쓰지 않습니다** (§6.1). 한 배치에 수입과 지출이
+          섞여 있어 스키마의 목록은 둘을 합친 것이고, 모델이 수입 줄에 `식비` 를
+          돌려줄 수 있습니다. 그런 답은 버리고 원래 값을 둡니다 — 틀린 카테고리는
+          저장 단계에서 거절되고(§17.7), 그러면 그 줄만 조용히 빠집니다.
+        */
+        const answered = (result.category as CategoryType) || tx.category;
+        const modelCategory = fitsDirection(answered, tx.type) ? answered : tx.category;
         const category = confirmedRule
           ? confirmedRule.category
           : builtIn ?? modelCategory;
