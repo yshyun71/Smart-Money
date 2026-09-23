@@ -1,7 +1,11 @@
-import React, { useState, useMemo } from "react";
+import React, { lazy, Suspense, useState, useMemo } from "react";
+
+/* 열 때 내려받습니다 — 홈과 같은 청크를 씁니다 (§13.3) */
+const ReportCardModal = lazy(() =>
+  import("../modals/ReportCardModal").then((m) => ({ default: m.ReportCardModal }))
+);
 import { useFinance } from "../../context/FinanceContext";
 import { CategorySpendingModal } from "../modals/CategorySpendingModal";
-import { ReportCardModal } from "../modals/ReportCardModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { PeriodTrendPanel } from "./PeriodTrendPanel";
 import { monthPeriod, yearPeriod } from "../../services/trend";
@@ -895,12 +899,16 @@ export const AnalyticsDashboardView: React.FC<{
         한 장 리포트 — 보고 있는 모드가 곧 범위입니다. `기간 추이`는 임의 구간이라
         한 장으로 접히지 않으므로 그때는 달로 엽니다.
       */}
-      <ReportCardModal
-        isOpen={reportOpen}
-        month={timeframeMode === "YEARLY" ? `${activeYear}-01` : selectedMonth}
-        scope={timeframeMode === "YEARLY" ? "YEAR" : "MONTH"}
-        onClose={() => setReportOpen(false)}
-      />
+      {reportOpen && (
+        <Suspense fallback={null}>
+          <ReportCardModal
+            isOpen
+            month={timeframeMode === "YEARLY" ? `${activeYear}-01` : selectedMonth}
+            scope={timeframeMode === "YEARLY" ? "YEAR" : "MONTH"}
+            onClose={() => setReportOpen(false)}
+          />
+        </Suspense>
+      )}
 
       <CategorySpendingModal
         isOpen={drillCategory !== null}

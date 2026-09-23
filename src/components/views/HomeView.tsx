@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { lazy, Suspense, useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { spareOf } from "../../services/budgetPolicy";
 import { setupSteps, nextStep, shouldGuide, type SetupStep } from "../../services/onboarding";
@@ -7,6 +7,17 @@ import { asOfLabel } from "../../utils/format";
 import { SummaryCard } from "../dashboard/SummaryCard";
 import { NavTab } from "../layout/BottomNavigation";
 import { PWAHomeBanner } from "../pwa/PWAInstallButton";
+
+/*
+  한 장 리포트는 **열 때 내려받습니다**(§13.3).
+
+  홈에서 닿는 창이지만 첫 화면에 필요한 것은 아닙니다. 늘 마운트해 두면
+  `React.lazy` 가 뜻이 없으므로 **열렸을 때만 그립니다**(§14.7) — 가져오기 창과
+  같은 방식입니다.
+*/
+const ReportCardModal = lazy(() =>
+  import("../modals/ReportCardModal").then((m) => ({ default: m.ReportCardModal }))
+);
 
 /** 바로가기 묶음을 펼쳐 두었는지 기억하는 열쇠. */
 const SHORTCUTS_KEY = "smartmoney_home_shortcuts";
@@ -23,6 +34,7 @@ import {
   PiggyBank,
   EyeOff,
   Eye,
+  FileText,
 } from "lucide-react";
 import { accountTone } from "../../utils/accountTone";
 import { NoticeRow } from "../dashboard/NoticeRow";
@@ -60,6 +72,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   /* 닫아 둔 알림을 펼쳐 보는 중인가 (§12.12) */
   const [showHidden, setShowHidden] = useState(false);
+  /* 한 장 리포트 (§12.14) — 홈에서는 보고 있는 기준월로 엽니다 */
+  const [reportOpen, setReportOpen] = useState(false);
 
   /*
     알림을 누르면 가는 곳. 백업은 내려받는 자리가 카드·계좌 화면이고, 나머지는
@@ -407,10 +421,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
             스크롤을 줄이려는 노력과 정면으로 부딪힙니다. 예전에는 `AI 코치`가
             기록 버튼들 사이에 끼어 있었습니다.
 
-            앞 줄 셋은 기준월과 무관하고(문자는 문자에 적힌 날짜, 직접입력은
-            오늘), 뒷 줄 셋은 고른 달을 그대로 따라갑니다.
+            앞 줄은 기준월과 무관하고(문자는 문자에 적힌 날짜, 직접입력은 오늘),
+            뒷 줄은 고른 달을 그대로 따라갑니다.
+
+            **`카드·계좌` 는 뺐습니다.** 하단 탭에 자리가 있어 한 번이면 닿고,
+            그 자리를 `한 장 리포트`(§12.14)가 받았습니다 — 리포트는 소비분석
+            안에만 있어 찾기 어렵다는 말을 들었습니다. 줄의 성격은 지킵니다:
+            리포트는 **보는** 것이므로 기록 줄이 아니라 뒷 줄로 갑니다.
           */}
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5">
             <button
               onClick={onOpenSMSModal}
               className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-emerald-500/50 hover:bg-emerald-50/30 transition text-center active:scale-95 group"
@@ -433,21 +452,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
               {/* 오늘 날짜로 시작합니다 — 새로 적는 기록은 거의 언제나 "지금"입니다 */}
               <span className="text-[9px] text-slate-500">오늘 날짜</span>
             </button>
-
-            <button
-              onClick={() => onNavigateTab("assets")}
-              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-amber-500/50 hover:bg-amber-50/30 transition text-center active:scale-95 group"
-            >
-              <div className="w-7 h-7 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 mb-1 group-hover:scale-110 transition">
-                <CreditCard className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-[11px] font-bold text-slate-800">카드·계좌</span>
-              <span className="text-[9px] text-slate-500">등록/연동</span>
-            </button>
           </div>
 
           {/* 뒷 줄 — 고른 달을 따라가는 화면들 */}
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-4 gap-1.5">
+            <button
+              onClick={() => setReportOpen(true)}
+              className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-amber-500/50 hover:bg-amber-50/30 transition text-center active:scale-95 group"
+            >
+              <div className="w-7 h-7 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 mb-1 group-hover:scale-110 transition">
+                <FileText className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-800 whitespace-nowrap">리포트</span>
+              <span className="text-[9px] text-slate-500 whitespace-nowrap">한 장 결산</span>
+            </button>
+
             <button
               onClick={() => onNavigateTab("analytics")}
               className="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-emerald-500/50 hover:bg-emerald-50/30 transition text-center active:scale-95 group"
@@ -455,8 +474,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="w-7 h-7 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-1 group-hover:scale-110 transition">
                 <BarChart3 className="w-3.5 h-3.5" />
               </div>
-              <span className="text-[11px] font-bold text-slate-800">소비분석</span>
-              <span className="text-[9px] text-slate-500">{monthName} 비중</span>
+              <span className="text-[11px] font-bold text-slate-800 whitespace-nowrap">소비분석</span>
+              <span className="text-[9px] text-slate-500 whitespace-nowrap">{monthName} 비중</span>
             </button>
 
             <button
@@ -466,8 +485,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="w-7 h-7 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 mb-1 group-hover:scale-110 transition">
                 <Sliders className="w-3.5 h-3.5" />
               </div>
-              <span className="text-[11px] font-bold text-slate-800">예산 관리</span>
-              <span className="text-[9px] text-slate-500">한도·알림</span>
+              <span className="text-[11px] font-bold text-slate-800 whitespace-nowrap">예산</span>
+              <span className="text-[9px] text-slate-500 whitespace-nowrap">한도·알림</span>
             </button>
 
             <button
@@ -477,12 +496,27 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center text-white mb-1 group-hover:scale-110 transition">
                 <Sparkles className="w-3.5 h-3.5" />
               </div>
-              <span className="text-[11px] font-bold">AI 코치</span>
-              <span className="text-[9px] text-emerald-100">절약 추천</span>
+              <span className="text-[11px] font-bold whitespace-nowrap">AI 코치</span>
+              <span className="text-[9px] text-emerald-100 whitespace-nowrap">절약 추천</span>
             </button>
           </div>
         </div>
       </div>
+
+      {/*
+        한 장 리포트 — 홈에서는 **보고 있는 기준월**로 엽니다. 창 안에서
+        `이 해`로 바꿀 수 있습니다(§12.14).
+      */}
+      {reportOpen && (
+        <Suspense fallback={null}>
+          <ReportCardModal
+            isOpen
+            month={selectedMonth}
+            scope="MONTH"
+            onClose={() => setReportOpen(false)}
+          />
+        </Suspense>
+      )}
 
       {/* Monthly Budget Consumption Snapshot Bar */}
       <div
