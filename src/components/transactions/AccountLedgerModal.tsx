@@ -41,16 +41,17 @@ import {
   describeRecurrence,
   recurrenceFor,
 } from "../../services/recurrence";
-import { won } from "../../utils/format";
+import { shortWon, won } from "../../utils/format";
 import { accountTone } from "../../utils/accountTone";
 import {
+  barScale,
+  breakdown,
   categoriesUsed,
   countByMonth,
   filterEntries,
   fullSpan,
   groupByMonth,
   landingMonth,
-  ledgerTotals,
   monthKeys,
   selectedTotals as selectedTotalsOf,
   type LedgerFilter,
@@ -147,24 +148,6 @@ function kindLabel(value: KindFilter, isBank: boolean): string {
   return "";
 }
 
-/**
- * 합계 줄에 붙일 이름 — 방향마다 하나씩.
- *
- * `전체` 만 두 줄이 나오므로 각 줄에 그 방향의 이름을 답니다. 두 줄에 똑같이
- * `전체` 라고 적으면 어느 쪽이 수입인지 알 수 없습니다.
- */
-function summaryLabels(
-  kind: KindFilter,
-  isBank: boolean
-): { expense?: string; income?: string } {
-  if (kind === "ALL") {
-    return isBank
-      ? { expense: kindLabel("EXPENSE", true), income: kindLabel("INCOME", true) }
-      : { expense: kindLabel("ALL", false) };
-  }
-  const label = kindLabel(kind, isBank);
-  return kind.startsWith("INCOME") ? { income: label } : { expense: label };
-}
 
 const ALL_CATEGORIES = "__ALL__";
 
@@ -417,10 +400,77 @@ export const AccountLedgerModal: React.FC<{
   /** 최근 달부터. 달 안의 순서는 컨텍스트가 이미 정렬해 두었습니다. */
   const grouped = useMemo(() => groupByMonth(entries, basis), [entries, basis]);
 
-  const totals = useMemo(() => ledgerTotals(entries), [entries]);
 
-  /** 합계 줄에 붙일 이름 — 누른 칩의 글자 그대로입니다. */
-  const totalsLabel = summaryLabels(kindFilter, isBank);
+  /*
+    막대가 말하는 범위는 **기간과 카테고리까지**입니다. 정기성은 빼고 셉니다 —
+    이 그림은 "지금 무엇을 보고 있나"가 아니라 "이 달이 어떤 모양인가"이고,
+    보고 있는 조각은 밝게 표시해 알려 줍니다. 그것까지 걸러 내면 `고정지출` 을
+    고른 순간 막대가 한 조각만 남아 견줄 것이 없어집니다.
+  */
+  const shape = useMemo(
+    () => breakdown(filterEntries(accountEntries, { ...filter, kind: "ALL" })),
+    [accountEntries, filter]
+  );
+  const scale = barScale(shape);
+
+  /** 고른 조각만 밝게 — `전체` 와 방향 전체는 그쪽을 모두 밝힙니다. */
+  const dimmed = (kind: KindFilter): boolean => {
+    if (kindFilter === "ALL") return false;
+    if (kindFilter === "EXPENSE") return kind.startsWith("INCOME");
+    if (kindFilter === "INCOME") return !kind.startsWith("INCOME");
+    return kindFilter !== kind;
+  };
+
+  /** 막대 둘. 카드에는 수입이 없으므로 하나입니다. */
+  const shapeBars = useMemo(() => {
+    const expense = {
+      key: "EXPENSE",
+      label: kindLabel(isBank ? "EXPENSE" : "ALL", isBank),
+      total: shape.expense,
+      tone: { text: "text-rose-600", strong: "text-rose-700" },
+      parts: [
+        {
+          kind: "FIXED" as KindFilter,
+          label: "고정",
+          bucket: shape.expenseFixed,
+          tone: "bg-indigo-500",
+        },
+        {
+          kind: "VARIABLE" as KindFilter,
+          label: "변동",
+          bucket: shape.expenseVariable,
+          tone: "bg-rose-400",
+        },
+      ],
+    };
+
+    if (!isBank) return [expense];
+
+    return [
+      expense,
+      {
+        key: "INCOME",
+        label: kindLabel("INCOME", true),
+        total: shape.income,
+        tone: { text: "text-emerald-600", strong: "text-emerald-700" },
+        parts: [
+          {
+            kind: "INCOME_FIXED" as KindFilter,
+            label: "고정",
+            bucket: shape.incomeFixed,
+            tone: "bg-emerald-600",
+          },
+          {
+            kind: "INCOME_VARIABLE" as KindFilter,
+            label: "변동",
+            bucket: shape.incomeVariable,
+            tone: "bg-emerald-300",
+          },
+        ],
+      },
+    ];
+  }, [shape, isBank]);
+
 
   /** 달마다 몇 건인지 — 보고 있는 달 아래와 연월 선택 창에 함께 나갑니다. */
   const monthCounts = useMemo(
@@ -1104,74 +1154,87 @@ export const AccountLedgerModal: React.FC<{
           </select>
 
           {/*
-            **고른 조건이 몇 건이고 얼마인가** — 고르기 전에 답해야 하는 질문입니다.
+            **이 달이 어떤 모양인가** — 막대 둘, 각각 고정과 변동 (§6.6).
 
-            예전에는 이 숫자가 화면 맨 위에 `지출 합계`·`수입 합계` 로 있었습니다.
-            값 자체는 그때도 필터를 따랐는데, 자리가 조건 블록에서 500px 떨어져
-            있어 `고정지출` 을 눌러 숫자가 바뀌어도 아무도 둘을 연결하지 못했습니다 —
-            "선택을 해야 합계가 보인다"는 신고가 그래서 나왔습니다. 위의 것은
-            지웠습니다: 같은 값을 두 자리에 두면 묻는 자리가 아닌 쪽이 먼저 눈에
-            띄고, 그것이 곧 오해입니다.
+            글자만 있을 때는 숫자를 하나씩 읽어야 크기를 알 수 있었습니다. 막대는
+            **번 것과 쓴 것의 차이**를 먼저 보여 주고, 그다음에 그 안에서 고정이
+            얼마나 되는지를 보여 줍니다.
 
-            **건수를 함께 적습니다.** 금액만으로는 "한 건이 큰 것"과 "작은 것이
-            여러 건 쌓인 것"이 같아 보이고, 줄일 곳을 찾는 사람에게는 그 둘이 전혀
-            다른 이야기입니다.
+            **여섯 개를 따로 그리지 않습니다.** `지출전체` 는 `고정 + 변동` 이라,
+            여섯을 나란히 세우면 같은 돈이 두 번 그려져 없는 돈이 있는 것처럼
+            보입니다(`breakdown` 의 주석).
 
-            **기본을 전체 선택으로 두지 않은 까닭**: 선택은 `선택 삭제` 와
-            `AI 자동 분류` 의 대상입니다. 처음부터 전부 골라져 있으면 오조작 한
-            번이 그 달을 통째로 지우고, 보는 것과 할 것을 가른 규칙이 도로
-            뭉개집니다(§12.1).
+            **차트 라이브러리를 쓰지 않습니다.** 이 창은 지연 로드가 아니라 주
+            청크에 있어서, `recharts` 를 끌어오면 첫 로드에 468KB 가 붙습니다
+            (§13.3). 비율 막대에는 라이브러리가 필요 없습니다.
+
+            **조각을 누르면 그 조건으로 걸러집니다** — 보이는 것을 그대로 가리키는
+            것이 칩을 찾아 누르는 것보다 짧습니다. 칩도 그대로 둡니다: 막대는
+            0원인 조각을 그리지 않으므로 그 자리로 가는 길이 하나는 있어야 합니다.
           */}
-          <div className="rounded-xl bg-slate-100/70 px-2.5 py-2 space-y-1">
-            {entries.length === 0 ? (
-              <div className="text-[11px] text-slate-400 text-center">
-                조건에 맞는 내역이 없습니다
-              </div>
-            ) : isBank ? (
-              <>
-                {totals.expenseCount > 0 && totalsLabel.expense && (
+          {entries.length === 0 && kindFilter === "ALL" ? (
+            <div className="rounded-xl bg-slate-100/70 px-2.5 py-2 text-[11px] text-slate-400 text-center">
+              조건에 맞는 내역이 없습니다
+            </div>
+          ) : (
+            <div className="rounded-xl bg-slate-100/70 px-2.5 py-2.5 space-y-2.5">
+              {shapeBars.map((bar) => (
+                <div key={bar.key} className="space-y-1">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[10px] font-bold text-rose-600 shrink-0">
-                      {totalsLabel.expense} {totals.expenseCount}건
+                    <span className={`text-[10px] font-bold ${bar.tone.text} shrink-0`}>
+                      {bar.label} {bar.total.count}건
                     </span>
-                    <span className="text-xs font-black text-rose-700">
-                      {won(totals.expense)}
+                    <span className={`text-xs font-black ${bar.tone.strong}`}>
+                      {won(bar.total.amount)}
                     </span>
                   </div>
-                )}
-                {totals.incomeCount > 0 && totalsLabel.income && (
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[10px] font-bold text-emerald-600 shrink-0">
-                      {totalsLabel.income} {totals.incomeCount}건
-                    </span>
-                    <span className="text-xs font-black text-emerald-700">
-                      {won(totals.income)}
-                    </span>
+
+                  <div className="h-2.5 rounded-full bg-white overflow-hidden flex">
+                    {bar.parts.map((part) => (
+                      <button
+                        key={part.kind}
+                        type="button"
+                        onClick={() => setKindFilter(part.kind)}
+                        title={`${part.label} ${part.bucket.count}건 · ${won(part.bucket.amount)}`}
+                        style={{ width: `${(part.bucket.amount / scale) * 100}%` }}
+                        className={`h-full transition cursor-pointer ${part.tone} ${
+                          dimmed(part.kind) ? "opacity-25" : ""
+                        }`}
+                      />
+                    ))}
                   </div>
-                )}
-              </>
-            ) : (
-              /* 카드는 지출 − 차감·환불이 청구액입니다 (§9.5) */
-              <>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[10px] font-bold text-rose-600 shrink-0">
-                    {totalsLabel.expense} {totals.expenseCount}건
-                  </span>
-                  <span className="text-xs font-black text-rose-700">
-                    {won(totals.billed)}
-                  </span>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {bar.parts
+                      .filter((part) => part.bucket.count > 0)
+                      .map((part) => (
+                        <button
+                          key={part.kind}
+                          type="button"
+                          onClick={() => setKindFilter(part.kind)}
+                          className={`flex items-center gap-1 text-[10px] transition cursor-pointer ${
+                            dimmed(part.kind)
+                              ? "text-slate-400 hover:text-slate-600"
+                              : "text-slate-700 font-bold"
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${part.tone}`} />
+                          {part.label} {part.bucket.count}건 · {shortWon(part.bucket.amount)}
+                        </button>
+                      ))}
+                  </div>
                 </div>
-                {totals.incomeCount > 0 && (
-                  <div className="flex items-baseline justify-between gap-2 text-[10px] text-slate-400">
-                    <span className="shrink-0">
-                      이용 {won(totals.expense)} − 차감·환불 {totals.incomeCount}건
-                    </span>
-                    <span>{won(totals.income)}</span>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+              ))}
+
+              {/* 카드의 차감·환불은 청구액을 줄이는 것이라 수입이 아닙니다 (§9.5) */}
+              {!isBank && shape.income.count > 0 && (
+                <div className="flex items-baseline justify-between gap-2 text-[10px] text-slate-400 pt-0.5 border-t border-white">
+                  <span>차감·환불 {shape.income.count}건</span>
+                  <span>− {won(shape.income.amount)}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
             <button

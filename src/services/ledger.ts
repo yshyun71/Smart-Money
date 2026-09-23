@@ -154,6 +154,76 @@ export function ledgerTotals(entries: Transaction[]): LedgerTotals {
   return { income, expense, incomeCount, expenseCount, billed: expense - income };
 }
 
+
+export interface Bucket {
+  count: number;
+  amount: number;
+}
+
+export interface LedgerBreakdown {
+  expenseFixed: Bucket;
+  expenseVariable: Bucket;
+  incomeFixed: Bucket;
+  incomeVariable: Bucket;
+  /** 조각의 합 — 막대의 길이를 정하는 값입니다. */
+  expense: Bucket;
+  income: Bucket;
+}
+
+/**
+ * 그 달이 어떤 모양인가 — 방향 둘, 각각 고정과 변동 (§6.6).
+ *
+ * **여섯 개를 따로 세지 않습니다.** `지출전체` 는 `고정지출 + 변동지출` 이고
+ * `수입전체` 는 `고정수입 + 변동수입` 입니다 — 여섯을 나란히 그리면 같은 돈이
+ * 두 번 그려져 **없는 돈이 있는 것처럼** 보입니다. 막대는 둘이고, 각각 두
+ * 조각입니다.
+ *
+ * **정기성을 거르는 조건은 빼고 넘기세요.** 이 값은 "지금 무엇을 보고 있나"가
+ * 아니라 "이 달이 어떤 모양인가" 이고, 보고 있는 조각은 화면이 밝게 표시합니다.
+ * 기간과 카테고리는 걸러 넘깁니다 — 그것까지 무시하면 화면이 말하는 범위와
+ * 막대가 말하는 범위가 달라집니다.
+ */
+export function breakdown(entries: Transaction[]): LedgerBreakdown {
+  const empty = (): Bucket => ({ count: 0, amount: 0 });
+  const add = (bucket: Bucket, amount: number) => {
+    bucket.count++;
+    bucket.amount += amount;
+  };
+
+  const result: LedgerBreakdown = {
+    expenseFixed: empty(),
+    expenseVariable: empty(),
+    incomeFixed: empty(),
+    incomeVariable: empty(),
+    expense: empty(),
+    income: empty(),
+  };
+
+  for (const tx of entries) {
+    const fixed = tx.expenseType === "FIXED";
+    if (tx.type === "INCOME") {
+      add(fixed ? result.incomeFixed : result.incomeVariable, tx.amount);
+      add(result.income, tx.amount);
+    } else {
+      add(fixed ? result.expenseFixed : result.expenseVariable, tx.amount);
+      add(result.expense, tx.amount);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 막대 둘을 견줄 기준 — 둘 중 큰 쪽.
+ *
+ * 각 막대를 자기 합계로 100% 잡으면 300만원 지출과 3만원 수입이 같은 길이가
+ * 됩니다. 한 기준으로 재야 **번 것과 쓴 것의 크기 차이**가 보이고, 그것이 이
+ * 그림에서 가장 먼저 읽혀야 하는 사실입니다.
+ */
+export function barScale(rolled: LedgerBreakdown): number {
+  return Math.max(rolled.expense.amount, rolled.income.amount, 1);
+}
+
 /**
  * 골라 둔 것들의 합 — 고른 이유가 그 값입니다.
  *

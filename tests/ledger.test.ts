@@ -13,6 +13,8 @@ import {
   inPeriod,
   filterEntries,
   ledgerTotals,
+  breakdown,
+  barScale,
   selectedTotals,
   groupByMonth,
   countByMonth,
@@ -239,6 +241,56 @@ section("카드의 합계는 지출 − 차감·환불 (§9.5 — 34,000원 사�
       empty.incomeCount === 0 &&
       empty.expenseCount === 0
   );
+}
+
+
+// ---------------------------------------------------------------------------
+section("이 달의 모양 — 막대 둘, 각각 두 조각 (§6.6)");
+// ---------------------------------------------------------------------------
+{
+  const rows = [
+    tx({ expenseType: "FIXED", amount: 500_000 }),
+    tx({ expenseType: "FIXED", amount: 300_000 }),
+    tx({ expenseType: "VARIABLE", amount: 200_000 }),
+    tx({ type: "INCOME", expenseType: "FIXED", amount: 3_000_000 }),
+    tx({ type: "INCOME", expenseType: "VARIABLE", amount: 50_000 }),
+  ];
+  const rolled = breakdown(rows);
+
+  check("고정지출", rolled.expenseFixed.count === 2 && rolled.expenseFixed.amount === 800_000);
+  check("변동지출", rolled.expenseVariable.count === 1 && rolled.expenseVariable.amount === 200_000);
+  check("고정수입", rolled.incomeFixed.count === 1 && rolled.incomeFixed.amount === 3_000_000);
+  check("변동수입", rolled.incomeVariable.count === 1 && rolled.incomeVariable.amount === 50_000);
+
+  /*
+    **합은 조각의 합입니다.** 여섯을 따로 세면 같은 돈이 두 번 그려져 없는 돈이
+    있는 것처럼 보입니다 — 막대가 둘인 까닭입니다.
+  */
+  check(
+    "지출전체 = 고정 + 변동",
+    rolled.expense.amount === rolled.expenseFixed.amount + rolled.expenseVariable.amount &&
+      rolled.expense.count === 3
+  );
+  check(
+    "수입전체 = 고정 + 변동",
+    rolled.income.amount === rolled.incomeFixed.amount + rolled.incomeVariable.amount &&
+      rolled.income.count === 2
+  );
+
+  /*
+    막대 둘을 **한 기준**으로 잽니다. 각자 100% 로 잡으면 300만원 수입과 100만원
+    지출이 같은 길이가 되어, 가장 먼저 읽혀야 할 사실이 사라집니다.
+  */
+  check("기준은 둘 중 큰 쪽", barScale(rolled) === 3_050_000, barScale(rolled));
+
+  const empty = breakdown([]);
+  check("빈 목록은 0", empty.expense.count === 0 && empty.income.amount === 0);
+  /* 0 으로 나누지 않습니다 */
+  check("빈 목록의 기준은 1", barScale(empty) === 1);
+
+  /* 옛 값이 남아 있어도 변동으로 봅니다 — 없는 조각을 만들지 않습니다 */
+  const legacy = breakdown([tx({ type: "INCOME", expenseType: "INCOME" as any })]);
+  check("모르는 정기성은 변동", legacy.incomeVariable.count === 1 && legacy.incomeFixed.count === 0);
 }
 
 // ---------------------------------------------------------------------------
