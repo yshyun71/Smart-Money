@@ -21,54 +21,13 @@ import {
   BarChart3,
   Sliders,
   PiggyBank,
-  FileWarning,
-  ShieldAlert,
-  TrendingUp,
-  CalendarClock,
+  EyeOff,
+  Eye,
 } from "lucide-react";
 import { accountTone } from "../../utils/accountTone";
-import type { UpkeepKind } from "../../services/upkeep";
+import { NoticeRow } from "../dashboard/NoticeRow";
+import type { UpkeepNotice } from "../../services/upkeep";
 
-/*
-  알림의 색은 **무게에 따라** 다릅니다.
-
-  백업은 놓치면 되돌릴 수 없어 붉은색, 명세서는 그 달이 비어 주황색, 오른
-  금액은 알아차려야 할 사실이라 호박색, 예고는 그냥 알면 되는 것이라 회색입니다.
-  전부 붉게 칠하면 무엇이 급한지 가려지지 않습니다.
-*/
-const NOTICE_TONE: Record<
-  UpkeepKind,
-  { box: string; icon: string; title: string; detail: string; Icon: typeof ArrowRight }
-> = {
-  BACKUP: {
-    box: "bg-rose-50 border-rose-200 hover:bg-rose-100/60",
-    icon: "text-rose-600",
-    title: "text-rose-900",
-    detail: "text-rose-700",
-    Icon: ShieldAlert,
-  },
-  STATEMENT: {
-    box: "bg-orange-50 border-orange-200 hover:bg-orange-100/60",
-    icon: "text-orange-600",
-    title: "text-orange-900",
-    detail: "text-orange-700",
-    Icon: FileWarning,
-  },
-  AMOUNT_UP: {
-    box: "bg-amber-50 border-amber-200 hover:bg-amber-100/60",
-    icon: "text-amber-600",
-    title: "text-amber-900",
-    detail: "text-amber-700",
-    Icon: TrendingUp,
-  },
-  UPCOMING: {
-    box: "bg-white border-slate-200 hover:bg-slate-50",
-    icon: "text-slate-400",
-    title: "text-slate-800",
-    detail: "text-slate-500",
-    Icon: CalendarClock,
-  },
-};
 
 interface HomeViewProps {
   onNavigateTab: (tab: NavTab) => void;
@@ -94,7 +53,25 @@ export const HomeView: React.FC<HomeViewProps> = ({
     selectedMonth,
     allTransactions,
     upkeepNotices,
+    hiddenNotices,
+    dismissNotice,
+    restoreNotice,
   } = useFinance();
+
+  /* 닫아 둔 알림을 펼쳐 보는 중인가 (§12.12) */
+  const [showHidden, setShowHidden] = useState(false);
+
+  /*
+    알림을 누르면 가는 곳. 백업은 내려받는 자리가 카드·계좌 화면이고, 나머지는
+    그 카드·계좌의 내역입니다.
+  */
+  const openNotice = (notice: UpkeepNotice) => {
+    if (notice.kind === "BACKUP") {
+      onNavigateTab("assets");
+      return;
+    }
+    if (notice.accountId) onOpenAccount?.(notice.accountId);
+  };
 
   /*
     카드의 청구액은 **계산하는 값**입니다(§9.4).
@@ -292,39 +269,60 @@ export const HomeView: React.FC<HomeViewProps> = ({
         위에 두는 까닭은 하나뿐입니다: 이것들은 **놓치면 되돌릴 수 없는 일**입니다.
         백업 없이 기기를 잃으면 끝이고, 명세서를 빠뜨리면 그 달이 통째로 빕니다.
       */}
-      {upkeepNotices.length > 0 && (
+      {(upkeepNotices.length > 0 || hiddenNotices.length > 0) && (
         <div className="space-y-1.5">
-          {upkeepNotices.map((notice) => {
-            const tone = NOTICE_TONE[notice.kind];
-            const Icon = tone.Icon;
-            const go = () => {
-              if (notice.kind === "BACKUP") {
-                onNavigateTab("assets");
-                return;
-              }
-              if (notice.accountId) onOpenAccount?.(notice.accountId);
-            };
+          {upkeepNotices.map((notice) => (
+            <NoticeRow
+              key={notice.id}
+              notice={notice}
+              onOpen={() => openNotice(notice)}
+              onDismiss={() => dismissNotice(notice)}
+            />
+          ))}
 
-            return (
+          {/*
+            닫은 것을 **버리지 않습니다.** 잘못 닫았을 때 되돌릴 방법이 없으면
+            닫기 버튼이 위험한 버튼이 됩니다. 새 창을 만들지 않고 제자리에서
+            펼치는 까닭: 여기서 하려는 일은 거의 언제나 "다시 보이게"이고, 그
+            일에 화면을 옮겨 다닐 값이 없습니다(§12.3과 같은 방식).
+          */}
+          {hiddenNotices.length > 0 && (
+            <>
               <button
-                key={notice.id}
                 type="button"
-                onClick={go}
-                className={`w-full text-left p-3 rounded-2xl border transition active:scale-98 cursor-pointer flex items-start gap-2 ${tone.box}`}
+                onClick={() => setShowHidden((open) => !open)}
+                className="w-full py-1.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 transition cursor-pointer flex items-center justify-center gap-1"
               >
-                <Icon className={`w-4 h-4 shrink-0 mt-0.5 ${tone.icon}`} />
-                <div className="min-w-0 flex-1">
-                  <span className={`text-[11px] font-bold block truncate ${tone.title}`}>
-                    {notice.title}
-                  </span>
-                  <span className={`text-[10px] leading-relaxed block ${tone.detail}`}>
-                    {notice.detail}
-                  </span>
-                </div>
-                <ArrowRight className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${tone.icon}`} />
+                <EyeOff className="w-3 h-3" />
+                숨긴 알림 {hiddenNotices.length}건 {showHidden ? "접기" : "보기"}
               </button>
-            );
-          })}
+
+              {showHidden &&
+                hiddenNotices.map((notice) => (
+                  <div
+                    key={notice.id}
+                    className="p-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 flex items-start gap-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-slate-500 block truncate">
+                        {notice.title}
+                      </span>
+                      <span className="text-[10px] text-slate-400 leading-relaxed block">
+                        {notice.detail}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => restoreNotice(notice.id)}
+                      className="shrink-0 whitespace-nowrap px-2 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1"
+                    >
+                      <Eye className="w-3 h-3" />
+                      다시 보이기
+                    </button>
+                  </div>
+                ))}
+            </>
+          )}
         </div>
       )}
 

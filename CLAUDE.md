@@ -91,7 +91,7 @@
 ```bash
 npm run dev      # 개발 서버 — 반드시 http://localhost:3000 (14.8)
 npm run lint     # tsc --noEmit + eslint (훅 규칙·죽은 코드)
-npm test         # 회귀 세트 19종 · 1,320개 확인 (15절)
+npm test         # 회귀 세트 19종 · 1,350개 확인 (15절)
 npm run check    # lint + test — 커밋 전에 이것을 돌립니다
 npm run build    # vite build → dist/
 ```
@@ -153,7 +153,7 @@ src/
     └── accountTone.ts        계좌 인디고 / 카드 앰버
 ```
 
-### 3.3 `services/` — 판정이 사는 곳 (26개)
+### 3.3 `services/` — 판정이 사는 곳 (27개)
 
 회귀 세트가 닿는 유일한 계층입니다. **새 판정 규칙은 반드시 여기에**(§17.5).
 
@@ -168,7 +168,8 @@ src/
 | `categoryRules.ts` | 패턴 규칙 · 카드대금/금융 자체 판별 · 카드사 목록 | §6.2~6.4 |
 | `spread.ts` | 한 건의 수정을 같은 내역명 전체로 | §9.6 |
 | `recurrence.ts` | 고정비 반복 판정 · 정기 결제 목록 | §10 · §12.10 |
-| `upkeep.ts` | 홈이 먼저 말해 주는 것 — 명세서·백업·예고·인상 | §12.12 |
+| `upkeep.ts` | 홈이 먼저 말해 주는 것 · 닫기와 미루기 | §12.12 |
+| `swipe.ts` | 옆으로 밀어 닫기 — 축 잠금과 문턱 | §12.12 |
 | `refunds.ts` | 환불·취소를 원래 결제와 짝짓기 | §12.13 |
 | `reportCard.ts` | 한 장으로 보는 달·해 결산 | §12.14 |
 | `actuals.ts` | 실적의 정의 · 옮긴 돈 제외 · 달의 단계 | §6.5 · §11.4 |
@@ -189,7 +190,7 @@ src/
 | `pinCrypto.ts` | PBKDF2 PIN 해시 | §5 |
 | `aiClient.ts` + `ai/` | 프롬프트 · JSON 스키마 · 공급자 어댑터 · 재시도 | §11.1~11.3 |
 
-### 3.4 `components/` — 화면 (43개)
+### 3.4 `components/` — 화면 (44개)
 
 ```
 components/
@@ -212,7 +213,9 @@ components/
 │   ├── ConnectedAssetsView.tsx     카드·계좌 · DB 관리 (지연 로드)
 │   ├── LedgerView.tsx         전체 내역 (홈의 링크로 진입)
 │   └── FixedVsVariableView.tsx     고정비/변동비 분리 (홈의 링크로 진입)
-├── dashboard/SummaryCard.tsx  홈 결산 카드 — 네 금액이 눌립니다 (§12.7)
+├── dashboard/
+│   ├── SummaryCard.tsx        홈 결산 카드 — 네 금액이 눌립니다 (§12.7)
+│   └── NoticeRow.tsx          홈 알림 한 줄 — 밀거나 눌러서 닫기 (§12.12)
 ├── transactions/
 │   ├── AccountLedgerModal.tsx 계좌·카드별 내역 (z-9998, §12.1)
 │   ├── AddTransactionModal.tsx     거래 추가·수정 (z-10000)

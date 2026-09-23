@@ -15,7 +15,17 @@ import {
   upkeepNotices,
   DEFAULT_BACKUP_DAYS,
   UPCOMING_LIMIT,
+  dismissalFor,
+  noticeHidden,
+  splitNotices,
+  withoutDismissal,
 } from "../src/services/upkeep";
+import {
+  swipeAxis,
+  swipeDismisses,
+  swipeOffset,
+  AXIS_LOCK_PX,
+} from "../src/services/swipe";
 import { recurringItems } from "../src/services/recurrence";
 
 let passed = 0;
@@ -397,6 +407,129 @@ section("반복 판정이 바로 앞 금액을 함께 내줍니다");
 
   const once = recurringItems([tx({ merchant: "한번만", date: "2026-08-01" })]);
   check("반복이 아니면 목록에 없습니다", once.length === 0);
+}
+
+// ---------------------------------------------------------------------------
+section("닫아 둔 알림 — 백업만 '닫기'가 '미루기'입니다");
+// ---------------------------------------------------------------------------
+{
+  const statement = missingStatements([card()], [tx({ billingMonth: "2026-08" })], TODAY)[0];
+  const backup = backupDue({
+    lastBackupAt: null,
+    days: 30,
+    entryCount: 100,
+    today: TODAY,
+  })!;
+
+  /* 셋은 id 자체가 사실을 담고 있어 날짜를 붙일 것이 없습니다 */
+  check("명세서는 id 만 적습니다", dismissalFor(statement, TODAY) === statement.id);
+  check(
+    "백업은 언제 닫았는지 함께 적습니다",
+    dismissalFor(backup, TODAY) === `${backup.id}|2026-09-23`,
+    dismissalFor(backup, TODAY)
+  );
+
+  check(
+    "닫은 명세서는 감춥니다",
+    noticeHidden(statement, [statement.id], { backupDays: 30, today: TODAY })
+  );
+  check(
+    "닫지 않은 것은 그대로",
+    !noticeHidden(statement, ["다른알림"], { backupDays: 30, today: TODAY })
+  );
+
+  /*
+    10월이 되면 id 가 `…:2026-10` 으로 바뀌므로 9월에 닫은 기록이 비껴갑니다 —
+    닫기가 저절로 만료되는 것이 이 설계의 요점입니다.
+  */
+  const october = missingStatements(
+    [card()],
+    [tx({ billingMonth: "2026-09" })],
+    new Date(2026, 9, 15)
+  )[0];
+  check(
+    "다음 달 명세서는 다시 뜹니다",
+    !noticeHidden(october, [statement.id], { backupDays: 30, today: new Date(2026, 9, 15) })
+  );
+
+  /* 백업: 알림 기간만큼 쉬었다가 다시 올라옵니다 */
+  const snoozed = [`${backup.id}|2026-09-20`];
+  check(
+    "백업은 미룬 동안 조용합니다",
+    noticeHidden(backup, snoozed, { backupDays: 30, today: TODAY })
+  );
+  check(
+    "미룬 기간이 지나면 다시 뜹니다",
+    !noticeHidden(backup, snoozed, { backupDays: 30, today: new Date(2026, 10, 1) })
+  );
+  check(
+    "기간이 짧으면 더 빨리 다시 뜹니다",
+    !noticeHidden(backup, snoozed, { backupDays: 1, today: TODAY })
+  );
+
+  /*
+    `BACKUP:never` 는 백업할 때까지 id 가 영영 그대로입니다. 날짜 없는 기록으로
+    영구히 감출 수 있으면 유일한 방어선이 손가락 하나에 꺼집니다.
+  */
+  check(
+    "날짜 없는 백업 기록은 감추지 못합니다",
+    !noticeHidden(backup, [backup.id], { backupDays: 30, today: TODAY })
+  );
+  check(
+    "읽을 수 없는 날짜도 감추지 못합니다",
+    !noticeHidden(backup, [`${backup.id}|그런날`], { backupDays: 30, today: TODAY })
+  );
+
+  const split = splitNotices([statement, backup], [statement.id], {
+    backupDays: 30,
+    today: TODAY,
+  });
+  check("보여 줄 것과 닫아 둔 것을 함께 냅니다", split.shown.length === 1 && split.hidden.length === 1);
+  check("닫은 것도 버리지 않습니다", split.hidden[0]?.id === statement.id);
+
+  /* 백업은 닫을 때마다 날짜가 다르므로 기록이 여러 줄로 쌓입니다 */
+  const many = [`${backup.id}|2026-08-01`, `${backup.id}|2026-09-20`, statement.id];
+  check(
+    "다시 보이게 하면 그 알림의 기록을 전부 지웁니다",
+    JSON.stringify(withoutDismissal(many, backup.id)) === JSON.stringify([statement.id]),
+    withoutDismissal(many, backup.id)
+  );
+  check(
+    "다른 알림의 기록은 남깁니다",
+    withoutDismissal(many, backup.id).includes(statement.id)
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("옆으로 밀어 닫기 — 세로 스크롤과 다투지 않을 것");
+// ---------------------------------------------------------------------------
+{
+  /* 누를 때 손가락은 언제나 조금 움직입니다 */
+  check("몇 px 은 아무 방향도 아닙니다", swipeAxis(3, 2) === "NONE");
+  check("문턱", AXIS_LOCK_PX === 8);
+  check("가로로 크게 가면 가로", swipeAxis(40, 5) === "HORIZONTAL");
+  check("왼쪽도 가로", swipeAxis(-40, 5) === "HORIZONTAL");
+  check("세로로 크게 가면 세로", swipeAxis(5, 40) === "VERTICAL");
+
+  /* 비기면 세로 — 스크롤을 뺏는 쪽이 닫기를 놓치는 쪽보다 나쁩니다 */
+  check("비기면 세로", swipeAxis(20, 20) === "VERTICAL");
+
+  /* 비스듬히 내려긋는 손가락은 스크롤입니다 */
+  check("비스듬한 스크롤은 세로", swipeAxis(18, 30) === "VERTICAL");
+
+  check("조금 민 것으로는 닫히지 않습니다", !swipeDismisses(30, 360));
+  check("충분히 밀면 닫힙니다", swipeDismisses(90, 360));
+  check("왼쪽으로 밀어도 닫힙니다", swipeDismisses(-90, 360));
+
+  /* 좁은 화면에서는 비례로, 넓은 화면에서도 한없이 길어지지 않게 */
+  check("좁은 화면은 비례로", swipeDismisses(40, 100) && !swipeDismisses(30, 100));
+  check("넓은 화면에도 상한이 있습니다", swipeDismisses(75, 1200));
+  check("너비가 0이어도 터지지 않습니다", !swipeDismisses(0, 0));
+
+  /* 닫히는 지점을 넘으면 고무줄처럼 눌립니다 */
+  check("문턱 안에서는 그대로 따라옵니다", swipeOffset(50, 360) === 50);
+  check("문턱을 넘으면 덜 따라옵니다", swipeOffset(200, 360) < 200);
+  check("방향은 지킵니다", swipeOffset(-200, 360) < 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -294,6 +294,101 @@ const ORDER: UpkeepKind[] = ["BACKUP", "STATEMENT", "AMOUNT_UP", "UPCOMING"];
  */
 export const UPCOMING_LIMIT = 3;
 
+/**
+ * 닫은 기록 한 줄 — `id` 또는 `id|YYYY-MM-DD`.
+ *
+ * **예산 경고와 같은 자리에 담습니다**(`dismissedAlertIds`). 저장소를 하나 더
+ * 만들면 "닫은 것"이 두 곳에 흩어지고 한쪽만 고쳐질 자리가 생깁니다. 예산
+ * 경고는 날짜 없이 id 만 적어 왔고, 그 줄은 여기서 **기한 없는 닫기**로 읽혀
+ * 지금과 똑같이 동작합니다.
+ *
+ * 날짜를 붙이는 것은 **백업뿐**입니다. 나머지 셋은 id 자체가 사실을 담고 있어
+ * (`STATEMENT:카드:2026-09`) 사실이 바뀌면 id 가 바뀌고, 닫은 기록이 저절로
+ * 비껴갑니다 — 10월이 되면 다시 뜹니다.
+ */
+export function dismissalFor(notice: UpkeepNotice, today: Date = new Date()): string {
+  return notice.kind === "BACKUP" ? `${notice.id}|${isoDay(today)}` : notice.id;
+}
+
+function dismissalParts(entry: string): { id: string; at: string | null } {
+  const bar = entry.indexOf("|");
+  if (bar < 0) return { id: entry, at: null };
+  return { id: entry.slice(0, bar), at: entry.slice(bar + 1) };
+}
+
+/**
+ * 닫아 둔 알림인가.
+ *
+ * **백업만 "닫기"가 "미루기"입니다.** `BACKUP:never` 는 백업을 할 때까지 id 가
+ * 영영 그대로라, 영구 숨김을 허용하면 기기 고장이 곧 전손인 구조에서 **유일한
+ * 방어선이 실수로 민 손가락 하나에 꺼집니다**(§1). 그래서 알림 기간만큼만
+ * 쉬었다가 다시 올라오고, 영영 끄는 길은 `설정 → 기타 설정 → 알림 기간 0일`에
+ * 그대로 둡니다 — 끄는 것은 사용자의 결정이되(§17.2) 그 결정은 설정에서
+ * 명시적으로 하는 편이 맞습니다.
+ *
+ * **날짜가 없는 백업 기록은 숨기지 않습니다.** 언제 닫았는지 모르면 얼마나
+ * 미룰지도 알 수 없고, 모를 때 감추는 쪽으로 기울면 그 침묵이 곧 전손입니다.
+ */
+export function noticeHidden(
+  notice: UpkeepNotice,
+  dismissals: string[],
+  options: { backupDays: number; today?: Date }
+): boolean {
+  const today = options.today || new Date();
+
+  for (const entry of dismissals) {
+    const { id, at } = dismissalParts(entry);
+    if (id !== notice.id) continue;
+
+    if (notice.kind !== "BACKUP") return true;
+
+    if (!at) continue;
+    const from = new Date(`${at}T00:00:00`);
+    if (Number.isNaN(from.getTime())) continue;
+    const snooze = normaliseBackupDays(options.backupDays);
+    if (snooze > 0 && daysBetween(from, today) < snooze) return true;
+  }
+
+  return false;
+}
+
+export interface NoticeSplit {
+  shown: UpkeepNotice[];
+  hidden: UpkeepNotice[];
+}
+
+/**
+ * 보여 줄 것과 닫아 둔 것.
+ *
+ * **닫은 것을 목록에서 지우지 않습니다.** 잘못 닫았을 때 되돌릴 방법이 없으면
+ * 닫기 버튼이 위험한 버튼이 됩니다 — 화면이 `숨긴 N건 보기`로 펼쳐 줍니다
+ * (§12.12).
+ */
+export function splitNotices(
+  notices: UpkeepNotice[],
+  dismissals: string[],
+  options: { backupDays: number; today?: Date }
+): NoticeSplit {
+  const shown: UpkeepNotice[] = [];
+  const hidden: UpkeepNotice[] = [];
+
+  for (const notice of notices) {
+    (noticeHidden(notice, dismissals, options) ? hidden : shown).push(notice);
+  }
+
+  return { shown, hidden };
+}
+
+/**
+ * 다시 보이게 할 때 지울 기록.
+ *
+ * 같은 알림을 여러 번 닫았으면 기록도 여러 줄입니다(백업은 닫을 때마다 날짜가
+ * 다릅니다). **하나만 지우면 다른 줄이 계속 감춥니다.**
+ */
+export function withoutDismissal(dismissals: string[], id: string): string[] {
+  return dismissals.filter((entry) => dismissalParts(entry).id !== id);
+}
+
 export function upkeepNotices(input: {
   accounts: ConnectedAccount[];
   transactions: Transaction[];

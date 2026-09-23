@@ -51,6 +51,9 @@ import { actualRows, spendingRows, sumActuals, type ActualKind } from "../servic
 import { recurringItems } from "../services/recurrence";
 import {
   upkeepNotices as buildUpkeepNotices,
+  splitNotices,
+  dismissalFor,
+  withoutDismissal,
   normaliseBackupDays,
   DEFAULT_BACKUP_DAYS,
   type UpkeepNotice,
@@ -206,6 +209,13 @@ interface FinanceContextType {
    * 판정은 `services/upkeep.ts` 의 순수 함수가 하고 여기서는 재료만 모읍니다.
    */
   upkeepNotices: UpkeepNotice[];
+  /**
+   * 닫아 둔 알림. 목록에서 빼기만 하고 **버리지 않습니다** — 잘못 닫았을 때
+   * 되돌릴 방법이 없으면 닫기 버튼이 위험한 버튼이 됩니다(§12.12).
+   */
+  hiddenNotices: UpkeepNotice[];
+  dismissNotice: (notice: UpkeepNotice) => void;
+  restoreNotice: (id: string) => void;
   /** 마지막으로 백업 파일을 내려받은 시각(ISO). 없으면 `null`. */
   lastBackupAt: string | null;
   /** 백업을 권하기까지의 날 수. `0`이면 알리지 않습니다. 기본 30. */
@@ -789,14 +799,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   */
   const upkeep = useMemo(
     () =>
-      buildUpkeepNotices({
-        accounts,
-        transactions,
-        recurring: recurringItems(countedTransactions),
-        lastBackupAt,
-        backupDays: backupReminderDays,
-      }),
-    [accounts, transactions, countedTransactions, lastBackupAt, backupReminderDays]
+      splitNotices(
+        buildUpkeepNotices({
+          accounts,
+          transactions,
+          recurring: recurringItems(countedTransactions),
+          lastBackupAt,
+          backupDays: backupReminderDays,
+        }),
+        dismissedAlertIds,
+        { backupDays: backupReminderDays }
+      ),
+    [
+      accounts,
+      transactions,
+      countedTransactions,
+      lastBackupAt,
+      backupReminderDays,
+      dismissedAlertIds,
+    ]
   );
 
   /*
@@ -1361,6 +1382,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const dismissAlert = (id: string) => {
     setDismissedAlertIds((prev) => [...prev, id]);
+  };
+
+  /*
+    알림을 닫습니다 (§12.12).
+
+    **예산 경고와 같은 자리에 담습니다.** "닫은 것"을 두 곳에 두면 한쪽만
+    고쳐집니다. 백업만 날짜를 함께 적어 닫기가 곧 **미루기**가 됩니다 —
+    `dismissalFor` 가 그 규칙을 압니다.
+  */
+  const dismissNotice = (notice: UpkeepNotice) => {
+    const entry = dismissalFor(notice);
+    setDismissedAlertIds((prev) => (prev.includes(entry) ? prev : [...prev, entry]));
+  };
+
+  /* 같은 알림을 여러 번 닫았으면 기록도 여러 줄입니다 — 전부 지워야 다시 보입니다 */
+  const restoreNotice = (id: string) => {
+    setDismissedAlertIds((prev) => withoutDismissal(prev, id));
   };
 
   const markAllAlertsAsRead = () => {
@@ -2146,7 +2184,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         clearUndoHistory,
         undoRetentionDays,
         setUndoRetentionDays,
-        upkeepNotices: upkeep,
+        upkeepNotices: upkeep.shown,
+        hiddenNotices: upkeep.hidden,
+        dismissNotice,
+        restoreNotice,
         lastBackupAt,
         backupReminderDays,
         setBackupReminderDays,
