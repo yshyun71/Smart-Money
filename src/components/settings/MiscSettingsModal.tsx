@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFinance } from "../../context/FinanceContext";
 import { describeUndo, DEFAULT_UNDO_DAYS } from "../../services/undo";
+import { DEFAULT_BACKUP_DAYS } from "../../services/upkeep";
 import {
   Undo2,
   X,
@@ -44,6 +45,9 @@ export const MiscSettingsModal: React.FC<{
     clearUndoHistory,
     undoRetentionDays,
     setUndoRetentionDays,
+    backupReminderDays,
+    setBackupReminderDays,
+    lastBackupAt,
   } = useFinance();
 
   const [notice, setNotice] = useState<string | null>(null);
@@ -82,7 +86,7 @@ export const MiscSettingsModal: React.FC<{
             </div>
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-900">기타 설정</h3>
-              <p className="text-[10px] text-slate-400">되돌리기 보관 기간과 최근 작업</p>
+              <p className="text-[10px] text-slate-400">데이터 점검 · 백업 알림 · 되돌리기</p>
             </div>
           </div>
           <button
@@ -163,6 +167,61 @@ export const MiscSettingsModal: React.FC<{
               </button>
             ))}
           </div>
+        </div>
+
+        {/*
+          백업 알림(§12.12) — 서버가 없으므로 기기 고장이 곧 전손입니다(§1).
+          간격을 사용자가 정하게 두는 이유: 매일 백업하는 사람에게 30일은 늦고,
+          한 달에 한 번 여는 사람에게 7일은 잔소리입니다. `0`은 끄는 뜻이고,
+          끄는 것도 사용자의 결정입니다(§17.2).
+        */}
+        <div className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200/60 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <span className="text-[11px] font-bold text-slate-700 block">백업 알림 기간</span>
+              <span className="text-[10px] text-slate-400 leading-relaxed">
+                마지막 백업 이후 이만큼 지나면 홈에서 권합니다.
+              </span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <input
+                type="number"
+                min={0}
+                max={365}
+                value={backupReminderDays}
+                onChange={(e) => setBackupReminderDays(Number(e.target.value))}
+                className="w-16 text-right rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-sm font-black text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+              />
+              <span className="text-xs font-bold text-slate-500">일</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {[7, 14, 30, 90, 0].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setBackupReminderDays(days)}
+                className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                  backupReminderDays === days
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {days === 0 ? "알리지 않음" : `${days}일`}
+                {days === DEFAULT_BACKUP_DAYS ? " (기본)" : ""}
+              </button>
+            ))}
+          </div>
+
+          {/* 지어내지 않습니다 — 기억이 없으면 없다고 적습니다(§17.1) */}
+          <p className="text-[10px] text-slate-400 leading-relaxed">
+            {lastBackupAt
+              ? `마지막 백업 ${lastBackupAt.slice(0, 10)} (${whenLabel(lastBackupAt)})`
+              : "이 기기에서 백업한 기록이 없습니다."}
+            {" · "}
+            백업은 <strong>카드·계좌</strong> 화면에서 내려받습니다.
+          </p>
         </div>
 
         {/* 되돌릴 수 있는 작업 */}

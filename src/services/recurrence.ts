@@ -131,6 +131,14 @@ export interface RecurringItem {
   amount: number;
   /** 최근 6개월 평균. 금액이 오르내리면 이쪽이 실제에 가깝습니다. */
   average: number;
+  /**
+   * 바로 앞 결제 금액. 한 번밖에 없으면 `null` 입니다.
+   *
+   * **평균과 쓰임이 다릅니다.** "구독료가 올랐다"를 가리는 데에는 평균이
+   * 쓸모없습니다 — 방금 오른 금액이 이미 평균에 섞여 차이가 희석됩니다(§12.12
+   * `amountJumps`). 사용자가 확인할 수 있는 사실도 "지난달보다 올랐다" 쪽입니다.
+   */
+  previous: number | null;
   paymentDay: number;
   monthCount: number;
   /** 마지막으로 찍힌 날. 끊긴 구독을 가려냅니다. */
@@ -174,6 +182,7 @@ export function recurringItems(transactions: Transaction[]): RecurringItem[] {
       merchant: latest.merchant,
       amount: latest.amount,
       average,
+      previous: rows.length > 1 ? rows[1].amount : null,
       paymentDay: info.paymentDay,
       monthCount: info.monthCount,
       lastSeen: latest.date,

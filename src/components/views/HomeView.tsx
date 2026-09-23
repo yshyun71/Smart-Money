@@ -21,8 +21,54 @@ import {
   BarChart3,
   Sliders,
   PiggyBank,
+  FileWarning,
+  ShieldAlert,
+  TrendingUp,
+  CalendarClock,
 } from "lucide-react";
 import { accountTone } from "../../utils/accountTone";
+import type { UpkeepKind } from "../../services/upkeep";
+
+/*
+  알림의 색은 **무게에 따라** 다릅니다.
+
+  백업은 놓치면 되돌릴 수 없어 붉은색, 명세서는 그 달이 비어 주황색, 오른
+  금액은 알아차려야 할 사실이라 호박색, 예고는 그냥 알면 되는 것이라 회색입니다.
+  전부 붉게 칠하면 무엇이 급한지 가려지지 않습니다.
+*/
+const NOTICE_TONE: Record<
+  UpkeepKind,
+  { box: string; icon: string; title: string; detail: string; Icon: typeof ArrowRight }
+> = {
+  BACKUP: {
+    box: "bg-rose-50 border-rose-200 hover:bg-rose-100/60",
+    icon: "text-rose-600",
+    title: "text-rose-900",
+    detail: "text-rose-700",
+    Icon: ShieldAlert,
+  },
+  STATEMENT: {
+    box: "bg-orange-50 border-orange-200 hover:bg-orange-100/60",
+    icon: "text-orange-600",
+    title: "text-orange-900",
+    detail: "text-orange-700",
+    Icon: FileWarning,
+  },
+  AMOUNT_UP: {
+    box: "bg-amber-50 border-amber-200 hover:bg-amber-100/60",
+    icon: "text-amber-600",
+    title: "text-amber-900",
+    detail: "text-amber-700",
+    Icon: TrendingUp,
+  },
+  UPCOMING: {
+    box: "bg-white border-slate-200 hover:bg-slate-50",
+    icon: "text-slate-400",
+    title: "text-slate-800",
+    detail: "text-slate-500",
+    Icon: CalendarClock,
+  },
+};
 
 interface HomeViewProps {
   onNavigateTab: (tab: NavTab) => void;
@@ -47,6 +93,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     totalVariableSpent,
     selectedMonth,
     allTransactions,
+    upkeepNotices,
   } = useFinance();
 
   /*
@@ -230,6 +277,54 @@ export const HomeView: React.FC<HomeViewProps> = ({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/*
+        앱이 먼저 말해 주는 것들 (§12.12).
+
+        **기준월을 따르지 않습니다.** 명세서가 빠졌는지·백업이 오래됐는지·며칠
+        뒤에 무엇이 나가는지는 전부 **지금** 기준의 사실입니다. 그래서 기준월
+        구역(결산 카드) **위**에 둡니다 — §12.7이 "기준이 섞이지 않게 순서로
+        가른다"고 적어 둔 그 규칙이고, 이 줄들은 저마다 **자기 달을 이름으로
+        말하므로**(`9월 명세서`) 아래의 8월 숫자와 헷갈릴 수 없습니다.
+
+        위에 두는 까닭은 하나뿐입니다: 이것들은 **놓치면 되돌릴 수 없는 일**입니다.
+        백업 없이 기기를 잃으면 끝이고, 명세서를 빠뜨리면 그 달이 통째로 빕니다.
+      */}
+      {upkeepNotices.length > 0 && (
+        <div className="space-y-1.5">
+          {upkeepNotices.map((notice) => {
+            const tone = NOTICE_TONE[notice.kind];
+            const Icon = tone.Icon;
+            const go = () => {
+              if (notice.kind === "BACKUP") {
+                onNavigateTab("assets");
+                return;
+              }
+              if (notice.accountId) onOpenAccount?.(notice.accountId);
+            };
+
+            return (
+              <button
+                key={notice.id}
+                type="button"
+                onClick={go}
+                className={`w-full text-left p-3 rounded-2xl border transition active:scale-98 cursor-pointer flex items-start gap-2 ${tone.box}`}
+              >
+                <Icon className={`w-4 h-4 shrink-0 mt-0.5 ${tone.icon}`} />
+                <div className="min-w-0 flex-1">
+                  <span className={`text-[11px] font-bold block truncate ${tone.title}`}>
+                    {notice.title}
+                  </span>
+                  <span className={`text-[10px] leading-relaxed block ${tone.detail}`}>
+                    {notice.detail}
+                  </span>
+                </div>
+                <ArrowRight className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${tone.icon}`} />
+              </button>
+            );
+          })}
         </div>
       )}
 

@@ -48,6 +48,13 @@ import {
   settlesFromBank,
 } from "../services/cardLink";
 import { actualRows, spendingRows, sumActuals, type ActualKind } from "../services/actuals";
+import { recurringItems } from "../services/recurrence";
+import {
+  upkeepNotices as buildUpkeepNotices,
+  normaliseBackupDays,
+  DEFAULT_BACKUP_DAYS,
+  type UpkeepNotice,
+} from "../services/upkeep";
 import { pendingNotifications, showNotifications } from "../services/notify";
 import { forgetAccountLabels } from "../services/cardLabels";
 import {
@@ -192,6 +199,18 @@ interface FinanceContextType {
   /** 임시 저장소 보관 기간(일). 1~90, 기본 7. 설정 → 기타 설정에서 바꿉니다. */
   undoRetentionDays: number;
   setUndoRetentionDays: (days: number) => void;
+  /**
+   * 홈에서 먼저 말해 주는 것들 (§12.12).
+   *
+   * 명세서를 빠뜨렸는지 · 백업이 오래됐는지 · 곧 나갈 정기 결제와 오른 금액.
+   * 판정은 `services/upkeep.ts` 의 순수 함수가 하고 여기서는 재료만 모읍니다.
+   */
+  upkeepNotices: UpkeepNotice[];
+  /** 마지막으로 백업 파일을 내려받은 시각(ISO). 없으면 `null`. */
+  lastBackupAt: string | null;
+  /** 백업을 권하기까지의 날 수. `0`이면 알리지 않습니다. 기본 30. */
+  backupReminderDays: number;
+  setBackupReminderDays: (days: number) => void;
   /**
    * Set when the stored ledger could not be opened. Distinct from "no data":
    * an empty screen and an unreachable one mean opposite things.
@@ -383,6 +402,16 @@ const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 const STORAGE_KEY_DISMISSED_ALERTS = "smart_money_dismissed_alerts_v1";
 /* 되돌리기 보관 기간 — 가계부 자료가 아니라 설정이라 localStorage 에 둡니다(§5) */
 const STORAGE_KEY_UNDO_DAYS = "smartmoney_undo_days";
+/*
+  백업 리마인더 — 간격은 설정이고, 마지막 백업 시각은 **이 브라우저의 기억**입니다.
+
+  DB 에 두지 않는 이유가 있습니다: 백업 파일에는 자기 자신이 언제 만들어졌는지
+  적힐 수 없고, 그 파일을 다른 기기에서 복원하면 "저 기기에서 백업한 시각"이
+  따라와 이 기기가 지켜지고 있다고 잘못 말하게 됩니다. 지켜야 할 것은 **이
+  기기의 IndexedDB** 이므로 기억도 이 기기에 둡니다(§12.12).
+*/
+const STORAGE_KEY_BACKUP_DAYS = "smartmoney_backup_days";
+const STORAGE_KEY_LAST_BACKUP = "smartmoney_last_backup";
 
 /**
  * 대기함의 한 건 — 읽어 낸 값에 화면이 쓰는 것들을 더한 모양.
@@ -456,6 +485,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     normaliseRetention(localStorage.getItem(STORAGE_KEY_UNDO_DAYS) || DEFAULT_UNDO_DAYS)
   );
 
+  /* 백업 리마인더(§12.12) — 간격은 설정, 시각은 이 기기의 기억 */
+  const [backupReminderDays, setBackupReminderDaysState] = useState<number>(() => {
+    const stored = localStorage.getItem(STORAGE_KEY_BACKUP_DAYS);
+    return stored === null ? DEFAULT_BACKUP_DAYS : normaliseBackupDays(stored);
+  });
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(() =>
+    localStorage.getItem(STORAGE_KEY_LAST_BACKUP)
+  );
+
   const readUndo = useCallback((): UndoEntry[] => {
     try {
       return repo.listUndo().map((row) => ({
@@ -519,6 +557,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     setUndoRetentionDaysState(safe);
     try {
       localStorage.setItem(STORAGE_KEY_UNDO_DAYS, String(safe));
+    } catch {
+      /* 사생활 보호 모드 — 기억하지 못해도 이번 실행에는 적용됩니다 */
+    }
+  };
+
+  const setBackupReminderDays = (days: number) => {
+    const safe = normaliseBackupDays(days);
+    setBackupReminderDaysState(safe);
+    try {
+      localStorage.setItem(STORAGE_KEY_BACKUP_DAYS, String(safe));
     } catch {
       /* 사생활 보호 모드 — 기억하지 못해도 이번 실행에는 적용됩니다 */
     }
@@ -731,6 +779,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
     잔액·카드 연결·중복 판정은 실제로 오간 모든 줄을 봐야 합니다(§6.5).
   */
   const countedTransactions = useMemo(() => spendingRows(transactions), [transactions]);
+
+  /*
+    홈에서 먼저 말해 주는 것들(§12.12).
+
+    **기준월을 따르지 않습니다.** 명세서가 빠졌는지·백업이 오래됐는지·며칠 뒤에
+    무엇이 나가는지는 전부 **지금** 기준의 사실입니다 — 8월을 보고 있다고 8월치를
+    말하면 그것은 알림이 아닙니다(§12.7의 자산 요약과 같은 자리).
+  */
+  const upkeep = useMemo(
+    () =>
+      buildUpkeepNotices({
+        accounts,
+        transactions,
+        recurring: recurringItems(countedTransactions),
+        lastBackupAt,
+        backupDays: backupReminderDays,
+      }),
+    [accounts, transactions, countedTransactions, lastBackupAt, backupReminderDays]
+  );
 
   /*
     화면에 뿌리는 목록 — 그 달에 실제로 오간 **모든** 줄입니다.
@@ -2010,6 +2077,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+
+      /*
+        백업했다는 사실을 이 기기에 적어 둡니다(§12.12).
+
+        **파일이 실제로 저장됐는지는 알 수 없습니다** — 브라우저가 내려받기를
+        가로챈 뒤의 일은 페이지에 보이지 않습니다. 여기서 적는 것은 "백업을
+        내보냈다"까지이고, 그 이상을 말할 근거가 없습니다(§17.1).
+      */
+      const at = new Date().toISOString();
+      setLastBackupAt(at);
+      try {
+        localStorage.setItem(STORAGE_KEY_LAST_BACKUP, at);
+      } catch {
+        /* 기억하지 못하면 다음에 또 권할 뿐, 백업 자체는 나갔습니다 */
+      }
     } catch (error) {
       console.error("백업 파일을 만들지 못했습니다:", error);
       throw error;
@@ -2064,6 +2146,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         clearUndoHistory,
         undoRetentionDays,
         setUndoRetentionDays,
+        upkeepNotices: upkeep,
+        lastBackupAt,
+        backupReminderDays,
+        setBackupReminderDays,
         dbError,
         dbStats,
         refreshDbData,
