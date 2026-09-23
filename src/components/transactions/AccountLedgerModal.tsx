@@ -88,26 +88,40 @@ type PeriodMode = "MONTH" | "RANGE";
 /**
  * 무엇을 보여 줄 것인가 — **방향과 정기성을 함께** (§6.6).
  *
- * 예전에는 `고정비 · 변동비 · 수입` 셋이었습니다. 수입에는 정기성이 없다는
- * 전제였는데, 이제 급여와 어쩌다 들어온 환급금이 갈립니다. 둘을 곱해 네 가지가
- * 되고, 카드에는 수입이 없으므로 둘만 나옵니다.
+ * `전체` 아래에 방향이 둘, 그 아래에 정기성이 둘씩입니다. 방향만 고르는 자리를
+ * 둔 까닭: 수입인지 지출인지만 보고 싶은 일이 가장 흔하고, 그때 고정·변동을
+ * 두 번 눌러 견주게 하는 것은 앱이 일을 미룬 것입니다.
+ *
+ * 카드에는 수입이 없으므로 지출 셋만 나오고, 그 자리에서 `지출전체` 는 `전체` 와
+ * 같은 말이라 두지 않습니다.
  */
-type KindFilter = "ALL" | "FIXED" | "VARIABLE" | "INCOME_FIXED" | "INCOME_VARIABLE";
+type KindFilter =
+  | "ALL"
+  | "EXPENSE"
+  | "FIXED"
+  | "VARIABLE"
+  | "INCOME"
+  | "INCOME_FIXED"
+  | "INCOME_VARIABLE";
 
-/** A card is only ever spent on, so it is not offered the 수입 filters. */
-function kindOptions(isBank: boolean): { value: KindFilter; label: string }[] {
-  const options: { value: KindFilter; label: string }[] = [
-    { value: "ALL", label: "전체" },
+/** 한 묶음이 한 줄을 차지합니다 — 일곱을 한 줄에 늘어놓으면 글자가 갈립니다. */
+function kindGroups(isBank: boolean): { value: KindFilter; label: string }[][] {
+  const spending: { value: KindFilter; label: string }[] = [
     { value: "FIXED", label: "고정지출" },
     { value: "VARIABLE", label: "변동지출" },
   ];
-  return isBank
-    ? [
-        ...options,
-        { value: "INCOME_FIXED", label: "고정수입" },
-        { value: "INCOME_VARIABLE", label: "변동수입" },
-      ]
-    : options;
+
+  if (!isBank) return [[{ value: "ALL", label: "전체" }, ...spending]];
+
+  return [
+    [{ value: "ALL", label: "전체" }],
+    [{ value: "EXPENSE", label: "지출전체" }, ...spending],
+    [
+      { value: "INCOME", label: "수입전체" },
+      { value: "INCOME_FIXED", label: "고정수입" },
+      { value: "INCOME_VARIABLE", label: "변동수입" },
+    ],
+  ];
 }
 
 /** 카드 결제 방식 필터 — 판정은 `services/ledger.payKindOf` 가 합니다. */
@@ -1035,25 +1049,29 @@ export const AccountLedgerModal: React.FC<{
             </div>
           )}
 
-          {/* 고정비·변동비 */}
-          <div
-            className={`grid gap-1 p-1 bg-slate-100 rounded-xl ${
-              isBank ? "grid-cols-4" : "grid-cols-3"
-            }`}
-          >
-            {kindOptions(isBank).map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setKindFilter(value)}
-                className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
-                  kindFilter === value
-                    ? "bg-white text-slate-900 shadow-xs"
-                    : "text-slate-500 hover:text-slate-800"
-                }`}
+          {/* 방향과 정기성 — 묶음마다 한 줄 (§6.6) */}
+          <div className="space-y-1">
+            {kindGroups(isBank).map((group, at) => (
+              <div
+                key={at}
+                className="grid gap-1 p-1 bg-slate-100 rounded-xl"
+                style={{ gridTemplateColumns: `repeat(${group.length}, minmax(0, 1fr))` }}
               >
-                {label}
-              </button>
+                {group.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setKindFilter(value)}
+                    className={`py-1.5 text-[11px] font-bold rounded-lg transition cursor-pointer whitespace-nowrap ${
+                      kindFilter === value
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
 

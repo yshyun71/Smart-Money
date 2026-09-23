@@ -164,6 +164,17 @@ section("조회 조건은 모두 함께 걸립니다");
   ];
 
   check("달로 걸러짐", filterEntries(rows, month()).length === 4);
+  /* 방향만 고르면 정기성을 가리지 않습니다 — 가장 흔한 조회입니다 */
+  check(
+    "지출전체",
+    filterEntries(rows, month({ kind: "EXPENSE" })).every((r) => r.type === "EXPENSE") &&
+      filterEntries(rows, month({ kind: "EXPENSE" })).length === 2
+  );
+  check(
+    "수입전체",
+    filterEntries(rows, month({ kind: "INCOME" })).every((r) => r.type === "INCOME") &&
+      filterEntries(rows, month({ kind: "INCOME" })).length === 2
+  );
   check("고정지출만", filterEntries(rows, month({ kind: "FIXED" })).length === 1);
   check(
     "변동지출만",

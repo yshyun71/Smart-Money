@@ -52,12 +52,20 @@ export interface LedgerFilter {
   from?: string;
   to?: string;
   /**
-   * 방향과 정기성을 곱한 넷. 비우거나 `ALL` 이면 전부 (§6.6).
+   * 무엇을 볼 것인가 — 방향만, 또는 방향과 정기성을 함께 (§6.6).
    *
-   * 정기성이 수입에도 붙게 되면서 `INCOME` 하나로는 모자라게 되었습니다 —
-   * 급여와 어쩌다 들어온 환급금은 다른 것입니다.
+   * `EXPENSE`·`INCOME` 은 **방향만** 봅니다. 수입인지 지출인지만 보고 싶은 일이
+   * 가장 흔하고, 그때 고정·변동을 두 번 눌러 견주게 하는 것은 앱이 일을 미룬
+   * 것입니다. 비우거나 `ALL` 이면 전부.
    */
-  kind?: "ALL" | "FIXED" | "VARIABLE" | "INCOME_FIXED" | "INCOME_VARIABLE";
+  kind?:
+    | "ALL"
+    | "EXPENSE"
+    | "FIXED"
+    | "VARIABLE"
+    | "INCOME"
+    | "INCOME_FIXED"
+    | "INCOME_VARIABLE";
   /** 카드 전용. 비우거나 `ALL` 이면 전부. */
   pay?: "ALL" | PayKind;
   /** 비우면 전부. */
@@ -91,10 +99,15 @@ export function filterEntries(
   return entries.filter((tx) => {
     if (!inPeriod(tx, filter)) return false;
     if (kind !== "ALL") {
+      /* 방향이 먼저입니다 — 맞지 않으면 정기성은 볼 것도 없습니다 */
       const wantsIncome = kind.startsWith("INCOME");
       if ((tx.type === "INCOME") !== wantsIncome) return false;
-      const wantedRecurrence = kind.endsWith("FIXED") ? "FIXED" : "VARIABLE";
-      if (tx.expenseType !== wantedRecurrence) return false;
+
+      /* 방향만 고른 것(`EXPENSE`·`INCOME`)은 정기성을 가리지 않습니다 */
+      if (kind !== "EXPENSE" && kind !== "INCOME") {
+        const wantedRecurrence = kind.endsWith("FIXED") ? "FIXED" : "VARIABLE";
+        if (tx.expenseType !== wantedRecurrence) return false;
+      }
     }
     if (pay !== "ALL" && payKindOf(tx) !== pay) return false;
     if (filter.category && tx.category !== filter.category) return false;

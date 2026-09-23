@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import type { CategoryType, TransactionType } from "../../types/finance";
 import { Check, Plus } from "lucide-react";
@@ -27,7 +27,12 @@ export const CategorySelect: React.FC<{
   id?: string;
 }> = ({ value, onChange, direction, className, id }) => {
   const { categoriesFor, addCategory } = useFinance();
-  const categories = categoriesFor(direction);
+  /*
+    **목록을 메모해 둡니다.** `categoriesFor` 는 부를 때마다 새 배열을 만드므로,
+    그대로 쓰면 아래 리셋 효과의 의존성이 매 렌더 바뀝니다 — `+ 직접 입력` 을
+    고른 순간 효과가 돌아 입력칸을 다시 닫아 버렸습니다(§14.5와 같은 종류).
+  */
+  const categories = useMemo(() => categoriesFor(direction), [categoriesFor, direction]);
 
   const [isCustom, setIsCustom] = useState(false);
   const [draft, setDraft] = useState("");
@@ -38,9 +43,14 @@ export const CategorySelect: React.FC<{
     ? categories
     : [...categories, value].filter(Boolean);
 
+  /*
+    바깥에서 값이 바뀌면 직접 입력 칸을 닫습니다 — 다른 카테고리가 골라졌다는
+    뜻입니다. **`categories` 를 의존성에 넣지 마세요**: 목록은 내용이 같아도
+    참조가 바뀔 수 있고, 그러면 `+ 직접 입력` 을 고른 순간 닫힙니다.
+  */
   useEffect(() => {
-    if (categories.includes(value)) setIsCustom(false);
-  }, [value, categories]);
+    setIsCustom(false);
+  }, [value]);
 
   const commitDraft = () => {
     const name = draft.trim();
