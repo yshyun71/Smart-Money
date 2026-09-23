@@ -41,7 +41,7 @@ import {
   describeRecurrence,
   recurrenceFor,
 } from "../../services/recurrence";
-import { asOfLabel, won } from "../../utils/format";
+import { won } from "../../utils/format";
 import { accountTone } from "../../utils/accountTone";
 import {
   categoriesUsed,
@@ -78,8 +78,6 @@ import {
   ChevronRight,
   ChevronDown,
   Tag,
-  Calculator,
-  UserCheck,
   Trash2,
 } from "lucide-react";
 
@@ -133,6 +131,40 @@ const PAY_LABELS: { value: PayFilter; label: string }[] = [
   { value: "ONCE", label: "일시불" },
   { value: "INSTALMENT", label: "할부" },
 ];
+
+/**
+ * 그 칩에 적힌 글자 그대로 — **합계 줄의 이름은 누른 것의 이름이어야 합니다**.
+ *
+ * `kindGroups` 에서 꺼내 오므로 칩과 갈라질 수 없습니다. 이름을 따로 적어 두면
+ * 칩을 고칠 때 한쪽만 바뀌고, 그러면 `변동지출` 을 눌렀는데 합계가 `고정지출`
+ * 이라고 말하게 됩니다.
+ */
+function kindLabel(value: KindFilter, isBank: boolean): string {
+  for (const group of kindGroups(isBank)) {
+    const hit = group.find((option) => option.value === value);
+    if (hit) return hit.label;
+  }
+  return "";
+}
+
+/**
+ * 합계 줄에 붙일 이름 — 방향마다 하나씩.
+ *
+ * `전체` 만 두 줄이 나오므로 각 줄에 그 방향의 이름을 답니다. 두 줄에 똑같이
+ * `전체` 라고 적으면 어느 쪽이 수입인지 알 수 없습니다.
+ */
+function summaryLabels(
+  kind: KindFilter,
+  isBank: boolean
+): { expense?: string; income?: string } {
+  if (kind === "ALL") {
+    return isBank
+      ? { expense: kindLabel("EXPENSE", true), income: kindLabel("INCOME", true) }
+      : { expense: kindLabel("ALL", false) };
+  }
+  const label = kindLabel(kind, isBank);
+  return kind.startsWith("INCOME") ? { income: label } : { expense: label };
+}
 
 const ALL_CATEGORIES = "__ALL__";
 
@@ -386,6 +418,9 @@ export const AccountLedgerModal: React.FC<{
   const grouped = useMemo(() => groupByMonth(entries, basis), [entries, basis]);
 
   const totals = useMemo(() => ledgerTotals(entries), [entries]);
+
+  /** 합계 줄에 붙일 이름 — 누른 칩의 글자 그대로입니다. */
+  const totalsLabel = summaryLabels(kindFilter, isBank);
 
   /** 달마다 몇 건인지 — 보고 있는 달 아래와 연월 선택 창에 함께 나갑니다. */
   const monthCounts = useMemo(
@@ -771,75 +806,6 @@ export const AccountLedgerModal: React.FC<{
           </button>
         </div>
 
-        {/*
-          A balance belongs to an account. A card carries what it will bill,
-          which is managed where the card is registered — so its ledger shows
-          only what the period actually came to.
-        */}
-        {isBank ? (
-          <>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <button
-                type="button"
-                onClick={() => setShowBalance(true)}
-                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-emerald-400 hover:bg-emerald-50/40 transition text-center cursor-pointer"
-              >
-                <div className="text-[10px] text-slate-400 flex items-center justify-center gap-0.5">
-                  <span>잔액</span>
-                  <Pencil className="w-2.5 h-2.5" />
-                </div>
-                <div className="text-xs font-black text-slate-900">
-                  {won(account.balanceOrBilled)}
-                </div>
-              </button>
-              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100">
-                <div className="text-[10px] text-rose-600">지출 합계</div>
-                <div className="text-xs font-black text-rose-700">{won(totals.expense)}</div>
-              </div>
-              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100">
-                <div className="text-[10px] text-emerald-600">수입 합계</div>
-                <div className="text-xs font-black text-emerald-700">{won(totals.income)}</div>
-              </div>
-            </div>
-
-            {/* Where the balance came from, and as of when */}
-            <button
-              type="button"
-              onClick={() => setShowBalance(true)}
-              className="w-full -mt-1.5 flex items-center justify-between gap-2 px-1 text-[10px] text-slate-400 hover:text-slate-600 transition cursor-pointer"
-            >
-              <span className="truncate">기준 {asOfLabel(account.balanceAsOf)}</span>
-              <span
-                className={`font-bold px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5 ${
-                  account.balanceSource === "AUTO"
-                    ? "bg-indigo-100 text-indigo-700"
-                    : "bg-emerald-100 text-emerald-700"
-                }`}
-              >
-                {account.balanceSource === "AUTO" ? (
-                  <Calculator className="w-2.5 h-2.5" />
-                ) : (
-                  <UserCheck className="w-2.5 h-2.5" />
-                )}
-                {account.balanceSource === "AUTO" ? "자동 산출" : "사용자 입력"}
-              </span>
-            </button>
-          </>
-        ) : (
-          <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-between gap-2">
-            <div>
-              <span className="text-[11px] font-bold text-rose-600">이용 합계</span>
-              {/* 명세서의 소계와 같은 값이 되도록, 차감·환불을 뺀 금액입니다 */}
-              {totals.income > 0 && (
-                <div className="text-[10px] text-rose-400 font-medium">
-                  이용 {won(totals.expense)} − 차감·환불 {won(totals.income)}
-                </div>
-              )}
-            </div>
-            <span className="text-sm font-black text-rose-700">{won(totals.billed)}</span>
-          </div>
-        )}
-
         {/* Actions */}
         <div className="grid grid-cols-3 gap-2">
           <button
@@ -1138,41 +1104,72 @@ export const AccountLedgerModal: React.FC<{
           </select>
 
           {/*
-            **고른 조건이 얼마인가** — 고르기 전에 답해야 하는 질문입니다.
+            **고른 조건이 몇 건이고 얼마인가** — 고르기 전에 답해야 하는 질문입니다.
 
-            이 숫자는 화면 맨 위 `지출 합계`·`수입 합계` 와 **같은 값**입니다
-            (둘 다 `totals`). 그런데 그 자리는 조건 블록에서 500px 떨어져 있어,
-            `고정지출` 을 눌러 숫자가 바뀌어도 아무도 둘을 연결하지 못했습니다 —
-            "선택을 해야 합계가 보인다"는 신고가 그래서 나왔습니다.
+            예전에는 이 숫자가 화면 맨 위에 `지출 합계`·`수입 합계` 로 있었습니다.
+            값 자체는 그때도 필터를 따랐는데, 자리가 조건 블록에서 500px 떨어져
+            있어 `고정지출` 을 눌러 숫자가 바뀌어도 아무도 둘을 연결하지 못했습니다 —
+            "선택을 해야 합계가 보인다"는 신고가 그래서 나왔습니다. 위의 것은
+            지웠습니다: 같은 값을 두 자리에 두면 묻는 자리가 아닌 쪽이 먼저 눈에
+            띄고, 그것이 곧 오해입니다.
+
+            **건수를 함께 적습니다.** 금액만으로는 "한 건이 큰 것"과 "작은 것이
+            여러 건 쌓인 것"이 같아 보이고, 줄일 곳을 찾는 사람에게는 그 둘이 전혀
+            다른 이야기입니다.
 
             **기본을 전체 선택으로 두지 않은 까닭**: 선택은 `선택 삭제` 와
             `AI 자동 분류` 의 대상입니다. 처음부터 전부 골라져 있으면 오조작 한
-            번이 그 달을 통째로 지우고, 방금 가른 "보는 것과 할 것"이 도로
-            뭉개집니다(§12.1의 선택 규칙).
+            번이 그 달을 통째로 지우고, 보는 것과 할 것을 가른 규칙이 도로
+            뭉개집니다(§12.1).
           */}
-          <div className="flex items-baseline justify-between gap-2 rounded-xl bg-slate-100/70 px-2.5 py-2">
-            <span className="text-[10px] font-bold text-slate-500 shrink-0">
-              조회 {entries.length}건
-            </span>
+          <div className="rounded-xl bg-slate-100/70 px-2.5 py-2 space-y-1">
             {entries.length === 0 ? (
-              <span className="text-[11px] text-slate-400">내역이 없습니다</span>
+              <div className="text-[11px] text-slate-400 text-center">
+                조건에 맞는 내역이 없습니다
+              </div>
             ) : isBank ? (
-              <span className="text-[11px] font-bold text-slate-700 text-right">
-                {totals.expense > 0 && (
-                  <span className="text-rose-700">지출 {won(totals.expense)}</span>
+              <>
+                {totals.expenseCount > 0 && totalsLabel.expense && (
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[10px] font-bold text-rose-600 shrink-0">
+                      {totalsLabel.expense} {totals.expenseCount}건
+                    </span>
+                    <span className="text-xs font-black text-rose-700">
+                      {won(totals.expense)}
+                    </span>
+                  </div>
                 )}
-                {totals.expense > 0 && totals.income > 0 && (
-                  <span className="text-slate-300"> · </span>
+                {totals.incomeCount > 0 && totalsLabel.income && (
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[10px] font-bold text-emerald-600 shrink-0">
+                      {totalsLabel.income} {totals.incomeCount}건
+                    </span>
+                    <span className="text-xs font-black text-emerald-700">
+                      {won(totals.income)}
+                    </span>
+                  </div>
                 )}
-                {totals.income > 0 && (
-                  <span className="text-emerald-700">수입 {won(totals.income)}</span>
-                )}
-              </span>
+              </>
             ) : (
               /* 카드는 지출 − 차감·환불이 청구액입니다 (§9.5) */
-              <span className="text-[11px] font-bold text-rose-700 text-right">
-                이용 합계 {won(totals.billed)}
-              </span>
+              <>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[10px] font-bold text-rose-600 shrink-0">
+                    {totalsLabel.expense} {totals.expenseCount}건
+                  </span>
+                  <span className="text-xs font-black text-rose-700">
+                    {won(totals.billed)}
+                  </span>
+                </div>
+                {totals.incomeCount > 0 && (
+                  <div className="flex items-baseline justify-between gap-2 text-[10px] text-slate-400">
+                    <span className="shrink-0">
+                      이용 {won(totals.expense)} − 차감·환불 {totals.incomeCount}건
+                    </span>
+                    <span>{won(totals.income)}</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

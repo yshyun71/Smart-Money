@@ -221,11 +221,24 @@ section("카드의 합계는 지출 − 차감·환불 (§9.5 — 34,000원 사�
   check("이용액", totals.expense === 700_000);
   check("차감", totals.income === 34_000);
   check("청구액은 그 차이", totals.billed === 666_000, totals.billed);
+  /*
+    **건수를 함께 셉니다.** 금액만으로는 "한 건이 큰 것"과 "작은 것이 여러 건
+    쌓인 것"이 같아 보이고, 줄일 곳을 찾는 사람에게는 그 둘이 전혀 다른 이야기입니다.
+  */
+  check("지출 건수", totals.expenseCount === 1, totals.expenseCount);
+  check("수입 건수", totals.incomeCount === 1, totals.incomeCount);
   /* 이 값이 출금과 정확히 같아야 카드대금이 연결됩니다(§9.2) */
   check("지출만 더하지 않습니다", totals.billed !== totals.expense);
 
   const empty = ledgerTotals([]);
-  check("빈 목록은 0", empty.income === 0 && empty.expense === 0 && empty.billed === 0);
+  check(
+    "빈 목록은 0",
+    empty.income === 0 &&
+      empty.expense === 0 &&
+      empty.billed === 0 &&
+      empty.incomeCount === 0 &&
+      empty.expenseCount === 0
+  );
 }
 
 // ---------------------------------------------------------------------------

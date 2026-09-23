@@ -118,6 +118,9 @@ export function filterEntries(
 export interface LedgerTotals {
   income: number;
   expense: number;
+  /** 몇 건인가 — 금액만으로는 "한 건이 큰 것"과 "여러 건이 쌓인 것"이 같아 보입니다. */
+  incomeCount: number;
+  expenseCount: number;
   /**
    * 카드가 청구하는 금액 — `지출 − 차감·환불`.
    *
@@ -135,11 +138,20 @@ export interface LedgerTotals {
 export function ledgerTotals(entries: Transaction[]): LedgerTotals {
   let income = 0;
   let expense = 0;
+  let incomeCount = 0;
+  let expenseCount = 0;
+
   for (const tx of entries) {
-    if (tx.type === "INCOME") income += tx.amount;
-    else expense += tx.amount;
+    if (tx.type === "INCOME") {
+      income += tx.amount;
+      incomeCount++;
+    } else {
+      expense += tx.amount;
+      expenseCount++;
+    }
   }
-  return { income, expense, billed: expense - income };
+
+  return { income, expense, incomeCount, expenseCount, billed: expense - income };
 }
 
 /**
