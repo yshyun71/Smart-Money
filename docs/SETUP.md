@@ -19,7 +19,7 @@ cd smart-money
 // package.json
 {
   "name": "smart-money",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
