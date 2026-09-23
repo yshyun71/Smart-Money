@@ -45,6 +45,13 @@ export const NOTICE_TONE: Record<
     detail: "text-amber-700",
     Icon: TrendingUp,
   },
+  CATEGORY_UP: {
+    box: "bg-amber-50/70 border-amber-200/70 hover:bg-amber-100/50",
+    icon: "text-amber-600",
+    title: "text-amber-900",
+    detail: "text-amber-700",
+    Icon: TrendingUp,
+  },
   UPCOMING: {
     box: "bg-white border-slate-200 hover:bg-slate-50",
     icon: "text-slate-400",

@@ -19,7 +19,12 @@ import { monthLabel, shiftMonth, thisMonthKey } from "./trend";
  * 가계부에는 할 말이 없습니다.
  */
 
-export type UpkeepKind = "STATEMENT" | "UPCOMING" | "AMOUNT_UP" | "BACKUP";
+export type UpkeepKind =
+  | "STATEMENT"
+  | "UPCOMING"
+  | "AMOUNT_UP"
+  | "CATEGORY_UP"
+  | "BACKUP";
 
 export interface UpkeepNotice {
   /** 숨김·중복을 가리는 열쇠. 같은 사실이면 같은 값이어야 합니다. */
@@ -180,6 +185,33 @@ const JUMP_FRESH_DAYS = 45;
 const JUMP_SKIP_CATEGORIES = new Set(["카드대금"]);
 
 /**
+ * 이름에 적힌 건수 — `터널/도로 3 건`, `버스 11 건`.
+ *
+ * 통장은 같은 날 여러 건을 한 줄로 묶어 적고 **그 건수를 이름에 씁니다.**
+ * 그래서 반복 판정의 열쇠(`normaliseMerchant`)에도 건수가 들어가고, 결국
+ * **같은 건수끼리만 묶입니다** — `터널/도로 3 건` 은 다른 달의 `3 건` 과만
+ * 견주어집니다. 인상 감지가 이미 "동일 건수 비교"인 셈입니다.
+ *
+ * 실제 자료가 그렇습니다: `터널/도로 3 건` 이 4,600원 → 6,000원. 건수가 같으니
+ * **1건당 1,533원 → 2,000원**, 진짜로 오른 것입니다. 그런데 이름에 `3 건` 이
+ * 적혀 있어 "횟수가 늘어난 것 아닌가" 하고 읽히므로, **1건당 얼마였는지를 함께
+ * 적어** 오해를 없앱니다.
+ *
+ * **숫자 앞에 공백이 있어야 건수로 봅니다.** `우체００２건`(실제 자료)은 우체국
+ * 계좌 번호이지 2건이 아닙니다 — 붙여 쓴 숫자를 건수로 읽으면 223,130원짜리
+ * 금융 거래가 `1건당 111,565원` 이라는 없는 사실이 됩니다(§17.1).
+ */
+export function bundledCount(name: string): number | null {
+  const found = (name || "").match(/(?:^|\s)([0-9０-９]+)\s*건/);
+  if (!found) return null;
+  const digits = found[1].replace(/[０-９]/g, (ch) =>
+    String(ch.charCodeAt(0) - 0xff10)
+  );
+  const count = Number(digits);
+  return Number.isFinite(count) && count > 0 ? count : null;
+}
+
+/**
  * 지난번보다 오른 정기 결제 (§12.12).
  *
  * **평균이 아니라 바로 앞 결제와 견줍니다.** 평균에는 방금 오른 금액이 이미
@@ -205,17 +237,126 @@ export function amountJumps(
     if (Number.isNaN(last.getTime())) continue;
     if (daysBetween(last, today) > JUMP_FRESH_DAYS) continue;
 
+    /* 묶음 줄이면 1건당 얼마였는지를 함께 적습니다 — 같은 건수끼리 견준 값입니다 */
+    const count = bundledCount(item.merchant);
+    const perUnit =
+      count && count > 1
+        ? ` · 1건당 ${Math.round(item.previous / count).toLocaleString()}원 → ${Math.round(
+            item.amount / count
+          ).toLocaleString()}원`
+        : "";
+
     notices.push({
       id: `AMOUNT_UP:${item.key}:${item.lastSeen}`,
       kind: "AMOUNT_UP",
       title: `${item.merchant} ${gap.toLocaleString()}원 올랐습니다`,
-      detail: `${item.previous.toLocaleString()}원 → ${item.amount.toLocaleString()}원 (${item.lastSeen})`,
+      detail: `${item.previous.toLocaleString()}원 → ${item.amount.toLocaleString()}원 (${item.lastSeen})${perUnit}`,
       accountId: item.accountId,
       amount: gap,
     });
   }
 
   return notices.sort((a, b) => (b.amount || 0) - (a.amount || 0));
+}
+
+/**
+ * 문턱 — 셋을 **모두** 넘어야 말합니다.
+ *
+ * 하나만 보면 잡음이 됩니다. 비율만 보면 지난달에 5,000원 쓴 카테고리가 15,000원이
+ * 되어 200% 로 걸리고, 금액만 보면 원래 큰 카테고리가 늘 올라옵니다. **건수까지
+ * 보는 까닭**은 사용자가 요청한 것이 "이용 건수 **및** 금액이 많이 증가한 것"이기
+ * 때문입니다 — 한 번 크게 지른 것은 그 거래를 보면 되고, 여기서 알아차려야 할
+ * 것은 **씀씀이가 늘어난 것**입니다.
+ */
+const SURGE_RATIO = 0.5;
+const SURGE_WON = 30_000;
+
+/** 홈에 올릴 카테고리 수. 전부 올리면 나머지 알림이 밀립니다. */
+export const SURGE_LIMIT = 2;
+
+/** 이 카테고리들은 늘어도 소식이 아닙니다. */
+const SURGE_SKIP = new Set(["카드대금", "저축"]);
+
+interface Tally {
+  count: number;
+  amount: number;
+}
+
+function tallyCategories(
+  transactions: Transaction[],
+  from: string,
+  to: string
+): Map<string, Tally> {
+  const map = new Map<string, Tally>();
+  for (const tx of transactions) {
+    if (tx.type !== "EXPENSE") continue;
+    if (tx.date < from || tx.date > to) continue;
+    if (SURGE_SKIP.has(tx.category)) continue;
+    const at = map.get(tx.category) || { count: 0, amount: 0 };
+    at.count += 1;
+    at.amount += tx.amount;
+    map.set(tx.category, at);
+  }
+  return map;
+}
+
+/**
+ * 씀씀이가 늘어난 카테고리 (§12.12).
+ *
+ * **지난달 같은 기간과 견줍니다.** 이번 달은 아직 진행 중이라 지난달 **전체**와
+ * 견주면 언제나 줄어든 것처럼 보입니다 — 23일에 한 달 치를 이길 수는 없습니다.
+ * 그래서 양쪽 다 **1일부터 오늘 날짜까지**로 자릅니다(§11.5의 `upTo` 와 같은
+ * 태도). 달마다 날 수가 달라 지난달에 없는 날이면 그 달 말일까지 봅니다.
+ *
+ * 카테고리 예산 경고(§11.5)와 다른 질문에 답합니다. 그쪽은 **한도를 정해 둔**
+ * 카테고리만, 그 한도에 견주어 말합니다. 이쪽은 한도가 없어도, 정확히는
+ * **한도를 정하기 전에** 무엇이 달라졌는지 말합니다.
+ */
+export function categorySurges(
+  transactions: Transaction[],
+  today: Date = new Date()
+): UpkeepNotice[] {
+  const month = thisMonthKey(today);
+  const previous = shiftMonth(month, -1);
+  const day = today.getDate();
+
+  /* 지난달에 없는 날이면 말일까지 — 31일에 2월을 보면 28일까지입니다 */
+  const lastOfPrevious = new Date(
+    Number(previous.slice(0, 4)),
+    Number(previous.slice(5, 7)),
+    0
+  ).getDate();
+  const edge = (key: string, upto: number) => `${key}-${String(upto).padStart(2, "0")}`;
+
+  const now = tallyCategories(transactions, `${month}-01`, edge(month, day));
+  const before = tallyCategories(
+    transactions,
+    `${previous}-01`,
+    edge(previous, Math.min(day, lastOfPrevious))
+  );
+
+  const found: UpkeepNotice[] = [];
+
+  for (const [category, at] of now) {
+    const was = before.get(category);
+    /* 견줄 것이 없으면 "늘었다"고 말할 수 없습니다(§17.1) */
+    if (!was || was.count === 0) continue;
+    if (at.count <= was.count) continue;
+
+    const gap = at.amount - was.amount;
+    if (gap < SURGE_WON) continue;
+    if (was.amount > 0 && gap / was.amount < SURGE_RATIO) continue;
+
+    found.push({
+      id: `CATEGORY_UP:${category}:${month}`,
+      kind: "CATEGORY_UP",
+      title: `${category} ${gap.toLocaleString()}원 늘었습니다`,
+      detail: `${monthLabel(month)} 1~${day}일 ${at.count}건 ${at.amount.toLocaleString()}원 · 지난달 같은 기간 ${was.count}건 ${was.amount.toLocaleString()}원`,
+      amount: gap,
+    });
+  }
+
+  return found.sort((a, b) => (b.amount || 0) - (a.amount || 0));
 }
 
 /** 백업 알림 기본 간격. `0`은 알리지 않는다는 뜻입니다. */
@@ -282,7 +423,13 @@ export function backupDue(options: {
  * 되돌릴 수 없는 것이 먼저입니다 — 백업(잃으면 끝) → 명세서(그 달이 통째로 빔)
  * → 오른 금액(고칠 수 있음) → 예고(그냥 알면 됨).
  */
-const ORDER: UpkeepKind[] = ["BACKUP", "STATEMENT", "AMOUNT_UP", "UPCOMING"];
+const ORDER: UpkeepKind[] = [
+  "BACKUP",
+  "STATEMENT",
+  "AMOUNT_UP",
+  "CATEGORY_UP",
+  "UPCOMING",
+];
 
 /**
  * 예고는 몇 줄까지.
@@ -392,6 +539,13 @@ export function withoutDismissal(dismissals: string[], id: string): string[] {
 export function upkeepNotices(input: {
   accounts: ConnectedAccount[];
   transactions: Transaction[];
+  /**
+   * 소비로 세는 줄만 남긴 목록(`spendingRows` — §6.5).
+   *
+   * 카테고리 급증은 **합계를 말하는 판정**이라 옮긴 돈이 섞이면 "이체가
+   * 늘었습니다" 같은 말이 나옵니다. 주지 않으면 `transactions` 를 씁니다.
+   */
+  spending?: Transaction[];
   recurring: RecurringItem[];
   lastBackupAt: string | null;
   backupDays: number;
@@ -410,6 +564,7 @@ export function upkeepNotices(input: {
     ...(backup ? [backup] : []),
     ...missingStatements(input.accounts, input.transactions, today),
     ...amountJumps(input.recurring, today),
+    ...categorySurges(input.spending || input.transactions, today).slice(0, SURGE_LIMIT),
     ...upcomingCharges(input.recurring, today, input.withinDays).slice(0, UPCOMING_LIMIT),
   ];
 

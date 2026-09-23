@@ -19,6 +19,9 @@ import {
   noticeHidden,
   splitNotices,
   withoutDismissal,
+  bundledCount,
+  categorySurges,
+  SURGE_LIMIT,
 } from "../src/services/upkeep";
 import {
   swipeAxis,
@@ -530,6 +533,164 @@ section("옆으로 밀어 닫기 — 세로 스크롤과 다투지 않을 것");
   check("문턱 안에서는 그대로 따라옵니다", swipeOffset(50, 360) === 50);
   check("문턱을 넘으면 덜 따라옵니다", swipeOffset(200, 360) < 200);
   check("방향은 지킵니다", swipeOffset(-200, 360) < 0);
+}
+
+// ---------------------------------------------------------------------------
+section("묶음 줄 — 건수가 이름에 있으면 같은 건수끼리만 견줍니다");
+// ---------------------------------------------------------------------------
+{
+  check("건수를 읽습니다", bundledCount("터널/도로 3 건") === 3);
+  check("두 자리도", bundledCount("버스 11 건") === 11);
+  check("공백이 붙어도", bundledCount("지하철 15건") === 15);
+
+  /*
+    `우체００２건` 은 실제 자료에 있는 **우체국 계좌 번호**입니다. 이것을 2건으로
+    읽으면 223,130원짜리 금융 거래가 `1건당 111,565원` 이라는 없는 사실이 됩니다.
+    숫자 앞에 공백이 있어야 건수로 봅니다.
+  */
+  check("붙여 쓴 숫자는 건수가 아닙니다", bundledCount("우체００２건") === null);
+  check("건수가 없으면 null", bundledCount("가족건강의원") === null);
+  check("0건은 건수가 아닙니다", bundledCount("무언가 0 건") === null);
+
+  /*
+    반복 판정의 열쇠에 건수가 들어가므로 `터널/도로 3 건` 은 다른 달의 `3 건`
+    과만 묶입니다 — 인상 감지가 이미 "동일 건수 비교"입니다. 실제 자료의
+    4,600원 → 6,000원이 그 경우이고, 1건당 1,533원 → 2,000원입니다.
+  */
+  const bundled = amountJumps(
+    [
+      item({
+        key: "터널도로3건",
+        merchant: "터널/도로 3 건",
+        category: "교통",
+        previous: 4_600,
+        amount: 6_000,
+        lastSeen: "2026-09-10",
+      }),
+    ],
+    TODAY
+  );
+  check("묶음 줄도 오르면 말합니다", bundled.length === 1, bundled);
+  check("1건당 얼마였는지 함께 적습니다", (bundled[0]?.detail || "").includes("1건당"), bundled[0]?.detail);
+  check("1건당 값", (bundled[0]?.detail || "").includes("1,533원 → 2,000원"), bundled[0]?.detail);
+
+  /* 건수가 없는 줄에는 1건당을 적지 않습니다 — 나눌 것이 없습니다 */
+  const plain = amountJumps(
+    [item({ previous: 17_000, amount: 22_000, lastSeen: "2026-09-10" })],
+    TODAY
+  );
+  check("보통 줄에는 1건당이 없습니다", !(plain[0]?.detail || "").includes("1건당"));
+}
+
+// ---------------------------------------------------------------------------
+section("씀씀이가 늘어난 카테고리 — 지난달 같은 기간과");
+// ---------------------------------------------------------------------------
+{
+  const rows = [
+    /* 9월 1~23일 — 쇼핑 4건 40만 */
+    tx({ date: "2026-09-02", category: "쇼핑", amount: 100_000 }),
+    tx({ date: "2026-09-05", category: "쇼핑", amount: 100_000 }),
+    tx({ date: "2026-09-11", category: "쇼핑", amount: 100_000 }),
+    tx({ date: "2026-09-20", category: "쇼핑", amount: 100_000 }),
+    /* 8월 1~23일 — 쇼핑 1건 5만 */
+    tx({ date: "2026-08-10", category: "쇼핑", amount: 50_000 }),
+    /* 8월 하순 — 같은 기간이 아니므로 세지 않습니다 */
+    tx({ date: "2026-08-28", category: "쇼핑", amount: 900_000 }),
+  ];
+
+  const surges = categorySurges(rows, TODAY);
+  check("늘어난 카테고리를 집어냅니다", surges.length === 1, surges);
+  check("얼마나 늘었는지", (surges[0]?.title || "").includes("350,000"), surges[0]?.title);
+  check("건수를 함께 말합니다", (surges[0]?.detail || "").includes("4건"), surges[0]?.detail);
+  check("지난달 같은 기간도", (surges[0]?.detail || "").includes("1건 50,000원"), surges[0]?.detail);
+
+  /*
+    이번 달은 진행 중이라 지난달 **전체**와 견주면 언제나 줄어든 것처럼 보입니다.
+    8월 28일의 90만원이 섞이면 이 판정은 아무 말도 하지 못합니다.
+  */
+  check("지난달 하순은 세지 않습니다", !(surges[0]?.detail || "").includes("950,000"));
+
+  /* 건수와 금액을 둘 다 봅니다 — 한 번 크게 지른 것은 그 거래를 보면 됩니다 */
+  check(
+    "건수가 그대로면 말하지 않습니다",
+    categorySurges(
+      [
+        tx({ date: "2026-09-02", category: "쇼핑", amount: 500_000 }),
+        tx({ date: "2026-08-02", category: "쇼핑", amount: 50_000 }),
+      ],
+      TODAY
+    ).length === 0
+  );
+  check(
+    "금액이 조금 늘면 말하지 않습니다",
+    categorySurges(
+      [
+        tx({ date: "2026-09-02", category: "식비", amount: 10_000 }),
+        tx({ date: "2026-09-03", category: "식비", amount: 10_000 }),
+        tx({ date: "2026-08-02", category: "식비", amount: 15_000 }),
+      ],
+      TODAY
+    ).length === 0
+  );
+
+  /* 견줄 것이 없으면 "늘었다"고 말할 수 없습니다 */
+  check(
+    "지난달에 없던 카테고리는 말하지 않습니다",
+    categorySurges([tx({ date: "2026-09-02", category: "여행", amount: 900_000 })], TODAY)
+      .length === 0
+  );
+
+  /* 늘어도 소식이 아닌 것들 */
+  for (const category of ["카드대금", "저축"]) {
+    check(
+      `${category}은 늘어도 말하지 않습니다`,
+      categorySurges(
+        [
+          tx({ date: "2026-09-02", category, amount: 500_000 }),
+          tx({ date: "2026-09-03", category, amount: 500_000 }),
+          tx({ date: "2026-08-02", category, amount: 50_000 }),
+        ],
+        TODAY
+      ).length === 0
+    );
+  }
+
+  check(
+    "수입은 세지 않습니다",
+    categorySurges(
+      [
+        tx({ date: "2026-09-02", type: "INCOME", category: "급여", amount: 500_000 }),
+        tx({ date: "2026-09-03", type: "INCOME", category: "급여", amount: 500_000 }),
+        tx({ date: "2026-08-02", type: "INCOME", category: "급여", amount: 50_000 }),
+      ],
+      TODAY
+    ).length === 0
+  );
+
+  /* 31일에 2월을 보면 28일까지 — 없는 날을 만들지 않습니다 */
+  const across = categorySurges(
+    [
+      tx({ date: "2026-03-30", category: "식비", amount: 100_000 }),
+      tx({ date: "2026-03-31", category: "식비", amount: 100_000 }),
+      tx({ date: "2026-02-27", category: "식비", amount: 50_000 }),
+    ],
+    new Date(2026, 2, 31)
+  );
+  check("지난달에 없는 날은 말일까지", across.length === 1, across);
+
+  check("많이 늘어난 것이 먼저", SURGE_LIMIT === 2);
+  const two = categorySurges(
+    [
+      tx({ date: "2026-09-02", category: "식비", amount: 60_000 }),
+      tx({ date: "2026-09-03", category: "식비", amount: 60_000 }),
+      tx({ date: "2026-08-02", category: "식비", amount: 10_000 }),
+      tx({ date: "2026-09-02", category: "쇼핑", amount: 300_000 }),
+      tx({ date: "2026-09-03", category: "쇼핑", amount: 300_000 }),
+      tx({ date: "2026-08-02", category: "쇼핑", amount: 10_000 }),
+    ],
+    TODAY
+  );
+  check("큰 것이 앞에", two[0]?.title.startsWith("쇼핑"), two.map((n) => n.title));
 }
 
 // ---------------------------------------------------------------------------

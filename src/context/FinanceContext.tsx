@@ -803,6 +803,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         buildUpkeepNotices({
           accounts,
           transactions,
+          spending: countedTransactions,
           recurring: recurringItems(countedTransactions),
           lastBackupAt,
           backupDays: backupReminderDays,
