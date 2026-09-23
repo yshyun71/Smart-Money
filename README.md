@@ -88,7 +88,7 @@ React 19 · TypeScript 5 · Vite 6 · Tailwind CSS 4 · Recharts · lucide-react
 | [docs/DOMAIN.md](docs/DOMAIN.md) | 카테고리 · 고정비 판정 · AI 계층 · 예산 · 분석 |
 | [docs/IMPORT.md](docs/IMPORT.md) | 명세서 가져오기 · 결제 문자 · 카드-계좌 연결 |
 | [docs/UI.md](docs/UI.md) | 화면 구성 · 표시 규칙 · PWA와 배포 |
-| [docs/TESTING.md](docs/TESTING.md) | 회귀 세트 16종 · 1,181개 확인 |
+| [docs/TESTING.md](docs/TESTING.md) | 회귀 세트 16종 · 1,203개 확인 |
 
 **절 번호(`§7.6` 같은)는 소스 주석 284곳이 가리키고 있습니다.** 번호를 바꾸면 그 참조가 전부 거짓이 되므로, 문서를 나눌 때도 번호는 그대로 두었습니다.
 

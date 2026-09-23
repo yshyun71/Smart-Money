@@ -91,7 +91,7 @@
 ```bash
 npm run dev      # 개발 서버 — 반드시 http://localhost:3000 (14.8)
 npm run lint     # tsc --noEmit + eslint (훅 규칙·죽은 코드)
-npm test         # 회귀 세트 16종 · 1,181개 확인 (15절)
+npm test         # 회귀 세트 16종 · 1,203개 확인 (15절)
 npm run check    # lint + test — 커밋 전에 이것을 돌립니다
 npm run build    # vite build → dist/
 ```

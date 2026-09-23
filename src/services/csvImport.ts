@@ -573,6 +573,28 @@ export interface ColumnMapping {
    * amount; only this number tells one month's billing from the next.
    */
   instalment: number;
+  /**
+   * 할부 기간 — 그 구매가 **몇 달에 걸쳐** 청구되는가.
+   *
+   * 회차와 짝을 이뤄 `8/10` 을 만듭니다. 카드사마다 이름이 다르고, **같은 이름이
+   * 다른 것을 담기도 합니다**:
+   *
+   * | 카드사 | 열 이름 | 값 |
+   * | --- | --- | --- |
+   * | 삼성 | `개월` | `10` |
+   * | 우리 | `할부개월` | `36` |
+   * | 신한 | `할부기간` | `10` |
+   * | 롯데 | `할부` | `10` |
+   * | KB | `할부` | **`10/10`** — 이미 쌍입니다 |
+   *
+   * 마지막 줄이 요점입니다. 롯데의 `할부` 는 총 개월이고 KB 의 `할부` 는 회차까지
+   * 붙은 쌍이라, **이름만 보고 뜻을 정할 수 없습니다.** 값에 `/` 가 있으면 그대로
+   * 쓰고, 없으면 회차와 붙입니다.
+   *
+   * **이 열 하나만으로는 중복 판정에 쓸 수 없습니다.** 총 개월은 매달 같은 값이라
+   * 달을 구분하지 못합니다 — 회차가 있어야 합니다(§7.6).
+   */
+  months: number;
 }
 
 export const EMPTY_MAPPING: ColumnMapping = {
@@ -585,6 +607,7 @@ export const EMPTY_MAPPING: ColumnMapping = {
   billing: -1,
   fee: -1,
   instalment: -1,
+  months: -1,
 };
 
 function findColumn(headers: string[], keywords: string[], exclude: string[] = []): number {
@@ -839,7 +862,8 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
             is what says how a line was paid and whether it is a total at all.
           */
           ["매출구분", "구분", "결제구분", "거래구분", "할부", "메모", "비고", "업종", "적요2"],
-          ["개월", "회차"]
+          /* `할부가격`(우리)·`총할부금액`(삼성)은 돈입니다 — 메모로 실으면 금액이 글로 남습니다 */
+          ["개월", "회차", "가격", "금액"]
         );
 
   const billing = findColumn(headers, [
@@ -851,6 +875,16 @@ export function autoDetectMapping(headers: string[], rows: string[][] = []): Col
     fee: findColumn(headers, ["수수료", "이자"], [...notMoney, "율"]),
     // 결제 후 잔액 회차 is what is left to pay, not which instalment this is
     instalment: findColumn(headers, ["회차"], ["잔액", "남은", "잔여"]),
+    /*
+      총 개월. `할부가격`(우리)·`총할부금액`(삼성)은 돈이고, `매출구분`(우리)은
+      결제 방식이라 뜻이 다릅니다 — 이름에 그 말이 섞여 있으면 거릅니다.
+      좁은 이름을 먼저 봅니다: `할부` 는 카드사마다 담는 것이 달라 맨 뒤입니다.
+    */
+    months: findColumn(
+      headers,
+      ["할부개월", "할부기간", "개월", "할부"],
+      ["회차", "잔액", "가격", "금액", "구분", "이자", "수수료"]
+    ),
     date: findColumn(headers, [
       "거래일시", "거래일자", "거래일", "이용일자", "이용일", "승인일자", "승인일", "날짜", "일자",
     ]),
@@ -1190,22 +1224,38 @@ export function buildDrafts(
     }
 
     /*
-      The instalment number belongs with the description, which is where the
-      duplicate check reads identity from. Statements keep it in a column of
-      its own — 회차 — beside a 할부 column holding only how many months the
-      purchase runs for, which is the same every month and settles nothing.
+      회차는 내역명과 함께 갑니다 — 중복 판정이 정체를 읽는 자리가 거기입니다.
+
+      **`회차/할부기간` 한 가지 모양으로 맞춥니다.** 카드사마다 적는 법이 다릅니다:
+      삼성 `개월`+`회차`, 우리 `할부개월`+`회차`, 신한 `할부기간`+`회차`,
+      롯데 `할부`+`회차`, 그리고 **KB 는 `할부` 한 칸에 `10/10` 을 통째로** 적습니다.
+
+      그래서 값에 `/` 가 있으면 그대로 쓰고, 없으면 회차와 붙입니다. 총 개월만
+      있고 회차가 없으면 **아무것도 적지 않습니다** — 그 값은 매달 같아서 달을
+      구분하지 못하고, 그것을 회차인 척 적으면 다음 달 같은 할부가 지난달 것과
+      같은 건으로 걸러집니다(§7.6).
     */
     const described = cell(mapping.memo).trim();
     const round = cell(mapping.instalment).trim();
-    const months = /^\d{1,3}$/.test(described) ? described : "";
+    /* 옛 기억에는 이 열이 없습니다 — 메모 칸이 숫자뿐이면 그것이 총 개월입니다 */
+    const spanCell = cell(mapping.months).trim();
+    const span = spanCell || (/^\d{1,3}$/.test(described) ? described : "");
+    const paired = span.match(/^(\d{1,3})\s*\/\s*(\d{1,3})$/);
 
-    const marker = round
-      ? months
-        ? `${Number(round)}/${Number(months)}`
-        : `${Number(round)}회차`
-      : "";
+    const marker = paired
+      ? `${Number(paired[1])}/${Number(paired[2])}`
+      : round
+        ? /^\d{1,3}$/.test(span)
+          ? `${Number(round)}/${Number(span)}`
+          : `${Number(round)}회차`
+        : "";
 
-    const memo = [months ? "" : described, marker].filter(Boolean).join(" ").trim();
+    /* 총 개월만 담은 칸은 내역명에 붙이지 않습니다 — 뜻이 없는 숫자입니다 */
+    const memo = [/^\d{1,3}$/.test(described) ? "" : described, marker]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+
     const merchant = cell(mapping.merchant).trim() || memo || "내역 없음";
     const expenseType = guessExpenseType(`${merchant} ${memo}`, type);
 

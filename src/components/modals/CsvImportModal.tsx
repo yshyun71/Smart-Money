@@ -385,6 +385,8 @@ export const CsvImportModal: React.FC<{
           billing: detected.billing,
           fee: detected.fee,
           instalment: detected.instalment,
+          /* AI 는 총 개월을 돌려주지 않습니다 — 규칙이 찾거나, 회차만 실립니다 */
+          months: -1,
         };
 
         // Only if it actually reads the file better than the rules did
@@ -597,6 +599,8 @@ export const CsvImportModal: React.FC<{
         billing: detected.billing,
         fee: detected.fee,
         instalment: detected.instalment,
+        /* AI 는 총 개월을 돌려주지 않습니다 */
+        months: -1,
       });
       setMappingSource("AI");
       setDetectNote(detected.reason || null);
