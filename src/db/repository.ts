@@ -16,9 +16,27 @@ import {
   type BudgetPolicy,
   type BudgetPolicyMode,
 } from "../services/budgetPolicy";
-import { persist, queryAll, queryOne, run, runBatch } from "./database";
+import {
+  createScratchDatabase,
+  currentSchemaVersion,
+  persist,
+  queryAll,
+  queryOne,
+  run,
+  runBatch,
+} from "./database";
+import {
+  PER_USER_TABLES,
+  USER_FILE_FORMAT,
+  USER_FILE_VERSION,
+  type UserExport,
+} from "../services/userTransfer";
 import { movesBalance } from "../services/balance";
 import {
+  MIGRATIONS,
+  migrate,
+  repairMissingColumns,
+  repairMissingTables,
   SAMPLE_ACCOUNTS,
   SAMPLE_BUDGET_CONFIG,
   SAMPLE_BUDGET_MONTH,
@@ -129,6 +147,12 @@ export function createUser(details: {
 }
 
 /** Removes the user and everything they recorded. */
+/**
+ * 그 사람의 것을 전부 지웁니다.
+ *
+ * **`services/userTransfer.PER_USER_TABLES` 와 같은 목록이어야 합니다.** 한쪽에만
+ * 테이블을 더하면 지울 때는 남고 옮길 때는 빠지는 식으로 갈립니다(§5·§4.10).
+ */
 export function deleteUser(id: string): void {
   runBatch([
     { sql: "DELETE FROM transactions WHERE user_id = ?", params: [id] },
@@ -140,6 +164,16 @@ export function deleteUser(id: string): void {
     { sql: "DELETE FROM custom_categories WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM budget_policy WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM sms_inbox WHERE user_id = ?", params: [id] },
+    /*
+      되돌리기 임시 저장소도 함께 비웁니다(§4.9).
+
+      오래 빠져 있었습니다. 남겨 두면 **그 id 를 다시 쓰는 사람에게** 이전
+      사람의 행 사본이 딸려 갑니다 — 되돌리기는 역연산이 아니라 담아 둔 행을
+      그대로 다시 쓰는 방식이라(§4.9), 누르는 순간 지워진 사람의 거래가 새
+      가계부에 되살아납니다. 사용자를 갈아 끼우는 길이 생기면서(§4.10) 그 창이
+      실제로 열렸습니다.
+    */
+    { sql: "DELETE FROM undo_log WHERE user_id = ?", params: [id] },
     { sql: "DELETE FROM users WHERE id = ?", params: [id] },
   ]);
 }
@@ -1315,4 +1349,190 @@ export async function installSampleData(): Promise<void> {
 
   runBatch(statements);
   await persist();
+}
+
+/* -------------------------------------------------------------------------
+   사용자 한 명을 통째로 옮기기 (§4.10)
+   ------------------------------------------------------------------------- */
+
+/**
+ * 그 사람의 행을 테이블째 꺼냅니다.
+ *
+ * **열 이름을 손으로 적지 않습니다.** `SELECT *` 로 읽어 그대로 담습니다 —
+ * 컬럼은 마이그레이션마다 늘고(§4.3), 손으로 적어 두면 새 컬럼이 생길 때마다
+ * 여기가 조용히 낡습니다. 그 사고는 이미 겪었습니다(§7.4의 기억된 형식).
+ *
+ * 테이블 이름은 고정 목록(`PER_USER_TABLES`)에서만 오므로 질의에 사용자 입력이
+ * 섞이지 않습니다.
+ */
+export function exportUser(id: string): UserExport | null {
+  const user = queryOne<Record<string, unknown>>("SELECT * FROM users WHERE id = ?", [id]);
+  if (!user) return null;
+
+  /*
+    **없는 테이블은 건너뜁니다.** 기기의 DB 는 열 때 사다리를 타고 자가 복구까지
+    거치므로(§4.1·§4.2) 보통은 전부 있습니다. 그래도 하나가 비었다고 내보내기
+    자체가 실패하면, 사용자는 **아무것도 옮기지 못한 채** 막힙니다 — 나머지를
+    담아 주는 편이 낫습니다. 실제로 v11 백업에는 `budget_policy` 가 없습니다
+    (v12에 생겼습니다).
+  */
+  const present = new Set(
+    queryAll<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table'"
+    ).map((row) => row.name)
+  );
+
+  const tables: Record<string, Record<string, unknown>[]> = {};
+  for (const table of PER_USER_TABLES) {
+    tables[table] = present.has(table)
+      ? queryAll<Record<string, unknown>>(`SELECT * FROM ${table} WHERE user_id = ?`, [id])
+      : [];
+  }
+
+  return {
+    format: USER_FILE_FORMAT,
+    version: USER_FILE_VERSION,
+    schemaVersion: currentSchemaVersion(),
+    exportedAt: new Date().toISOString(),
+    user,
+    tables,
+  };
+}
+
+/** 확인 창이 "무엇이 지워지는가"를 건수로 말하기 위한 값입니다(§12.8). */
+export function userFootprint(id: string): { accounts: number; transactions: number } {
+  const count = (table: string) =>
+    queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table} WHERE user_id = ?`, [id])?.n || 0;
+  return { accounts: count("accounts"), transactions: count("transactions") };
+}
+
+/** 행 하나를 그 테이블에 넣는 문장. 열은 행이 가진 것만 씁니다. */
+function insertFor(table: string, row: Record<string, unknown>) {
+  const columns = Object.keys(row);
+  return {
+    sql: `INSERT OR REPLACE INTO ${table} (${columns.join(", ")})
+          VALUES (${columns.map(() => "?").join(", ")})`,
+    params: columns.map((column) => row[column] as never),
+  };
+}
+
+/**
+ * 그 사람을 파일의 사람으로 갈아 끼웁니다 (§4.10).
+ *
+ * **한 배치입니다**(§4.8). 반쯤 적용되면 주인 없는 데이터나 데이터 없는 주인이
+ * 남고, 그것은 되돌릴 방법이 없는 손상입니다.
+ *
+ * 순서가 중요합니다 — **먼저 지우고 나서 넣습니다.** 같은 id 를 다시 쓰는
+ * 경우가 보통이라(기기를 옮기거나 되돌리는 일), 지우지 않고 넣으면 옛 행과 새
+ * 행이 섞입니다. `deleteUser` 가 `undo_log` 까지 비우므로(§4.9) 이전 사람의
+ * 행 사본이 새 사람에게 딸려 가지 않습니다.
+ *
+ * **검증을 걸지 않습니다**(§17.7의 예외). 복원은 "파일이 진실"이라는 약속이고,
+ * 여기서 줄을 걸러 내면 파일에 있는 것이 조용히 들어오지 않습니다. 대신 들인
+ * 뒤에 데이터 점검(`integrity.inspect`)으로 무엇이 이상한지 **보고**합니다.
+ */
+export function replaceUser(file: UserExport): { tables: number; rows: number } {
+  const id = String(file.user.id);
+
+  const statements: { sql: string; params?: unknown[] }[] = [
+    { sql: "DELETE FROM transactions WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM accounts WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM budgets WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM budget_configs WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM ai_analyses WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM category_rules WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM custom_categories WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM budget_policy WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM sms_inbox WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM undo_log WHERE user_id = ?", params: [id] },
+    { sql: "DELETE FROM users WHERE id = ?", params: [id] },
+    insertFor("users", file.user),
+  ];
+
+  let rows = 1;
+  let tables = 1;
+  for (const table of PER_USER_TABLES) {
+    const list = file.tables[table] || [];
+    if (list.length > 0) tables += 1;
+    for (const row of list) {
+      statements.push(insertFor(table, row));
+      rows += 1;
+    }
+  }
+
+  runBatch(statements as { sql: string; params?: any[] }[]);
+  return { tables, rows };
+}
+
+/**
+ * 옛 버전에서 만든 파일을 지금 구조로 끌어올립니다 (§4.10).
+ *
+ * 전체 백업(`.db`)은 `PRAGMA user_version` 을 달고 다녀 열 때 사다리가 알아서
+ * 따라잡습니다(§4.1). 사용자 파일은 그 장치가 없으므로 **여기서 같은 사다리를
+ * 태웁니다**:
+ *
+ * 1. 빈 메모리 DB 를 만들어 **파일의 버전까지만** 마이그레이션합니다.
+ * 2. 그 구조에 파일의 행을 넣습니다 — 만들어질 당시의 모양과 맞습니다.
+ * 3. `migrate()` 로 현재 버전까지 끌어올립니다. 컬럼 추가뿐 아니라 **값을 옮기는
+ *    마이그레이션**(v6·v7의 카테고리 분리, v14의 저축, v18의 방향별 분리)이
+ *    그대로 적용됩니다.
+ * 4. 도로 꺼냅니다.
+ *
+ * **변환을 따로 만들지 않는 것이 요점입니다.** 옮기기 전용 규칙을 쓰면 §4.3 의
+ * 사다리와 어긋나는 날이 오고, 그러면 같은 데이터가 경로에 따라 다르게
+ * 분류됩니다(§17.6).
+ */
+export async function alignUserFile(file: UserExport): Promise<UserExport> {
+  const now = currentSchemaVersion();
+  if (file.schemaVersion >= now) return file;
+
+  const scratch = await createScratchDatabase();
+  try {
+    for (const migration of MIGRATIONS) {
+      if (migration.version > file.schemaVersion) break;
+      migration.up(scratch);
+    }
+    scratch.run(`PRAGMA user_version = ${file.schemaVersion}`);
+
+    const put = (table: string, row: Record<string, unknown>) => {
+      const columns = Object.keys(row);
+      scratch.run(
+        `INSERT OR REPLACE INTO ${table} (${columns.join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})`,
+        columns.map((column) => row[column] as never)
+      );
+    };
+
+    put("users", file.user);
+    for (const table of PER_USER_TABLES) {
+      for (const row of file.tables[table] || []) put(table, row);
+    }
+
+    /* 자가 복구까지 함께 — 옛 기기에 없던 테이블·컬럼이 여기서 채워집니다(§4.2) */
+    migrate(scratch);
+    repairMissingTables(scratch);
+    repairMissingColumns(scratch);
+
+    const read = (sql: string, params: unknown[]) => {
+      const out: Record<string, unknown>[] = [];
+      const statement = scratch.prepare(sql);
+      statement.bind(params as never);
+      while (statement.step()) out.push(statement.getAsObject() as Record<string, unknown>);
+      statement.free();
+      return out;
+    };
+
+    const id = String(file.user.id);
+    const user = read("SELECT * FROM users WHERE id = ?", [id])[0];
+    if (!user) throw new Error("사용자 정보를 옮기지 못했습니다.");
+
+    const tables: Record<string, Record<string, unknown>[]> = {};
+    for (const table of PER_USER_TABLES) {
+      tables[table] = read(`SELECT * FROM ${table} WHERE user_id = ?`, [id]);
+    }
+
+    return { ...file, schemaVersion: now, user, tables };
+  } finally {
+    scratch.close();
+  }
 }
