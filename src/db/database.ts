@@ -468,6 +468,26 @@ export function exportDatabaseBytes(): Uint8Array {
   return requireDb().export();
 }
 
+/** 지금 열려 있는 DB 의 `PRAGMA user_version` (§4.1). 사용자 옮기기가 씁니다(§4.10). */
+export function currentSchemaVersion(): number {
+  return readSchemaVersion(requireDb());
+}
+
+/**
+ * 기기 DB 와 상관없는 **빈 메모리 DB**.
+ *
+ * 사용자 파일이 옛 버전일 때, 그 버전으로 세운 뒤 행을 넣고 마이그레이션
+ * 사다리를 태워 현재 버전으로 끌어올리는 데 씁니다(§4.10). 사다리를 두 벌로
+ * 쓰지 않으려는 것이 요점입니다 — 옮기기 전용 변환을 따로 만들면 §4.3 과
+ * 어긋나는 날이 옵니다.
+ *
+ * **저장되지 않습니다.** 부르는 쪽이 다 쓰면 `close()` 합니다.
+ */
+export async function createScratchDatabase(): Promise<Database> {
+  const SQL = await initSqlJs({ locateFile: () => wasmUrl });
+  return new SQL.Database();
+}
+
 /**
  * Replaces the device database with the contents of an exported .db file,
  * migrating it forward if it was taken from an older build.

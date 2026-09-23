@@ -28,11 +28,13 @@ import {
   isEncryptedBackup,
 } from "../services/backupCrypto";
 import {
+  currentSchemaVersion,
   exportDatabaseBytes,
   getDatabase,
   databaseFailure,
   getDbStats,
   importDatabaseBytes,
+  persist,
   watchSaveFailure,
   type SaveFailure,
 } from "../db/database";
@@ -49,6 +51,12 @@ import {
 } from "../services/cardLink";
 import { actualRows, spendingRows, sumActuals, type ActualKind } from "../services/actuals";
 import { recurringItems } from "../services/recurrence";
+import {
+  checkImport,
+  readUserFile,
+  type ImportCheck,
+  type UserExport,
+} from "../services/userTransfer";
 import {
   upkeepNotices as buildUpkeepNotices,
   splitNotices,
@@ -216,6 +224,24 @@ interface FinanceContextType {
   hiddenNotices: UpkeepNotice[];
   dismissNotice: (notice: UpkeepNotice) => void;
   restoreNotice: (id: string) => void;
+  /**
+   * 사용자 한 명을 통째로 내보냅니다 (§4.10).
+   *
+   * 전체 백업과 **다른 물건**입니다 — 이 파일은 그 사람의 행만 담고, 가져올 때
+   * 그 사람만 갈아 끼웁니다. 다른 사용자의 가계부는 건드리지 않습니다.
+   */
+  exportUserFile: (userId: string, passphrase?: string) => Promise<void>;
+  /** 가져오기 전에 **무슨 일이 일어날지** 읽어 봅니다. 아무것도 쓰지 않습니다. */
+  readUserTransfer: (
+    file: File,
+    passphrase?: string
+  ) => Promise<{
+    payload: UserExport;
+    check: ImportCheck;
+    footprint: { accounts: number; transactions: number };
+  }>;
+  /** 확인을 받은 뒤 실제로 갈아 끼웁니다. 끝나면 **반드시 로그아웃해야 합니다**(§4.6). */
+  applyUserTransfer: (payload: UserExport) => Promise<void>;
   /** 마지막으로 백업 파일을 내려받은 시각(ISO). 없으면 `null`. */
   lastBackupAt: string | null;
   /** 백업을 권하기까지의 날 수. `0`이면 알리지 않습니다. 기본 30. */
@@ -2138,6 +2164,85 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   /**
+   * 사용자 한 명을 파일로 내보냅니다 (§4.10).
+   *
+   * 전체 백업이 `.db` 인 것과 달리 이것은 **JSON** 입니다 — 담는 것이 그 사람의
+   * 행뿐이라 데이터베이스 파일일 이유가 없습니다. 암호를 걸면 전체 백업과 같은
+   * 방식으로 잠그고(§4.5), **머리의 표식으로 판별**하므로 확장자는 같습니다.
+   */
+  const exportUserFile = async (userId: string, passphrase?: string) => {
+    const payload = repo.exportUser(userId);
+    if (!payload) throw new Error("그 사용자를 찾지 못했습니다.");
+
+    const text = JSON.stringify(payload);
+    const plain = new TextEncoder().encode(text);
+    const bytes = passphrase ? await encryptBackup(plain, passphrase) : plain;
+
+    const blob = new Blob([bytes.slice().buffer as ArrayBuffer], {
+      type: passphrase ? "application/octet-stream" : "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    /* 파일 이름에 쓸 수 없는 글자를 뺍니다 — 이름은 사람이 정하는 값입니다 */
+    const who = String(payload.user.name || "user").replace(/[\\:*?"<>|/]/g, "");
+    link.href = url;
+    link.download = `smartmoney-${who}-${stamp}.smuser`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * 파일을 읽어 **무슨 일이 일어날지만** 돌려줍니다. 한 줄도 쓰지 않습니다.
+   *
+   * 확인 창이 건수로 말하려면(§12.8) 지워질 쪽의 규모를 알아야 하므로
+   * `footprint` 를 함께 냅니다.
+   */
+  const readUserTransfer = async (file: File, passphrase?: string) => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    /* 암호가 걸렸는지는 확장자가 아니라 머리의 표식이 말합니다(§4.5) */
+    const plain = isEncryptedBackup(bytes)
+      ? await decryptBackup(bytes, passphrase || "")
+      : bytes;
+
+    const payload = readUserFile(new TextDecoder().decode(plain));
+    const known = repo.listUsers().map((row: { id: string; name: string }) => ({
+      id: row.id,
+      name: row.name,
+    }));
+    const check = checkImport(payload, {
+      users: known,
+      schemaVersion: currentSchemaVersion(),
+    });
+
+    if (!payload) throw new Error(check.why || "사용자 백업 파일이 아닙니다.");
+    if (!check.ok) throw new Error(check.why || "가져올 수 없는 파일입니다.");
+
+    const footprint = check.replacing
+      ? repo.userFootprint(check.replacing.id)
+      : { accounts: 0, transactions: 0 };
+
+    return { payload, check, footprint };
+  };
+
+  /**
+   * 갈아 끼웁니다 (§4.10).
+   *
+   * 옛 버전 파일이면 **마이그레이션 사다리를 태워** 지금 구조로 올린 뒤
+   * 넣습니다(§4.3의 사다리를 그대로 씁니다). 쓰기는 한 배치이고(§4.8), 끝나면
+   * 부르는 쪽이 **로그아웃해야 합니다** — 지금 세션의 id 가 갈아 끼워졌을 수
+   * 있고, 그대로 두면 모든 조회가 0건이 됩니다(§4.6).
+   */
+  const applyUserTransfer = async (payload: UserExport) => {
+    const aligned = await repo.alignUserFile(payload);
+    repo.replaceUser(aligned);
+    await persist();
+    await refreshDbData();
+  };
+
+  /**
    * Restores a backup, unlocking it first when it is one of the locked ones.
    *
    * The passphrase is wrong or the file is damaged — AES-GCM cannot tell those
@@ -2189,6 +2294,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({
         hiddenNotices: upkeep.hidden,
         dismissNotice,
         restoreNotice,
+        exportUserFile,
+        readUserTransfer,
+        applyUserTransfer,
         lastBackupAt,
         backupReminderDays,
         setBackupReminderDays,

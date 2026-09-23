@@ -3,6 +3,7 @@ import { useFinance } from "../../context/FinanceContext";
 import { useAuth } from "../../context/AuthContext";
 import { BackupPassphraseModal } from "../modals/BackupPassphraseModal";
 import { isEncryptedBackup } from "../../services/backupCrypto";
+import { describePlan } from "../../services/userTransfer";
 import type { Transaction } from "../../types/finance";
 import { AccountLedgerModal } from "../transactions/AccountLedgerModal";
 import { ConfirmModal } from "../modals/ConfirmModal";
@@ -32,6 +33,7 @@ import {
   Database,
   Download,
   Upload,
+  UserCog,
   HardDrive,
   FileSpreadsheet,
   ChevronRight,
@@ -113,6 +115,9 @@ export const ConnectedAssetsView: React.FC<{
     resetToSample,
     resetToClean,
     exportDatabaseFile,
+    exportUserFile,
+    readUserTransfer,
+    applyUserTransfer,
     importDatabaseFile,
     refreshDbData,
     dbStats,
@@ -145,17 +150,26 @@ export const ConnectedAssetsView: React.FC<{
     run: () => void;
   } | null>(null);
 
+  /*
+    암호 창은 네 가지 일에 쓰입니다 — 전체 백업을 잠그기·열기, 그리고 사용자
+    파일을 잠그기·열기(§4.10). `userId`·`file` 이 어느 쪽인지 말합니다.
+  */
   const [backupAsk, setBackupAsk] = useState<
-    | { mode: "LOCK" }
-    | { mode: "UNLOCK"; file: File }
+    | { mode: "LOCK"; userId?: string }
+    | { mode: "UNLOCK"; file: File; forUser?: boolean }
     | null
   >(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   /** 계좌 등록을 막은 까닭 — OS 대화창을 쓰지 않습니다(§12.8). */
   const [addError, setAddError] = useState<string | null>(null);
-  /** 복원을 마쳤습니다 — 창을 닫으면 로그아웃합니다(§4.6). */
-  const [restored, setRestored] = useState(false);
+  /**
+   * 복원을 마쳤습니다 — 창을 닫으면 로그아웃합니다(§4.6).
+   *
+   * `"USER"` 면 사용자 한 명만 바뀐 경우입니다(§4.10). 문구가 달라야 합니다 —
+   * 기기 전체가 바뀌지 않았는데 그렇게 말하면 다른 사용자가 사라진 줄 압니다.
+   */
+  const [restored, setRestored] = useState<false | "ALL" | "USER">(false);
 
   // Add Account / Card Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -272,7 +286,7 @@ export const ConnectedAssetsView: React.FC<{
         로그아웃합니다** — 복원된 파일에 지금 세션의 id 가 없을 수 있어 그대로
         두면 모든 조회가 0건이 되기 때문입니다(§4.6). 창이 그동안 화면을 덮습니다.
       */
-      setRestored(true);
+      setRestored("ALL");
       return true;
     } catch (error) {
       console.error(error);
@@ -284,6 +298,67 @@ export const ConnectedAssetsView: React.FC<{
       return false;
     } finally {
       setBackupBusy(false);
+    }
+  };
+
+  /**
+   * 사용자 파일을 열어 **무엇이 바뀔지 먼저 보여 줍니다** (§4.10).
+   *
+   * 암호가 걸렸는지는 머리의 표식이 말합니다(§4.5) — 걸려 있으면 암호 창으로
+   * 넘기고, 아니면 바로 읽어 확인 창을 띄웁니다. 확인을 받기 전에는 **한 줄도
+   * 쓰지 않습니다.**
+   */
+  const openUserTransfer = async (file: File, passphrase?: string): Promise<boolean> => {
+    setBackupBusy(true);
+    setBackupError(null);
+    try {
+      const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+      if (isEncryptedBackup(head) && passphrase === undefined) {
+        setBackupAsk({ mode: "UNLOCK", file, forUser: true });
+        return false;
+      }
+
+      const { payload, check, footprint } = await readUserTransfer(file, passphrase);
+      setBackupAsk(null);
+      setAsk({
+        title: check.replacing
+          ? `'${check.replacing.name}' 을 이 파일의 내용으로 바꿀까요?`
+          : `'${String(payload.user.name)}' 사용자를 들여올까요?`,
+        message: check.nameChanges
+          ? "같은 사용자 자리에 다른 이름이 들어옵니다. 아래를 확인하세요."
+          : "이 사용자만 바뀝니다.",
+        details: describePlan(check, payload, footprint),
+        danger: true,
+        confirmLabel: check.replacing ? "바꾸기" : "들여오기",
+        run: () => void runUserTransfer(payload),
+      });
+      return true;
+    } catch (error) {
+      console.error(error);
+      setBackupError(
+        error instanceof Error ? error.message : "사용자 파일을 읽지 못했습니다."
+      );
+      return false;
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  /** 확인을 받은 뒤 실제로 갈아 끼웁니다. 끝나면 로그아웃합니다(§4.6). */
+  const runUserTransfer = async (payload: Parameters<typeof applyUserTransfer>[0]) => {
+    try {
+      await applyUserTransfer(payload);
+      /*
+        지금 로그인한 사람이 갈아 끼워졌을 수 있습니다. 그대로 두면 모든 조회가
+        "없는 사용자"로 나가 0건이 되고, 화면은 데이터가 사라진 것처럼
+        보입니다(§4.6·§14.8과 같은 함정).
+      */
+      setRestored("USER");
+    } catch (error) {
+      console.error(error);
+      setBackupError(
+        error instanceof Error ? error.message : "사용자를 바꾸지 못했습니다."
+      );
     }
   };
 
@@ -869,6 +944,58 @@ export const ConnectedAssetsView: React.FC<{
             <span>샘플 복원</span>
           </button>
         </div>
+        {/*
+          사용자 한 명만 옮기기 (§4.10).
+
+          **전체 백업과 나란히 두되 줄을 나눕니다.** 위는 기기 전체, 아래는 한
+          사람입니다 — 둘을 섞으면 "복원"을 눌렀을 때 무엇이 사라지는지 알 수
+          없습니다. 전체 백업은 이 기기의 모든 사용자를 바꾸고, 이쪽은 그 사람
+          하나만 갈아 끼웁니다.
+        */}
+        <div className="pt-3 mt-2 border-t border-slate-700/60 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <UserCog className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-[11px] font-bold text-slate-300">사용자 한 명만</span>
+            <span className="text-[10px] text-slate-500 leading-relaxed">
+              그 사람의 가계부만 담고, 복원하면 그 사람만 바뀝니다
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {users.map((person: { id: string; name: string }) => (
+              <button
+                key={person.id}
+                onClick={() => {
+                  setBackupError(null);
+                  setBackupAsk({ mode: "LOCK", userId: person.id });
+                }}
+                className="py-1.5 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold flex items-center gap-1 transition active:scale-95"
+              >
+                <Download className="w-3 h-3" />
+                <span className="whitespace-nowrap">{person.name} 내보내기</span>
+              </button>
+            ))}
+
+            <label className="py-1.5 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-medium flex items-center gap-1 transition cursor-pointer">
+              <Upload className="w-3 h-3" />
+              <span className="whitespace-nowrap">사용자 복원</span>
+              <input
+                type="file"
+                accept=".smuser,application/json,application/octet-stream"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void openUserTransfer(file);
+                }}
+              />
+            </label>
+          </div>
+
+          <p className="text-[10px] text-slate-500 leading-relaxed">
+            AI 키와 기억해 둔 명세서 형식은 기기에 남는 값이라 따라가지 않습니다.
+          </p>
+        </div>
       </div>
 
       {/* Register Account / Card Modal Dialog */}
@@ -1219,9 +1346,13 @@ export const ConnectedAssetsView: React.FC<{
 
       {/* 복원을 마쳤습니다 — 닫으면 로그아웃합니다 (§4.6) */}
       <ConfirmModal
-        isOpen={restored}
-        title="백업을 복원했습니다"
-        message="이 기기의 가계부가 백업 파일의 내용으로 바뀌었습니다. 복원된 사용자로 다시 로그인해주세요."
+        isOpen={restored !== false}
+        title={restored === "USER" ? "사용자를 바꿨습니다" : "백업을 복원했습니다"}
+        message={
+          restored === "USER"
+            ? "그 사용자의 가계부가 파일의 내용으로 바뀌었습니다. 다른 사용자는 그대로입니다. 간편 비밀번호도 파일에 든 것으로 바뀌었으니 다시 로그인해주세요."
+            : "이 기기의 가계부가 백업 파일의 내용으로 바뀌었습니다. 복원된 사용자로 다시 로그인해주세요."
+        }
         confirmLabel="로그인 화면으로"
         onConfirm={() => {
           setRestored(false);
@@ -1247,10 +1378,12 @@ export const ConnectedAssetsView: React.FC<{
           if (!backupAsk) return;
 
           if (backupAsk.mode === "LOCK") {
+            const who = backupAsk.userId;
             setBackupBusy(true);
             setBackupError(null);
             try {
-              await exportDatabaseFile(passphrase);
+              if (who) await exportUserFile(who, passphrase);
+              else await exportDatabaseFile(passphrase);
               setBackupAsk(null);
             } catch {
               setBackupError("백업 파일을 만들지 못했습니다.");
@@ -1261,7 +1394,9 @@ export const ConnectedAssetsView: React.FC<{
           }
 
           // 암호가 틀리면 창을 닫지 않습니다 — 파일을 다시 고르게 할 이유가 없습니다
-          const ok = await runRestore(backupAsk.file, passphrase);
+          const ok = backupAsk.forUser
+            ? await openUserTransfer(backupAsk.file, passphrase)
+            : await runRestore(backupAsk.file, passphrase);
           if (ok) setBackupAsk(null);
         }}
       />
