@@ -1137,6 +1137,45 @@ export const AccountLedgerModal: React.FC<{
             ))}
           </select>
 
+          {/*
+            **고른 조건이 얼마인가** — 고르기 전에 답해야 하는 질문입니다.
+
+            이 숫자는 화면 맨 위 `지출 합계`·`수입 합계` 와 **같은 값**입니다
+            (둘 다 `totals`). 그런데 그 자리는 조건 블록에서 500px 떨어져 있어,
+            `고정지출` 을 눌러 숫자가 바뀌어도 아무도 둘을 연결하지 못했습니다 —
+            "선택을 해야 합계가 보인다"는 신고가 그래서 나왔습니다.
+
+            **기본을 전체 선택으로 두지 않은 까닭**: 선택은 `선택 삭제` 와
+            `AI 자동 분류` 의 대상입니다. 처음부터 전부 골라져 있으면 오조작 한
+            번이 그 달을 통째로 지우고, 방금 가른 "보는 것과 할 것"이 도로
+            뭉개집니다(§12.1의 선택 규칙).
+          */}
+          <div className="flex items-baseline justify-between gap-2 rounded-xl bg-slate-100/70 px-2.5 py-2">
+            <span className="text-[10px] font-bold text-slate-500 shrink-0">
+              조회 {entries.length}건
+            </span>
+            {entries.length === 0 ? (
+              <span className="text-[11px] text-slate-400">내역이 없습니다</span>
+            ) : isBank ? (
+              <span className="text-[11px] font-bold text-slate-700 text-right">
+                {totals.expense > 0 && (
+                  <span className="text-rose-700">지출 {won(totals.expense)}</span>
+                )}
+                {totals.expense > 0 && totals.income > 0 && (
+                  <span className="text-slate-300"> · </span>
+                )}
+                {totals.income > 0 && (
+                  <span className="text-emerald-700">수입 {won(totals.income)}</span>
+                )}
+              </span>
+            ) : (
+              /* 카드는 지출 − 차감·환불이 청구액입니다 (§9.5) */
+              <span className="text-[11px] font-bold text-rose-700 text-right">
+                이용 합계 {won(totals.billed)}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
             <button
               type="button"
@@ -1163,7 +1202,6 @@ export const AccountLedgerModal: React.FC<{
                   <span>선택 삭제</span>
                 </button>
               )}
-              <span className="text-[10px] text-slate-400">조회 {entries.length}건</span>
             </div>
           </div>
 
