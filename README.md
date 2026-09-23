@@ -56,11 +56,86 @@ npm run build    # dist/
 
 ---
 
+## 접속
+
+배포된 앱은 Cloudflare Workers의 정적 자산으로 서비스됩니다. 주소는 이 형태입니다.
+
+```
+https://smart-money.<계정 서브도메인>.workers.dev
+```
+
+`smart-money`는 [`wrangler.jsonc`](wrangler.jsonc)의 `name`이고, 뒤쪽은 Cloudflare 계정마다 다릅니다. **내 주소를 확인하는 곳**:
+
+- Cloudflare 대시보드 → **Workers & Pages** → `smart-money` → **Settings → Domains & Routes**
+- 또는 로컬에서 `npx wrangler deploy`를 돌리면 마지막 줄에 찍힙니다.
+
+휴대폰에서는 그 주소를 열고 브라우저 메뉴의 `홈 화면에 추가`/`앱 설치`를 누르면 전용 앱처럼 씁니다. 앱 안의 `설정 → '스마트 머니' 전용 앱 설치`에 QR과 기종별 안내가 있습니다.
+
+> **주소가 다르면 데이터도 다릅니다.** 가계부는 IndexedDB에 있고 브라우저는 저장소를 **출처(origin)별로** 나눕니다 — 개발 서버(`localhost:3000`)와 배포본은 서로의 데이터를 볼 수 없고, 도메인을 바꾸면 따라오지 않습니다. 옮기려면 백업·복원을 거쳐야 합니다.
+
+---
+
+## 배포 설정
+
+한 번만 해 두면 그다음부터는 **`main`에 푸시하는 것이 곧 배포**입니다.
+
+### 1. GitHub
+
+```bash
+git init
+git add -A
+git commit -m "first"
+git branch -M main
+git remote add origin https://github.com/<계정>/<저장소>.git
+git push -u origin main
+```
+
+**저장소를 공개로 둘 생각이면 `.gitignore`부터 확인하세요.** 가계부 백업(`.db`·`.smbk`)이 공개 저장소에 올라간 일이 실제로 있었습니다. 지금은 이름이 아니라 **모양으로** 거릅니다.
+
+```
+finance.db · DB Backup/ · *.db · *.sqlite · *.smbk   ← 실제 가계부
+*.docx · *.pptx · *.xlsx                              ← 보고서·명세서 샘플
+```
+
+푸시하면 [`.github/workflows/check.yml`](.github/workflows/check.yml)이 `npm ci` → `npm run check` → `npm run build`를 돌립니다. "커밋 전에 검사한다"는 규칙은 사람이 기억해야 하고 언젠가 잊히기 때문입니다.
+
+### 2. Cloudflare
+
+Cloudflare 대시보드 → **Workers & Pages** → **Create** → **Import a repository** → 위 저장소 선택.
+
+| 항목 | 값 |
+| --- | --- |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+| Build output directory | **비워 둡니다** |
+| 환경 변수 | `NODE_VERSION` = `22` |
+
+- **출력 디렉터리를 대시보드에 적지 않습니다.** [`wrangler.jsonc`](wrangler.jsonc)의 `assets.directory`가 그것을 정합니다 — 두 곳에 적으면 한쪽만 고쳐집니다.
+- `not_found_handling: "single-page-application"`이 없으면 **새로고침할 때 404**가 납니다. React 진입점이 하나뿐이라, 못 찾은 경로에는 `index.html`을 줘야 합니다.
+- `NODE_VERSION`을 20.19 미만으로 두면 `@vitejs/plugin-react`가 경고를 냅니다. 빌드는 되지만 22로 고정해 두는 편이 안전합니다.
+- `wrangler.jsonc`의 `name`은 대시보드의 프로젝트 이름과 **같아야** 합니다. 그 값이 곧 `*.workers.dev` 서브도메인입니다.
+
+푸시 후 1~3분이면 배포됩니다.
+
+### 3. 배포가 반영됐는지 확인하는 법
+
+**PWA는 한 번 실행에서 새 버전을 받고 다음 실행에서 보여 줍니다**(`registerType: 'autoUpdate'`). 그래서 고친 것이 안 보여도 실패가 아닐 때가 많습니다 — **두 번 여세요.**
+
+빌드 시각이 번들에 박혀 있어(`__BUILD_TIME__`) **`카드·계좌` 탭의 DB 카드**에 표시됩니다. 그 시각이 곧 "지금 이 기기가 돌리는 버전"입니다.
+
+### 4. 무엇이 웹에 올라가는가
+
+**`dist/`뿐입니다.** `vite build`가 만든 번들과 `public/`을 그대로 복사한 것이 전부이고, 저장소 루트의 다른 파일은 서비스되지 않습니다.
+
+**`public/`에 둔 것은 그대로 공개됩니다** — 주소만 알면 누구나 내려받습니다. 가계부 백업·명세서 샘플·메모를 그 안에 두지 마세요. `.gitignore`는 로컬에서 `npx wrangler deploy`를 직접 할 때는 이 경로를 막아 주지 않습니다.
+
+---
+
 ## 기술 스택
 
 React 19 · TypeScript 5 · Vite 6 · Tailwind CSS 4 · Recharts · lucide-react · vite-plugin-pwa · sql.js(WASM SQLite) · SheetJS · `@google/genai` · `@anthropic-ai/sdk`
 
-빌드 결과물은 정적 파일(HTML/JS/CSS/WASM)뿐이고 실행에 백엔드가 필요하지 않습니다. Cloudflare에 `dist/`를 그대로 올립니다.
+빌드 결과물은 정적 파일(HTML/JS/CSS/WASM)뿐이고 실행에 백엔드가 필요하지 않습니다 — 그래서 배포가 `dist/`를 그대로 올리는 일로 끝납니다(위 [배포 설정](#배포-설정)).
 
 첫 로드는 **773KB(gzip 214KB)**이고, 차트·엑셀 리더·AI SDK·카드계좌 화면·가져오기 창은 **필요할 때** 내려받습니다.
 
