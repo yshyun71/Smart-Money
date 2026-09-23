@@ -152,6 +152,7 @@ export default defineConfig(() => ({
 ```
 node_modules/ · dist/ · dev-dist/ · coverage/ · *.log · .env*
 finance.db · DB Backup/ · *.db · *.sqlite · *.smbk     ← 실제 가계부
+*.smuser                                               ← 사용자 한 명의 가계부
 *.docx · *.pptx · *.xlsx                                ← 보고서·명세서 샘플
 ```
 
