@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useFinance } from "../../context/FinanceContext";
 import { CategorySpendingModal } from "../modals/CategorySpendingModal";
+import { ReportCardModal } from "../modals/ReportCardModal";
 import { AddTransactionModal } from "../transactions/AddTransactionModal";
 import { PeriodTrendPanel } from "./PeriodTrendPanel";
 import { monthPeriod, yearPeriod } from "../../services/trend";
@@ -19,6 +20,7 @@ import {
   ArrowUpRight,
   Sparkles,
   SlidersHorizontal,
+  FileText,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -80,6 +82,8 @@ export const AnalyticsDashboardView: React.FC<{
   const [timeframeMode, setTimeframeMode] = useState<"MONTHLY" | "YEARLY" | "PERIOD">(
     "MONTHLY"
   );
+  /* 한 장 리포트(§12.14) */
+  const [reportOpen, setReportOpen] = useState(false);
   /*
     카테고리 순위표는 접어 둡니다.
 
@@ -264,8 +268,8 @@ export const AnalyticsDashboardView: React.FC<{
     <div className="space-y-4 pt-1">
       {/* Top Header Card with Mode Switcher */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200/90 shadow-2xs">
-        <div className="flex items-center justify-between mb-3">
-          <div>
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="min-w-0">
             <h2 className="text-sm font-bold text-slate-900 tracking-tight">
               소비 현황 시각 분석 대시보드
             </h2>
@@ -273,6 +277,22 @@ export const AnalyticsDashboardView: React.FC<{
                   월별·연도별 비중과 고른 기간의 변동 추이를 차트로 확인합니다.
             </p>
           </div>
+          {/*
+            한 장 리포트(§12.14) — **보고 있는 모드를 그대로 이어받습니다.**
+            연도별 비교를 보다 누르면 그 해가, 월별을 보다 누르면 그 달이 열립니다.
+            여기에 둔 까닭: 기간을 고르는 자리가 이미 이 화면이고(§12.5), 다른 곳에
+            또 두면 어느 기간의 리포트인지 다시 정해야 합니다.
+
+            버튼이 먼저 폭을 잡습니다(§12.2) — 글자가 두 줄로 갈리던 자리입니다.
+          */}
+          <button
+            type="button"
+            onClick={() => setReportOpen(true)}
+            className="shrink-0 whitespace-nowrap px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            한 장 리포트
+          </button>
         </div>
 
         {/* Timeframe Switcher Tabs */}
@@ -871,6 +891,17 @@ export const AnalyticsDashboardView: React.FC<{
         카테고리 금액을 누르면 열리는 상세. **기간은 보고 있는 모드가 정합니다** —
         월별에서는 그 달, 연도별에서는 그 해. 같은 창이 두 곳에 쓰입니다(11.7).
       */}
+      {/*
+        한 장 리포트 — 보고 있는 모드가 곧 범위입니다. `기간 추이`는 임의 구간이라
+        한 장으로 접히지 않으므로 그때는 달로 엽니다.
+      */}
+      <ReportCardModal
+        isOpen={reportOpen}
+        month={timeframeMode === "YEARLY" ? `${activeYear}-01` : selectedMonth}
+        scope={timeframeMode === "YEARLY" ? "YEAR" : "MONTH"}
+        onClose={() => setReportOpen(false)}
+      />
+
       <CategorySpendingModal
         isOpen={drillCategory !== null}
         category={drillCategory}

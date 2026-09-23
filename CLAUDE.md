@@ -14,7 +14,7 @@
 
 ## 0. 이 묶음을 읽는 법
 
-분량이 한 파일에 담기 어려워 절 단위로 나누었습니다. **절 번호는 나누기 전과 같습니다** — 소스 주석 284곳이 `§7.6`·`§14.4` 같은 번호로 이 문서를 가리키고 있어, 번호가 바뀌면 그 참조가 전부 거짓이 됩니다.
+분량이 한 파일에 담기 어려워 절 단위로 나누었습니다. **절 번호는 나누기 전과 같습니다** — 소스 주석 312곳이 `§7.6`·`§14.4` 같은 번호로 이 문서를 가리키고 있어, 번호가 바뀌면 그 참조가 전부 거짓이 됩니다.
 
 | 절 | 파일 | 내용 |
 | --- | --- | --- |
@@ -23,7 +23,7 @@
 | 6 · 10 · 11 | [docs/DOMAIN.md](docs/DOMAIN.md) | 카테고리 · 고정비 판정 · AI 계층 · 예산 · 분석 · 알림 |
 | 7 · 9 | [docs/IMPORT.md](docs/IMPORT.md) | 명세서 가져오기 · 결제 문자 · 여러 파일 · 카드-계좌 연결 |
 | 12 · 13 | [docs/UI.md](docs/UI.md) | 화면 구성 · 표시 규칙 · PWA와 배포 |
-| 15 | [docs/TESTING.md](docs/TESTING.md) | 회귀 세트 16종 · 일회용 하네스 |
+| 15 | [docs/TESTING.md](docs/TESTING.md) | 회귀 세트 19종 · 일회용 하네스 |
 | — | [docs/SETUP.md](docs/SETUP.md) | **빈 폴더에서 이 앱까지** — 설정 파일 전문과 만드는 순서 |
 
 **처음 읽는다면**: 1절(성격) → 3절(구조) → [SETUP](docs/SETUP.md)(세우기) → [DATA](docs/DATA.md)(데이터 모델) → 나머지.
@@ -91,7 +91,7 @@
 ```bash
 npm run dev      # 개발 서버 — 반드시 http://localhost:3000 (14.8)
 npm run lint     # tsc --noEmit + eslint (훅 규칙·죽은 코드)
-npm test         # 회귀 세트 16종 · 1,203개 확인 (15절)
+npm test         # 회귀 세트 19종 · 1,320개 확인 (15절)
 npm run check    # lint + test — 커밋 전에 이것을 돌립니다
 npm run build    # vite build → dist/
 ```
@@ -127,7 +127,7 @@ npm run build    # vite build → dist/
 ├── public/                    아이콘·매니페스트 자산 — 여기 둔 것은 그대로 웹에 공개됩니다 (§13.1)
 ├── scripts/                   PWA 아이콘 생성
 ├── src/                       아래 3.2
-├── tests/                     회귀 세트 16종 (§15)
+├── tests/                     회귀 세트 19종 (§15)
 └── .github/workflows/check.yml  main 푸시·PR 마다 check + build
 ```
 
@@ -168,6 +168,9 @@ src/
 | `categoryRules.ts` | 패턴 규칙 · 카드대금/금융 자체 판별 · 카드사 목록 | §6.2~6.4 |
 | `spread.ts` | 한 건의 수정을 같은 내역명 전체로 | §9.6 |
 | `recurrence.ts` | 고정비 반복 판정 · 정기 결제 목록 | §10 · §12.10 |
+| `upkeep.ts` | 홈이 먼저 말해 주는 것 — 명세서·백업·예고·인상 | §12.12 |
+| `refunds.ts` | 환불·취소를 원래 결제와 짝짓기 | §12.13 |
+| `reportCard.ts` | 한 장으로 보는 달·해 결산 | §12.14 |
 | `actuals.ts` | 실적의 정의 · 옮긴 돈 제외 · 달의 단계 | §6.5 · §11.4 |
 | `budgetPolicy.ts` | 가용 변동비 · 배분 · 고정비 가이드 | §11.5 |
 | `budgetStatus.ts` | 카테고리 소진율 판정 · 예산 알림 | §11.5 · §11.8 |
@@ -186,7 +189,7 @@ src/
 | `pinCrypto.ts` | PBKDF2 PIN 해시 | §5 |
 | `aiClient.ts` + `ai/` | 프롬프트 · JSON 스키마 · 공급자 어댑터 · 재시도 | §11.1~11.3 |
 
-### 3.4 `components/` — 화면 (42개)
+### 3.4 `components/` — 화면 (43개)
 
 ```
 components/
@@ -231,11 +234,12 @@ components/
 │   ├── AccountEditModal.tsx   계좌·카드 수정
 │   ├── BalanceEditModal.tsx   잔액 + 기준일시 + 출처 (§8)
 │   ├── BackupPassphraseModal.tsx    백업 암호 (§4.5)
+│   ├── ReportCardModal.tsx    한 장으로 보는 달·해 결산 (§12.14)
 │   └── ConfirmModal.tsx       되돌리기 어려운 일의 확인 (z-10002, §12.8)
 ├── settings/
 │   ├── AIKeyModal.tsx         공급자별 키 등록 (§11.1)
 │   ├── UserManageModal.tsx    사용자 추가·수정·삭제 (§5)
-│   ├── MiscSettingsModal.tsx  기타 설정 — 되돌리기 · 데이터 점검
+│   ├── MiscSettingsModal.tsx  기타 설정 — 데이터 점검 · 백업 알림 · 되돌리기
 │   └── DataCheckModal.tsx     데이터 점검 (§17.7)
 └── pwa/PWAInstallButton.tsx   설치 안내 · 오프라인 배너 (§13.2)
 ```

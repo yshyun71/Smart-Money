@@ -52,3 +52,40 @@ html, body {
 #root {
   min-height: 100%;
 }
+
+/*
+  한 장 리포트를 종이로 (§12.14).
+
+  이미지·PDF 로 저장하려고 `html2canvas` 같은 것을 넣지 않았습니다. 브라우저의
+  인쇄 대화상자에 "PDF 로 저장"이 이미 있고, 그것이 어느 기기에서나 같은 방식으로
+  동작합니다 — 200KB 짜리 의존성을 처음 화면에 얹는 것과 맞바꿀 값이 아닙니다
+  (§13.3 과 같은 판단).
+
+  인쇄할 때는 그 창만 남깁니다. 모달은 `<body>` 로 포털되므로(§14.4) 형제 노드를
+  감추는 것으로 충분합니다.
+*/
+@media print {
+  body.printing-report > *:not(#report-print) {
+    display: none !important;
+  }
+
+  body.printing-report #report-print {
+    position: static !important;
+    inset: auto !important;
+    background: #fff !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+  }
+
+  body.printing-report #report-print .report-sheet {
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
