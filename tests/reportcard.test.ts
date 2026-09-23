@@ -10,6 +10,7 @@ import {
   buildReportCard,
   savingsRate,
   changeRatio,
+  defaultCompareKey,
   TOP_CATEGORIES,
 } from "../src/services/reportCard";
 
@@ -184,6 +185,64 @@ section("나누는 값은 지어내지 않습니다");
     key: "2026-08",
   });
   check("한 장에 담길 만큼만", many.categories.length === TOP_CATEGORIES, many.categories.length);
+}
+
+// ---------------------------------------------------------------------------
+section("견줄 기간은 고를 수 있습니다");
+// ---------------------------------------------------------------------------
+{
+  const rows = [
+    ...ledger,
+    /* 작년 8월 */
+    tx({ date: "2025-08-05", category: "식비", amount: 90_000 }),
+    tx({ date: "2025-08-20", type: "INCOME", expenseType: "FIXED", category: "급여", amount: 2_000_000 }),
+  ];
+
+  check("기본은 바로 앞 기간", defaultCompareKey("2026-08") === "2026-07");
+  check("해는 지난해", defaultCompareKey("2026") === "2025");
+
+  const byDefault = buildReportCard({ transactions: rows, accounts, key: "2026-08" });
+  check("주지 않으면 지난달과", byDefault.compareKey === "2026-07");
+
+  /*
+    8월은 해마다 휴가가 들어 7월과 견주는 것이 뜻이 없을 수 있습니다 — 작년
+    같은 달과 견주고 싶은 사람이 있습니다.
+  */
+  const lastYear = buildReportCard({
+    transactions: rows,
+    accounts,
+    key: "2026-08",
+    compare: "2025-08",
+  });
+  check("고른 기간과 견줍니다", lastYear.compareKey === "2025-08");
+  check("그 기간의 값", lastYear.before?.expense === 90_000, lastYear.before?.expense);
+  check("차이도 그 기간 기준", lastYear.change?.expense === 1_410_000, lastYear.change?.expense);
+
+  /*
+    달을 보면서 해와 견주면 한쪽은 한 달, 다른 쪽은 열두 달이라 "지출이 늘었다"가
+    아무 뜻이 없습니다.
+  */
+  const mismatched = buildReportCard({
+    transactions: rows,
+    accounts,
+    key: "2026-08",
+    compare: "2025",
+  });
+  check("모양이 다르면 기본값으로", mismatched.compareKey === "2026-07", mismatched.compareKey);
+
+  /* 고른 기간에 자료가 없으면 `null` — 대신 무엇을 물었는지는 남습니다 */
+  const empty = buildReportCard({
+    transactions: rows,
+    accounts,
+    key: "2026-08",
+    compare: "2024-03",
+  });
+  check("자료가 없으면 견줄 수 없습니다", empty.before === null && empty.change === null);
+  check("무엇을 물었는지는 남습니다", empty.compareKey === "2024-03");
+
+  /* 해도 고를 수 있습니다 */
+  const year = buildReportCard({ transactions: rows, accounts, key: "2026", compare: "2025" });
+  check("해끼리", year.compareKey === "2025" && year.before?.expense === 90_000);
 }
 
 // ---------------------------------------------------------------------------

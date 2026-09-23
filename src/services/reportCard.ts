@@ -50,8 +50,16 @@ export interface ReportCard {
   key: string;
   label: string;
   now: ReportSlice;
-  /** 앞 기간. 자료가 없으면 `null` — 지어내지 않습니다(§17.1). */
+  /**
+   * 견준 기간. 자료가 없으면 `null` — 지어내지 않습니다(§17.1).
+   *
+   * 무엇과 견줬는지는 `compareKey` 가 말합니다. 둘을 나눠 두는 까닭: 자료가
+   * 없어 `before` 가 `null` 일 때도 화면은 **어느 기간을 물었는지** 알아야
+   * `2025년 08월에는 내역이 없습니다` 라고 말할 수 있습니다.
+   */
   before: ReportSlice | null;
+  /** 견준 기간의 키. 고르지 않았으면 `defaultCompareKey(key)`. */
+  compareKey: string;
   /** 앞 기간과의 차이. 앞 기간이 없으면 `null`. */
   change: ReportChange | null;
   /** 지출에서 차지하는 순서. 금액 큰 순. */
@@ -72,8 +80,15 @@ function labelFor(key: string): string {
   return key.length === 4 ? `${key}년` : monthLabel(key);
 }
 
-/** 앞 기간 — 달이면 지난달, 해면 지난해. */
-function previousKey(key: string): string {
+/**
+ * 견줄 기간의 **기본값** — 달이면 지난달, 해면 지난해.
+ *
+ * 기본값일 뿐입니다. "지난달보다 얼마나 썼나"가 가장 흔한 질문이라 그것을
+ * 먼저 보여 주지만, **작년 같은 달**과 견주고 싶은 사람이 있습니다 — 8월은
+ * 해마다 휴가가 들어 7월과 견주는 것이 뜻이 없을 수 있습니다. 화면이 다른
+ * 기간을 넘기면 그것으로 견줍니다.
+ */
+export function defaultCompareKey(key: string): string {
   if (key.length === 4) return String(Number(key) - 1);
   return shiftMonth(key, -1);
 }
@@ -122,6 +137,13 @@ export function buildReportCard(options: {
   transactions: Transaction[];
   accounts: ConnectedAccount[];
   key: string;
+  /**
+   * 견줄 기간. 주지 않으면 앞 기간입니다.
+   *
+   * **모양이 다르면 무시합니다** — 달을 보면서 해와 견주면 한쪽은 한 달,
+   * 다른 쪽은 열두 달이라 "지출이 늘었다"가 아무 뜻이 없습니다.
+   */
+  compare?: string;
   topCategories?: number;
 }): ReportCard {
   const { transactions, accounts, key } = options;
@@ -130,7 +152,10 @@ export function buildReportCard(options: {
 
   const now = sliceOf(transactions, key, accounts);
 
-  const beforeKey = previousKey(key);
+  const fallback = defaultCompareKey(key);
+  const asked = options.compare || fallback;
+  const beforeKey = asked.length === key.length ? asked : fallback;
+
   const beforeRows = within(transactions, beforeKey);
   const before = beforeRows.length > 0 ? sliceOf(transactions, beforeKey, accounts) : null;
 
@@ -176,6 +201,7 @@ export function buildReportCard(options: {
     label: labelFor(key),
     now,
     before,
+    compareKey: beforeKey,
     change,
     categories,
     months,

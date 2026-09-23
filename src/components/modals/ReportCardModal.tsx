@@ -5,10 +5,20 @@ import {
   buildReportCard,
   savingsRate,
   changeRatio,
+  defaultCompareKey,
   type ReportScope,
 } from "../../services/reportCard";
+import { MonthPickerModal } from "../transactions/MonthPickerModal";
+import { monthLabel } from "../../services/trend";
 import { won } from "../../utils/format";
-import { X, Printer, CalendarRange, CalendarDays, RotateCcw } from "lucide-react";
+import {
+  X,
+  Printer,
+  CalendarRange,
+  CalendarDays,
+  RotateCcw,
+  ChevronDown,
+} from "lucide-react";
 
 /**
  * 한 장으로 보는 결산 — 달과 해 (§12.14).
@@ -30,6 +40,15 @@ export const ReportCardModal: React.FC<{
 }> = ({ isOpen, onClose, month, scope = "MONTH" }) => {
   const { spendingTransactions, accounts } = useFinance();
   const [view, setView] = useState<ReportScope>(scope);
+  /*
+    견줄 기간. `null` 이면 기본값(지난 기간)입니다.
+
+    **고른 값을 따로 들고 있습니다**(§12.5의 `selectedYear` 와 같은 방식) —
+    기본값을 상태에 미리 적어 두면 기준월이 바뀌었을 때 그것이 사용자가 고른
+    값인지 그냥 남아 있는 값인지 알 수 없습니다.
+  */
+  const [compare, setCompare] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   /*
     **연 것은 `prop` 이 바뀔 때만 따릅니다**(§14.7). 열려 있는 동안 사용자가 고른
@@ -40,21 +59,58 @@ export const ReportCardModal: React.FC<{
     setView(scope);
   }, [isOpen, scope]);
 
+  /*
+    보는 기간이 바뀌면 견줄 기간을 기본값으로 되돌립니다.
+
+    8월을 2025년 8월과 견주어 두고 `이 해`를 누르면, 고른 값은 달이고 보는 것은
+    해가 되어 서로 모양이 맞지 않습니다. 기준이 바뀌었으면 견줄 것도 다시
+    정하는 편이 맞습니다.
+  */
+  useEffect(() => {
+    setCompare(null);
+  }, [view, month]);
+
   const key = view === "YEAR" ? month.slice(0, 4) : month;
 
   const card = useMemo(
-    () => buildReportCard({ transactions: spendingTransactions, accounts, key }),
-    [spendingTransactions, accounts, key]
+    () =>
+      buildReportCard({
+        transactions: spendingTransactions,
+        accounts,
+        key,
+        compare: compare || undefined,
+      }),
+    [spendingTransactions, accounts, key, compare]
   );
+
+  /* 달마다 몇 건인지 — 빈 달을 헛되게 고르지 않게 합니다(§12.6) */
+  const monthCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const tx of spendingTransactions) {
+      const at = tx.date.slice(0, 7);
+      counts.set(at, (counts.get(at) || 0) + 1);
+    }
+    return counts;
+  }, [spendingTransactions]);
+
+  /** 자료가 있는 해, 최근 것부터. 보고 있는 해는 뺍니다 — 자기와 견줄 수는 없습니다. */
+  const years = useMemo(() => {
+    const found = new Set<string>();
+    for (const tx of spendingTransactions) found.add(tx.date.slice(0, 4));
+    return Array.from(found)
+      .filter((year) => year !== key)
+      .sort((a, b) => b.localeCompare(a));
+  }, [spendingTransactions, key]);
 
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      /* 연월 선택 창이 위에 떠 있으면 그쪽이 먼저 닫힙니다 (§12.6) */
+      if (e.key === "Escape" && !picking) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, picking]);
 
   if (!isOpen) return null;
   if (typeof document === "undefined") return null;
@@ -76,6 +132,10 @@ export const ReportCardModal: React.FC<{
   };
 
   const rate = savingsRate(card.now);
+  /* 견준 기간의 이름 — 자료가 없어 `before` 가 없을 때도 말할 수 있어야 합니다 */
+  const compareLabel =
+    card.before?.label ||
+    (card.compareKey.length === 4 ? `${card.compareKey}년` : monthLabel(card.compareKey));
   const expenseRatio = card.before ? changeRatio(card.now.expense, card.before.expense) : null;
 
   /* 막대의 기준 — 고정·변동·저축이 총지출을 나눠 갖습니다 */
@@ -174,35 +234,93 @@ export const ReportCardModal: React.FC<{
             앞 기간과의 차이. **없으면 적지 않습니다** — 견줄 것이 없는데 `0원`
             이라고 쓰면 "같았다"는 거짓이 됩니다(§17.1).
           */}
-          {card.before && card.change && (
+          {(card.before || compare) && (
             <div className="p-3 rounded-2xl bg-white border border-slate-200 space-y-1.5">
-              <span className="text-[11px] font-bold text-slate-700">
-                {card.before.label}과 견주면
-              </span>
-              {[
-                { label: "지출", value: card.change.expense, ratio: expenseRatio },
-                { label: "수입", value: card.change.income, ratio: null },
-                { label: "고정비", value: card.change.fixed, ratio: null },
-              ].map((row) => (
-                <div key={row.label} className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-slate-500">{row.label}</span>
-                  <span
-                    className={`text-[11px] font-bold ${
-                      row.value === 0
-                        ? "text-slate-400"
-                        : row.value > 0
-                          ? "text-rose-600"
-                          : "text-emerald-600"
-                    }`}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-slate-700 shrink-0">
+                  {compareLabel}과 견주면
+                </span>
+                {/*
+                  **견줄 기간을 고를 수 있습니다.** 기본은 지난 기간이지만 8월처럼
+                  해마다 성격이 다른 달은 **작년 같은 달**과 견주는 편이 뜻이
+                  있습니다. 달은 연월 선택 창이(§12.6), 해는 자료에 있는 해를
+                  칩으로 보여 줍니다.
+                */}
+                {view === "MONTH" ? (
+                  <button
+                    type="button"
+                    onClick={() => setPicking(true)}
+                    className="shrink-0 whitespace-nowrap px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[10px] font-bold text-slate-600 transition cursor-pointer flex items-center gap-1 no-print"
                   >
-                    {row.value > 0 ? "+" : ""}
-                    {won(row.value)}
-                    {row.ratio === null
-                      ? ""
-                      : ` (${row.ratio > 0 ? "+" : ""}${row.ratio.toFixed(1)}%)`}
-                  </span>
+                    {compareLabel}
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                ) : null}
+              </div>
+
+              {view === "YEAR" && years.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap no-print">
+                  {years.map((year) => (
+                    <button
+                      key={year}
+                      type="button"
+                      onClick={() => setCompare(year)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                        card.compareKey === year
+                          ? "bg-slate-900 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {year}년
+                    </button>
+                  ))}
                 </div>
-              ))}
+              )}
+
+              {/*
+                고른 기간에 내역이 없으면 **그렇다고 말합니다.** 블록을 통째로
+                감추면 방금 고른 사람에게는 화면이 고장 난 것으로 보입니다.
+              */}
+              {!card.before || !card.change ? (
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {compareLabel}에는 내역이 없어 견줄 수 없습니다.
+                </p>
+              ) : (
+                [
+                  { label: "지출", value: card.change.expense, ratio: expenseRatio },
+                  { label: "수입", value: card.change.income, ratio: null },
+                  { label: "고정비", value: card.change.fixed, ratio: null },
+                ].map((row) => (
+                  <div key={row.label} className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">{row.label}</span>
+                    <span
+                      className={`text-[11px] font-bold ${
+                        row.value === 0
+                          ? "text-slate-400"
+                          : row.value > 0
+                            ? "text-rose-600"
+                            : "text-emerald-600"
+                      }`}
+                    >
+                      {row.value > 0 ? "+" : ""}
+                      {won(row.value)}
+                      {row.ratio === null
+                        ? ""
+                        : ` (${row.ratio > 0 ? "+" : ""}${row.ratio.toFixed(1)}%)`}
+                    </span>
+                  </div>
+                ))
+              )}
+
+              {compare && compare !== defaultCompareKey(key) && (
+                <button
+                  type="button"
+                  onClick={() => setCompare(null)}
+                  className="text-[10px] font-bold text-slate-400 hover:text-slate-600 transition cursor-pointer no-print"
+                >
+                  기본값(바로 앞 기간)으로
+                </button>
+              )}
             </div>
           )}
 
@@ -352,5 +470,20 @@ export const ReportCardModal: React.FC<{
     </div>
   );
 
-  return createPortal(content, document.body);
+  return (
+    <>
+      {createPortal(content, document.body)}
+      <MonthPickerModal
+        isOpen={picking}
+        value={card.compareKey}
+        counts={monthCounts}
+        title="견줄 달"
+        onSelect={(picked) => {
+          setCompare(picked);
+          setPicking(false);
+        }}
+        onClose={() => setPicking(false)}
+      />
+    </>
+  );
 };
